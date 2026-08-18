@@ -58,20 +58,86 @@ def fetch_history(
     code: str,
     days: int = 250,
     adjust: str = "qfq",
+    market: str = "ashare",
 ) -> tuple[pd.DataFrame, str]:
-    """拉取个股日线历史，优先东财（akshare），失败降级腾讯 K 线。
+    """拉取个股日线历史。
 
-    :param code: 6 位证券代码
+    :param code: 证券代码（A 股 6 位 / 港股 5 位 / 币安交易对）
     :param days: 返回最近 N 根日 K
-    :param adjust: 复权方式 qfq/hfq/空字符串
+    :param adjust: 复权方式 qfq/hfq/空字符串（仅 A 股/港股有效）
+    :param market: ashare / hk / crypto
     :return: (DataFrame, 股票名称)
     """
+    if market == "crypto":
+        return _fetch_history_binance(code, days), code.upper()
+    if market == "hk":
+        df = _fetch_history_tencent_hk(code, days, adjust)
+        return df.tail(days).reset_index(drop=True), _lookup_hk_name(code)
     try:
         return _fetch_history_akshare(code, days, adjust)
     except Exception as exc:  # noqa: BLE001 - 单源失败自动降级
         logger.warning("akshare 历史数据拉取失败，降级腾讯 K 线: %s", exc)
         df = _fetch_history_tencent(code, days, adjust)
         return df.tail(days).reset_index(drop=True), _lookup_name(code)
+
+
+def _fetch_history_tencent_hk(code: str, days: int, adjust: str) -> pd.DataFrame:
+    """腾讯港股 K 线接口（思路借鉴 easyquotation.daykline，MIT License）。
+
+    GET https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get?param=hk00700,day,,,320,qfq
+    """
+    import requests
+
+    symbol = f"hk{code[-5:]}"
+    n = min(days + 10, 800)
+    url = (
+        "https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get"
+        f"?param={symbol},day,,,{n},{adjust}"
+    )
+    resp = requests.get(url, timeout=10, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    })
+    resp.raise_for_status()
+    return _parse_tencent_kline(resp.json(), symbol, code)
+
+
+def _fetch_history_binance(code: str, days: int) -> pd.DataFrame:
+    """币安日 K 线（klines）。"""
+    from .providers.binance import fetch_klines
+
+    rows = fetch_klines(code, days)
+    if not rows:
+        raise RuntimeError(f"币安未返回 {code} 的 K 线数据")
+    df = pd.DataFrame(
+        [
+            (
+                datetime.fromtimestamp(int(r[0]) / 1000).strftime("%Y-%m-%d"),
+                float(r[1]),   # 开
+                float(r[4]),   # 收
+                float(r[2]),   # 高
+                float(r[3]),   # 低
+                float(r[5]),   # 成交量（基础币）
+            )
+            for r in rows
+        ],
+        columns=["日期", "开盘", "收盘", "最高", "最低", "成交量"],
+    )
+    prev_close = df["收盘"].shift(1)
+    df["涨跌幅"] = (df["收盘"] / prev_close - 1) * 100
+    df["振幅"] = (df["最高"] - df["最低"]) / prev_close * 100
+    df.loc[df.index[0], ["涨跌幅", "振幅"]] = 0.0
+    return df
+
+
+def _lookup_hk_name(code: str) -> str:
+    """通过腾讯港股行情接口补全名称（失败返回空）。"""
+    try:
+        from .providers.hk import TencentHKProvider
+
+        quotes = TencentHKProvider().fetch([code])
+        return quotes[0].name if quotes else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _fetch_history_akshare(
@@ -155,10 +221,12 @@ def _lookup_name(code: str) -> str:
         return ""
 
 
-def compute_metrics(df: pd.DataFrame, code: str = "", name: str = "") -> HistoryReport:
+def compute_metrics(df: pd.DataFrame, code: str = "", name: str = "",
+                    periods_per_year: int = TRADING_DAYS_PER_YEAR) -> HistoryReport:
     """基于日线 DataFrame 计算波动与趋势指标。
 
     需要列：日期、开盘、收盘、最高、最低、成交量、涨跌幅、振幅（akshare 格式）。
+    periods_per_year：年化因子（A 股/港股约 250 个交易日，加密货币 365）。
     """
     close = df["收盘"].astype(float)
     returns = close.pct_change().dropna()
@@ -166,11 +234,11 @@ def compute_metrics(df: pd.DataFrame, code: str = "", name: str = "") -> History
     # 区间涨跌幅（以首根开盘为基准更贴近"持有至今"）
     period_return = (close.iloc[-1] / close.iloc[0] - 1) * 100
 
-    # 年化波动率：日收益标准差 × √年交易日
-    annual_vol = returns.std() * math.sqrt(TRADING_DAYS_PER_YEAR) * 100 if len(returns) > 1 else 0.0
+    # 年化波动率：日收益标准差 × √年周期数
+    annual_vol = returns.std() * math.sqrt(periods_per_year) * 100 if len(returns) > 1 else 0.0
     recent20 = returns.tail(20)
     recent20_vol = (
-        recent20.std() * math.sqrt(TRADING_DAYS_PER_YEAR) * 100
+        recent20.std() * math.sqrt(periods_per_year) * 100
         if len(recent20) > 1 else 0.0
     )
 
@@ -225,10 +293,15 @@ def compute_metrics(df: pd.DataFrame, code: str = "", name: str = "") -> History
     )
 
 
-def analyze(code: str, days: int = 250, adjust: str = "qfq") -> HistoryReport:
-    """拉取历史数据并计算指标（网络 + 计算的组合入口）。"""
-    df, name = fetch_history(code, days=days, adjust=adjust)
-    return compute_metrics(df, code=code[-6:], name=name)
+def analyze(code: str, days: int = 250, adjust: str = "qfq",
+            market: str = "ashare") -> HistoryReport:
+    """拉取历史数据并计算指标（网络 + 计算的组合入口）。
+
+    加密货币按 365 天年化，股票按 250 个交易日年化。
+    """
+    df, name = fetch_history(code, days=days, adjust=adjust, market=market)
+    periods = 365 if market == "crypto" else TRADING_DAYS_PER_YEAR
+    return compute_metrics(df, code=code, name=name, periods_per_year=periods)
 
 
 def brief_profile(report: HistoryReport) -> str:
@@ -250,7 +323,7 @@ def brief_profile(report: HistoryReport) -> str:
 
 
 class ProfileCache:
-    """波动画像按交易日缓存：每只股票每天只拉取一次历史数据。
+    """波动画像按交易日缓存：每个标的每天只拉取一次历史数据。
 
     监控轮询间隔以秒计，而历史画像在单个交易日内基本不变，
     缓存避免预警密集时反复请求拖慢轮询。
@@ -258,18 +331,19 @@ class ProfileCache:
 
     def __init__(self, days: int = 120):
         self.days = days
-        self._cache: dict[str, tuple[str, str]] = {}  # code -> (交易日, 画像)
+        self._cache: dict[tuple[str, str], tuple[str, str]] = {}  # (market, code) -> (日期, 画像)
 
-    def get(self, code: str) -> str | None:
-        """返回该股当日画像；拉取失败返回 None（不抛异常，不影响监控主流程）。"""
+    def get(self, code: str, market: str = "ashare") -> str | None:
+        """返回该标的当日画像；拉取失败返回 None（不抛异常，不影响监控主流程）。"""
         today = datetime.now().strftime("%Y-%m-%d")
-        cached = self._cache.get(code)
+        key = (market, code)
+        cached = self._cache.get(key)
         if cached and cached[0] == today:
             return cached[1]
         try:
-            profile = brief_profile(analyze(code, days=self.days))
+            profile = brief_profile(analyze(code, days=self.days, market=market))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("波动画像拉取失败 %s: %s", code, exc)
+            logger.warning("波动画像拉取失败 %s(%s): %s", code, market, exc)
             return None
-        self._cache[code] = (today, profile)
+        self._cache[key] = (today, profile)
         return profile

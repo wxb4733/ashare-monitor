@@ -71,6 +71,9 @@ def test_annual_volatility_alternating():
     r = compute_metrics(df)
     expected = 2.0 * math.sqrt(TRADING_DAYS_PER_YEAR)
     assert r.annual_volatility_pct == pytest.approx(expected, rel=0.05)
+    # 加密货币口径：√365 年化
+    r365 = compute_metrics(df, periods_per_year=365)
+    assert r365.annual_volatility_pct == pytest.approx(2.0 * math.sqrt(365), rel=0.05)
 
 
 def test_amplitude_fallback_without_column():
@@ -151,8 +154,8 @@ def test_profile_cache_per_day(monkeypatch):
 
     calls = []
 
-    def fake_analyze(code, days=250):
-        calls.append(code)
+    def fake_analyze(code, days=250, market="ashare"):
+        calls.append((code, market))
         df = make_df([100.0, 101.0, 102.0])
         return compute_metrics(df, code=code)
 
@@ -161,15 +164,17 @@ def test_profile_cache_per_day(monkeypatch):
     p1 = cache.get("600519")
     p2 = cache.get("600519")   # 同一天应命中缓存，不再拉取
     p3 = cache.get("000001")   # 不同股票独立拉取
+    p4 = cache.get("600519", market="hk")  # 同代码不同市场独立缓存
     assert p1 == p2
     assert p3 is not None
-    assert calls == ["600519", "000001"]
+    assert p4 is not None
+    assert calls == [("600519", "ashare"), ("000001", "ashare"), ("600519", "hk")]
 
 
 def test_profile_cache_failure_returns_none(monkeypatch):
     import ashare_monitor.analysis as analysis_mod
 
-    def boom(code, days=250):
+    def boom(code, days=250, market="ashare"):
         raise ConnectionError("network down")
 
     monkeypatch.setattr(analysis_mod, "analyze", boom)

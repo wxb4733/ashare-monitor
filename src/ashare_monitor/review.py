@@ -266,12 +266,12 @@ def build_html(
 # ---------- 报告生成 ----------
 
 def _fetch_kline_chart(symbol: str, days: int, adjust: str,
-                       title_prefix: str = "") -> dict | None:
+                       title_prefix: str = "", market: str = "ashare") -> dict | None:
     """拉取单个标的的 K 线图数据，失败返回 None。"""
     try:
-        df, name = fetch_history(symbol, days=days, adjust=adjust)
+        df, name = fetch_history(symbol, days=days, adjust=adjust, market=market)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("复盘：%s K 线拉取失败: %s", symbol, exc)
+        logger.warning("复盘：%s(%s) K 线拉取失败: %s", symbol, market, exc)
         return None
     code6 = symbol[-6:]
     return {
@@ -298,7 +298,6 @@ def generate_review(
     各数据项独立容错：行情 / 指数 / K 线拉取失败不阻塞其余部分。
     """
     date_str = date_str or datetime.now().strftime("%Y-%m-%d")
-    codes = [str(item["code"]) for item in cfg.watchlist]
     kline_days = cfg.review.kline_days
 
     # 大盘指数（行情 + K 线）
@@ -316,25 +315,41 @@ def generate_review(
             if chart:
                 index_charts.append(chart)
 
-    # 自选股行情
-    try:
-        quotes, _source = fetch_spot_quotes(codes, sources=cfg.quotes.sources)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("复盘：行情快照拉取失败: %s", exc)
-        quotes = []
+    # 自选股行情（按市场分组拉取）
+    quotes: list[Quote] = []
+    watch_groups: dict[str, list[str]] = {}
+    for item in cfg.watchlist:
+        watch_groups.setdefault(str(item.get("market", "ashare")), []).append(
+            str(item["code"])
+        )
+    for market, mcodes in watch_groups.items():
+        try:
+            qs, _source = fetch_spot_quotes(
+                mcodes,
+                sources=cfg.quotes.sources if market == "ashare" else None,
+                market=market,
+            )
+            quotes.extend(qs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("复盘：%s 行情快照拉取失败: %s", market, exc)
 
     records = load_alerts(date_str, alerts_dir)
 
     # 自选股 K 线（图题带波动画像）
     cache = ProfileCache(days=cfg.monitor.profile_days)
     charts: list[dict] = []
-    for code in codes:
-        chart = _fetch_kline_chart(code, kline_days, adjust="qfq")
-        if chart:
-            profile = cache.get(code)
-            if profile:
-                chart["title"] += f"  |  {profile}"
-            charts.append(chart)
+    for market, mcodes in watch_groups.items():
+        for code in mcodes:
+            chart = _fetch_kline_chart(
+                code, kline_days,
+                adjust="qfq" if market != "crypto" else "",
+                market=market,
+            )
+            if chart:
+                profile = cache.get(code, market)
+                if profile:
+                    chart["title"] += f"  |  {profile}"
+                charts.append(chart)
 
     html = build_html(
         date_str, quotes, records, charts,

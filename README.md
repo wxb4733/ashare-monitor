@@ -1,26 +1,29 @@
 # ashare-monitor
 
-A 股交易信息监控工具：实时行情快照、涨跌幅预警、价格突破提醒。
+多市场（A 股 / 港股 / 加密货币）交易信息监控工具：实时行情快照、涨跌幅预警、价格突破提醒。
 
 ## 功能
 
+- **多市场支持**：A 股（默认）、港股（`market: hk`）、币安加密货币（`market: crypto`，7×24）
 - **实时行情**：多数据源自动降级（新浪 → 腾讯 → 东方财富），单一接口故障不影响监控
-- **五档盘口**：买一~买五 / 卖一~卖五挂单明细与委比计算（sina / tencent 源）
-- **预警规则**：涨跌幅超阈值、价格上破 / 下破、委比失衡、单档大单挂单，内置冷却去抖避免重复告警
-- **交易时段控制**：默认仅在 09:30–11:30 / 13:00–15:00 轮询
+- **五档盘口**：买一~买五 / 卖一~卖五挂单明细与委比计算（sina / tencent 源，A 股）
+- **预警规则**：涨跌幅超阈值、价格上破 / 下破、委比失衡、单档大单挂单、振幅波动，内置冷却去抖避免重复告警
+- **分市场交易时段**：A 股 09:30–11:30/13:00–15:00，港股 09:30–12:00/13:00–16:00，加密货币 7×24
 - **通知渠道**：控制台彩色输出（涨红跌绿），支持 webhook（企业微信 / 钉钉机器人）
 
 ## 数据源
 
-| 数据源 | 特点 | 说明 |
-| --- | --- | --- |
-| `sina` | 按需查询、速度快 | 新浪行情网关，适合盘中高频轮询 |
-| `tencent` | 按需查询、更新频率高 | 腾讯行情网关，亦支持港股 |
-| `eastmoney` | 字段最全 | 基于 akshare 全市场快照，开销较大，作为兜底 |
+| 数据源 | 市场 | 特点 | 说明 |
+| --- | --- | --- | --- |
+| `sina` | A 股 | 按需查询、速度快 | 新浪行情网关，适合盘中高频轮询 |
+| `tencent` | A 股 | 按需查询、更新频率高 | 腾讯行情网关 |
+| `tencent_hk` | 港股 | 按需查询 | 腾讯港股行情（借鉴 easyquotation.hkquote） |
+| `eastmoney` | A 股 | 字段最全 | 基于 akshare 全市场快照，开销较大，作为兜底 |
+| `binance` | 加密货币 | 公开 REST API | 无需 Key，主备域名自动切换 |
 
-在 `config.yaml` 的 `quotes.sources` 中配置优先级，按顺序降级，首个可用的生效。
+在 `config.yaml` 的 `quotes.sources` 中配置 A 股优先级，按顺序降级，首个可用的生效。
 
-新浪 / 腾讯源的解析逻辑借鉴自 [easyquotation](https://github.com/shidenggui/easyquotation)
+新浪 / 腾讯（含港股）源的解析逻辑借鉴自 [easyquotation](https://github.com/shidenggui/easyquotation)
 （MIT License，Copyright (c) 2018 shidenggui），特此致谢。
 
 ## 快速开始
@@ -42,6 +45,10 @@ python -m ashare_monitor.main monitor
 
 # 历史数据分析（近 120 个交易日，前复权）
 python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
+
+# 港股 / 加密货币分析
+python -m ashare_monitor.main analyze 00700 --market hk --days 60
+python -m ashare_monitor.main analyze BTCUSDT --market crypto --days 60
 
 # 生成复盘报告（默认今天，可指定日期）
 python -m ashare_monitor.main review [--date 2026-08-18]
@@ -80,7 +87,7 @@ python -m ashare_monitor.main review [--date 2026-08-18]
 
 | 配置项 | 说明 |
 | --- | --- |
-| `watchlist` | 自选股列表，6 位代码 |
+| `watchlist` | 自选标的列表，每项 `code` + 可选 `market`（ashare 默认 / hk / crypto） |
 | `alerts.change_pct_threshold` | 涨跌幅预警阈值（%），默认 ±3% |
 | `alerts.price_above / price_below` | 按代码设置价格上破 / 下破提醒 |
 | `alerts.weibi_threshold` | 委比绝对值超阈值预警（%），需五档数据，不设则关闭 |

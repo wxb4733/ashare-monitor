@@ -15,7 +15,7 @@ from .alerts import AlertEngine
 from .analysis import HistoryReport, ProfileCache
 from .config import load_config
 from .notify import ConsoleNotifier, Notifier
-from .quotes import Quote, fetch_spot_quotes, is_trading_time
+from .quotes import Quote, fetch_spot_quotes, is_market_open, is_trading_time
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -71,40 +71,52 @@ def render_quotes(quotes: list[Quote]) -> None:
     console.print(table)
 
 
+def group_by_market(watchlist: list[dict]) -> dict[str, list[str]]:
+    """把 watchlist 按市场分组：{market: [code, ...]}，默认 ashare。"""
+    groups: dict[str, list[str]] = {}
+    for item in watchlist:
+        market = str(item.get("market", "ashare"))
+        groups.setdefault(market, []).append(str(item["code"]))
+    return groups
+
+
 def snapshot(
     codes: list[str],
     notifiers: list[Notifier],
     engine: AlertEngine,
     sources: list[str] | None = None,
     profile_cache: "ProfileCache | None" = None,
+    market: str = "ashare",
 ) -> list:
     """获取一轮行情快照并应用预警规则，返回本轮触发的预警列表。"""
     fired = []
-    quotes, source = fetch_spot_quotes(codes, sources=sources)
+    quotes, source = fetch_spot_quotes(codes, sources=sources, market=market)
     if not quotes:
-        console.print("[yellow]未获取到行情数据（可能不在交易时段或网络异常）[/yellow]")
+        console.print(f"[yellow]{market} 未获取到行情数据（可能不在交易时段或网络异常）[/yellow]")
         return fired
     render_quotes(quotes)
-    console.print(f"[dim]数据源: {source}[/dim]")
+    console.print(f"[dim]市场: {market} | 数据源: {source}[/dim]")
     for q in quotes:
         for alert in engine.check(q):
             if profile_cache is not None:
                 # 预警触发时附带该股近期波动画像（按交易日缓存，失败不阻塞）
-                alert.profile = profile_cache.get(q.code)
+                alert.profile = profile_cache.get(q.code, market)
             fired.append(alert)
             for n in notifiers:
                 n.send(alert)
     return fired
 
 
-def render_baseline(codes: list[str], cache: "ProfileCache") -> None:
+def render_baseline(groups: dict[str, list[str]], cache: "ProfileCache") -> None:
     """监控启动时输出自选股历史波动基线。"""
     table = Table(title="自选股波动基线（历史数据分析）")
+    table.add_column("市场", justify="left")
     table.add_column("代码", justify="left")
     table.add_column("近期波动画像", justify="left")
-    for code in codes:
-        profile = cache.get(code)
-        table.add_row(code, profile or "[dim]画像拉取失败[/dim]")
+    for market, codes in groups.items():
+        for code in codes:
+            profile = cache.get(code, market)
+            table.add_row(market, code, profile or "[dim]画像拉取失败[/dim]")
     console.print(table)
 
 
@@ -114,10 +126,11 @@ def run_monitor(config_path: str | None) -> None:
     cfg = load_config(config_path)
     setup_logging(cfg.logging)
 
-    codes = [str(item["code"]) for item in cfg.watchlist]
-    if not codes:
+    groups = group_by_market(cfg.watchlist)
+    if not groups:
         console.print("[red]config.yaml 中 watchlist 为空，请先配置自选股[/red]")
         return
+    total = sum(len(v) for v in groups.values())
 
     engine = AlertEngine(cfg.alerts)
     notifiers: list[Notifier] = [ConsoleNotifier()]
@@ -131,59 +144,68 @@ def run_monitor(config_path: str | None) -> None:
     if cfg.monitor.startup_profile or cfg.monitor.alert_profile:
         profile_cache = ProfileCache(days=cfg.monitor.profile_days)
         if cfg.monitor.startup_profile:
-            render_baseline(codes, profile_cache)
+            render_baseline(groups, profile_cache)
 
     interval = cfg.monitor.interval_seconds
+    market_desc = ", ".join(f"{m}×{len(c)}" for m, c in groups.items())
     console.print(
-        f"[cyan]开始监控 {len(codes)} 只股票，间隔 {interval}s，Ctrl+C 退出[/cyan]"
+        f"[cyan]开始监控 {total} 只标的（{market_desc}），间隔 {interval}s，Ctrl+C 退出[/cyan]"
     )
 
-    was_trading = False      # 是否经历过交易时段（用于收盘判定）
+    was_trading = False      # A 股是否经历过交易时段（用于收盘复盘判定）
     reviewed_date = ""       # 已生成复盘报告的日期，避免重复
 
     try:
         while True:
             now = datetime.now()
-            in_session = is_trading_time(cfg.monitor.trading_sessions, now)
-            if cfg.monitor.trading_hours_only and not in_session:
-                # 交易时段 → 收盘的转折点：自动生成当日复盘报告
-                today = now.strftime("%Y-%m-%d")
-                if (
-                    was_trading
-                    and cfg.monitor.auto_review
-                    and reviewed_date != today
-                    and _is_after_close(cfg.monitor.trading_sessions, now)
-                ):
-                    reviewed_date = today
-                    console.print("[cyan]已收盘，正在生成复盘报告…[/cyan]")
-                    try:
-                        from .review import build_push_summary
+            in_ashare_session = is_trading_time(cfg.monitor.trading_sessions, now)
 
-                        path, day_quotes, day_records = generate_review(today, cfg)
-                        console.print(f"[green]复盘报告已生成: {path}[/green]")
-                        # 推送复盘摘要到 webhook
-                        for n in notifiers:
-                            if hasattr(n, "send_text"):
-                                n.send_text(build_push_summary(
-                                    today, day_quotes, day_records, path
-                                ))
-                    except Exception:
-                        logger.exception("复盘报告生成失败")
-                was_trading = False
-                logger.debug("非交易时段，等待 %ds", interval)
-                time.sleep(interval)
-                continue
-            was_trading = True
-            try:
-                fired = snapshot(
-                    codes, notifiers, engine,
-                    sources=cfg.quotes.sources,
-                    profile_cache=profile_cache if cfg.monitor.alert_profile else None,
-                )
-                if fired:
-                    append_alerts(fired)
-            except Exception:
-                logger.exception("本轮行情获取失败")
+            # A 股收盘转折点：自动生成当日复盘报告
+            today = now.strftime("%Y-%m-%d")
+            if (
+                was_trading
+                and not in_ashare_session
+                and cfg.monitor.auto_review
+                and reviewed_date != today
+                and _is_after_close(cfg.monitor.trading_sessions, now)
+            ):
+                reviewed_date = today
+                console.print("[cyan]已收盘，正在生成复盘报告…[/cyan]")
+                try:
+                    from .review import build_push_summary
+
+                    path, day_quotes, day_records = generate_review(today, cfg)
+                    console.print(f"[green]复盘报告已生成: {path}[/green]")
+                    for n in notifiers:
+                        if hasattr(n, "send_text"):
+                            n.send_text(build_push_summary(
+                                today, day_quotes, day_records, path
+                            ))
+                except Exception:
+                    logger.exception("复盘报告生成失败")
+
+            any_active = False
+            for market, mcodes in groups.items():
+                if cfg.monitor.trading_hours_only and not is_market_open(
+                    market, cfg.monitor.trading_sessions, now
+                ):
+                    continue
+                any_active = True
+                if market == "ashare":
+                    was_trading = True
+                try:
+                    fired = snapshot(
+                        mcodes, notifiers, engine,
+                        sources=cfg.quotes.sources if market == "ashare" else None,
+                        profile_cache=profile_cache if cfg.monitor.alert_profile else None,
+                        market=market,
+                    )
+                    if fired:
+                        append_alerts(fired)
+                except Exception:
+                    logger.exception("本轮行情获取失败（%s）", market)
+            if not any_active:
+                logger.debug("所有市场均闭市，等待 %ds", interval)
             time.sleep(interval)
     except KeyboardInterrupt:
         console.print("\n[cyan]监控已停止[/cyan]")
@@ -201,11 +223,19 @@ def _is_after_close(sessions: list[list[str]], now: datetime) -> bool:
 def run_once(config_path: str | None) -> None:
     cfg = load_config(config_path)
     setup_logging(cfg.logging)
-    codes = [str(item["code"]) for item in cfg.watchlist]
-    if not codes:
+    groups = group_by_market(cfg.watchlist)
+    if not groups:
         console.print("[red]config.yaml 中 watchlist 为空[/red]")
         return
-    snapshot(codes, [ConsoleNotifier()], AlertEngine(cfg.alerts), sources=cfg.quotes.sources)
+    for market, codes in groups.items():
+        try:
+            snapshot(
+                codes, [ConsoleNotifier()], AlertEngine(cfg.alerts),
+                sources=cfg.quotes.sources if market == "ashare" else None,
+                market=market,
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]{market} 行情获取失败：{exc}[/red]")
 
 
 def _pct_text(value: float, digits: int = 2) -> str:
@@ -267,12 +297,12 @@ def render_report(r: HistoryReport) -> None:
     )
 
 
-def run_analyze(code: str, days: int, adjust: str) -> None:
+def run_analyze(code: str, days: int, adjust: str, market: str) -> None:
     from .analysis import analyze
 
-    console.print(f"[cyan]正在拉取 {code} 历史数据（近 {days} 个交易日）…[/cyan]")
+    console.print(f"[cyan]正在拉取 {code}（{market}）历史数据（近 {days} 个周期）…[/cyan]")
     try:
-        report = analyze(code, days=days, adjust=adjust)
+        report = analyze(code, days=days, adjust=adjust, market=market)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]分析失败：{exc}[/red]")
         return
@@ -301,7 +331,9 @@ def main() -> None:
     sub.add_parser("monitor", help="持续监控（默认命令）")
     sub.add_parser("once", help="获取一次行情快照后退出")
     p_analyze = sub.add_parser("analyze", help="拉取个股历史数据并分析")
-    p_analyze.add_argument("code", help="6 位证券代码，如 600519")
+    p_analyze.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
+    p_analyze.add_argument("--market", default="ashare",
+                           choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
     p_analyze.add_argument("--days", type=int, default=250, help="回看交易日数（默认 250）")
     p_analyze.add_argument("--adjust", default="qfq",
                            choices=["qfq", "hfq", ""], help="复权方式（默认 qfq 前复权）")
@@ -312,7 +344,7 @@ def main() -> None:
     if args.command == "once":
         run_once(args.config)
     elif args.command == "analyze":
-        run_analyze(args.code, args.days, args.adjust)
+        run_analyze(args.code, args.days, args.adjust, args.market)
     elif args.command == "review":
         run_review(args.date, args.config)
     else:

@@ -1,5 +1,5 @@
 # A 股监控配置
-# 自选股列表：code 为 6 位证券代码
+# 自选股列表：code 为证券代码，market 可选 ashare（默认）/ hk / crypto
 watchlist:
   - code: "600519"   # 贵州茅台
     name: "贵州茅台"
@@ -7,6 +7,14 @@ watchlist:
     name: "平安银行"
   - code: "300750"   # 宁德时代
     name: "宁德时代"
+  # 港股示例（5 位代码，market: hk）：
+  # - code: "00700"    # 腾讯控股
+  #   name: "腾讯控股"
+  #   market: hk
+  # 加密货币示例（币安交易对，market: crypto，7×24 监控）：
+  # - code: "BTCUSDT"
+  #   name: "比特币"
+  #   market: crypto
 
 # 预警规则
 alerts:

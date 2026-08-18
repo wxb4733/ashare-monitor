@@ -64,18 +64,20 @@ class Quote:
 def fetch_spot_quotes(
     codes: list[str],
     sources: list[str] | None = None,
+    market: str = "ashare",
 ) -> tuple[list[Quote], str]:
     """获取指定代码的实时行情，按优先级尝试多个数据源。
 
-    :param codes: 6 位证券代码列表
-    :param sources: 数据源名称列表（sina/tencent/eastmoney），None 用默认顺序
+    :param codes: 证券代码列表（A 股 6 位 / 港股 5 位 / 币安交易对）
+    :param sources: 数据源名称列表，None 按 market 取默认链
+    :param market: ashare / hk / crypto
     :return: (行情列表, 实际使用的数据源名)
     :raises RuntimeError: 所有数据源均失败
     """
-    from .providers import PROVIDERS
+    from .providers import MARKET_SOURCES, PROVIDERS
 
     errors: dict[str, Exception] = {}
-    for name in sources or DEFAULT_SOURCES:
+    for name in sources or MARKET_SOURCES.get(market, DEFAULT_SOURCES):
         provider_cls = PROVIDERS.get(name)
         if provider_cls is None:
             logger.warning("未知数据源: %s，跳过", name)
@@ -110,3 +112,27 @@ def is_trading_time(sessions: list[list[str]], now: datetime | None = None) -> b
         return False
     current = now.strftime("%H:%M")
     return any(start <= current <= end for start, end in sessions)
+
+
+# 港股交易时段（周一至周五，北京时间）
+HK_SESSIONS = [["09:30", "12:00"], ["13:00", "16:00"]]
+
+
+def is_market_open(
+    market: str,
+    ashare_sessions: list[list[str]] | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """按市场判断是否处于交易时段。
+
+    - ashare：使用配置的交易时段
+    - hk：港股时段 09:30-12:00 / 13:00-16:00（周一至周五）
+    - crypto：7×24 永不闭市
+    """
+    if market == "crypto":
+        return True
+    if market == "hk":
+        return is_trading_time(HK_SESSIONS, now)
+    return is_trading_time(
+        ashare_sessions or [["09:30", "11:30"], ["13:00", "15:00"]], now
+    )
