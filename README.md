@@ -4,10 +4,23 @@ A 股交易信息监控工具：实时行情快照、涨跌幅预警、价格突
 
 ## 功能
 
-- **实时行情**：基于 akshare 获取自选股实时快照（最新价、涨跌幅、成交量、成交额等）
+- **实时行情**：多数据源自动降级（新浪 → 腾讯 → 东方财富），单一接口故障不影响监控
 - **预警规则**：涨跌幅超阈值、价格上破 / 下破指定价位，内置冷却去抖避免重复告警
 - **交易时段控制**：默认仅在 09:30–11:30 / 13:00–15:00 轮询
 - **通知渠道**：控制台彩色输出（涨红跌绿），支持 webhook（企业微信 / 钉钉机器人）
+
+## 数据源
+
+| 数据源 | 特点 | 说明 |
+| --- | --- | --- |
+| `sina` | 按需查询、速度快 | 新浪行情网关，适合盘中高频轮询 |
+| `tencent` | 按需查询、更新频率高 | 腾讯行情网关，亦支持港股 |
+| `eastmoney` | 字段最全 | 基于 akshare 全市场快照，开销较大，作为兜底 |
+
+在 `config.yaml` 的 `quotes.sources` 中配置优先级，按顺序降级，首个可用的生效。
+
+新浪 / 腾讯源的解析逻辑借鉴自 [easyquotation](https://github.com/shidenggui/easyquotation)
+（MIT License，Copyright (c) 2018 shidenggui），特此致谢。
 
 ## 快速开始
 
@@ -38,6 +51,7 @@ python -m ashare_monitor.main monitor
 | `alerts.price_above / price_below` | 按代码设置价格上破 / 下破提醒 |
 | `monitor.interval_seconds` | 轮询间隔，默认 30s |
 | `monitor.trading_hours_only` | 是否仅在交易时段运行 |
+| `quotes.sources` | 行情数据源及优先级，默认 `["sina", "tencent", "eastmoney"]` |
 
 如需本地私有配置，复制为 `config.local.yaml`（已被 gitignore）。
 

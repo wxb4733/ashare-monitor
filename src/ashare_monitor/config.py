@@ -27,10 +27,19 @@ class MonitorConfig:
 
 
 @dataclass
+class QuoteConfig:
+    # 数据源优先级，按顺序降级
+    sources: list[str] = field(
+        default_factory=lambda: ["sina", "tencent", "eastmoney"]
+    )
+
+
+@dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
+    quotes: QuoteConfig = field(default_factory=QuoteConfig)
     logging: dict = field(default_factory=dict)
 
 
@@ -48,6 +57,7 @@ def load_config(path: str | None = None) -> Config:
 
     alerts_raw = raw.get("alerts", {}) or {}
     monitor_raw = raw.get("monitor", {}) or {}
+    quotes_raw = raw.get("quotes", {}) or {}
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
@@ -62,6 +72,11 @@ def load_config(path: str | None = None) -> Config:
             trading_sessions=monitor_raw.get(
                 "trading_sessions", [["09:30", "11:30"], ["13:00", "15:00"]]
             ),
+        ),
+        quotes=QuoteConfig(
+            sources=[str(s) for s in quotes_raw.get(
+                "sources", ["sina", "tencent", "eastmoney"]
+            )],
         ),
         logging=raw.get("logging", {}) or {},
     )

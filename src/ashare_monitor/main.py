@@ -54,12 +54,18 @@ def render_quotes(quotes: list[Quote]) -> None:
     console.print(table)
 
 
-def snapshot(codes: list[str], notifiers: list[Notifier], engine: AlertEngine) -> None:
-    quotes = fetch_spot_quotes(codes)
+def snapshot(
+    codes: list[str],
+    notifiers: list[Notifier],
+    engine: AlertEngine,
+    sources: list[str] | None = None,
+) -> None:
+    quotes, source = fetch_spot_quotes(codes, sources=sources)
     if not quotes:
         console.print("[yellow]未获取到行情数据（可能不在交易时段或网络异常）[/yellow]")
         return
     render_quotes(quotes)
+    console.print(f"[dim]数据源: {source}[/dim]")
     for q in quotes:
         for alert in engine.check(q):
             for n in notifiers:
@@ -97,7 +103,7 @@ def run_monitor(config_path: str | None) -> None:
                 time.sleep(interval)
                 continue
             try:
-                snapshot(codes, notifiers, engine)
+                snapshot(codes, notifiers, engine, sources=cfg.quotes.sources)
             except Exception:
                 logger.exception("本轮行情获取失败")
             time.sleep(interval)
@@ -112,7 +118,7 @@ def run_once(config_path: str | None) -> None:
     if not codes:
         console.print("[red]config.yaml 中 watchlist 为空[/red]")
         return
-    snapshot(codes, [ConsoleNotifier()], AlertEngine(cfg.alerts))
+    snapshot(codes, [ConsoleNotifier()], AlertEngine(cfg.alerts), sources=cfg.quotes.sources)
 
 
 def main() -> None:
