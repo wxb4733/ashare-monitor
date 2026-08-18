@@ -17,6 +17,8 @@ alerts:
   weibi_threshold: 80
   # 单档挂单量（手）超过该值触发大单预警
   big_order_threshold: 5000
+  # 当日振幅（(最高-最低)/昨收）超过该百分比触发波动预警
+  amplitude_threshold: 5.0
   # 价格突破提醒（可选，按代码配置）
   price_above:
     # "600519": 1800.0

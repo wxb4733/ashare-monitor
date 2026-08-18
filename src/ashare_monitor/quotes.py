@@ -53,6 +53,13 @@ class Quote:
             return None
         return (bid_vol - ask_vol) / total * 100
 
+    @property
+    def amplitude(self) -> float | None:
+        """振幅 %：(最高 - 最低) / 昨收 × 100，衡量当日波动剧烈程度。"""
+        if not self.prev_close:
+            return None
+        return (self.high - self.low) / self.prev_close * 100
+
 
 def fetch_spot_quotes(
     codes: list[str],

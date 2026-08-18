@@ -95,6 +95,19 @@ class AlertEngine:
             else:
                 self._triggered.discard((quote.code, "big_order"))
 
+        # 振幅波动
+        amp_threshold = self.config.amplitude_threshold
+        if amp_threshold is not None:
+            amp = quote.amplitude
+            if amp is not None and amp >= amp_threshold:
+                alerts.append(self._make_alert(
+                    quote, "amplitude",
+                    f"当日振幅 {amp:.2f}%，波动超过阈值 {amp_threshold:.1f}%"
+                    f"（{quote.low:.2f} ~ {quote.high:.2f}）",
+                ))
+            else:
+                self._triggered.discard((quote.code, "amplitude"))
+
         return [a for a in alerts if a is not None]
 
     @staticmethod

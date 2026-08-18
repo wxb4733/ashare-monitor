@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .alerts import AlertEngine
+from .analysis import HistoryReport
 from .config import load_config
 from .notify import ConsoleNotifier, Notifier
 from .quotes import Quote, fetch_spot_quotes, is_trading_time
@@ -38,7 +39,7 @@ def render_quotes(quotes: list[Quote]) -> None:
     """以表格形式打印行情快照（A 股习惯：涨红跌绿）。"""
     has_depth = any(q.bids or q.asks for q in quotes)
     table = Table(title=f"A 股实时行情  {datetime.now():%Y-%m-%d %H:%M:%S}")
-    columns = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交量(手)", "成交额(万)"]
+    columns = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "振幅", "成交量(手)", "成交额(万)"]
     if has_depth:
         columns += ["买一", "卖一", "委比"]
     for col in columns:
@@ -46,12 +47,14 @@ def render_quotes(quotes: list[Quote]) -> None:
 
     for q in quotes:
         color = "red" if q.change_pct > 0 else ("green" if q.change_pct < 0 else "white")
+        amp = q.amplitude
         row = [
             q.code,
             q.name,
             f"{q.price:.2f}",
             f"[{color}]{q.change_pct:+.2f}%[/{color}]",
             f"[{color}]{q.change:+.2f}[/{color}]",
+            f"{amp:.2f}%" if amp is not None else "-",
             f"{q.volume:,.0f}",
             f"{q.turnover / 1e4:,.0f}",
         ]
@@ -135,6 +138,77 @@ def run_once(config_path: str | None) -> None:
     snapshot(codes, [ConsoleNotifier()], AlertEngine(cfg.alerts), sources=cfg.quotes.sources)
 
 
+def _pct_text(value: float, digits: int = 2) -> str:
+    """百分比文本，涨红跌绿。"""
+    color = "red" if value > 0 else ("green" if value < 0 else "white")
+    return f"[{color}]{value:+.{digits}f}%[/{color}]"
+
+
+def render_report(r: HistoryReport) -> None:
+    """渲染历史数据分析报告。"""
+    from rich.panel import Panel
+
+    title = f"{r.name}({r.code})" if r.name else r.code
+    console.print(Panel.fit(
+        f"[bold]{title} 历史数据分析[/bold]\n"
+        f"[dim]{r.start_date} ~ {r.end_date}，共 {r.bars} 个交易日[/dim]",
+        border_style="cyan",
+    ))
+
+    overview = Table(show_header=False, box=None, padding=(0, 2))
+    overview.add_column(style="dim")
+    overview.add_column()
+    overview.add_row("最新收盘", f"[bold]{r.latest_close:.2f}[/bold]")
+    overview.add_row("区间涨跌幅", _pct_text(r.period_return_pct))
+    overview.add_row("上涨/下跌天数", f"[red]{r.up_days}[/red] / [green]{r.down_days}[/green]"
+                     f"（胜率 {r.win_rate:.0f}%）")
+    console.print(overview)
+
+    vol_table = Table(title="波动指标")
+    for col in ("年化波动率", "近20日波动率", "最大回撤", "平均日振幅"):
+        vol_table.add_column(col, justify="right")
+    vol_table.add_row(
+        f"{r.annual_volatility_pct:.2f}%",
+        f"{r.recent20_volatility_pct:.2f}%",
+        _pct_text(r.max_drawdown_pct),
+        f"{r.avg_amplitude_pct:.2f}%",
+    )
+    console.print(vol_table)
+
+    if r.ma:
+        ma_table = Table(title="趋势（均线）")
+        ma_table.add_column("指标", justify="right")
+        for n in r.ma:
+            ma_table.add_column(f"MA{n}", justify="right")
+        values = [f"{v:.2f}" for v in r.ma.values()]
+        ma_table.add_row("数值", *values)
+        positions = []
+        for v in r.ma.values():
+            above = r.latest_close >= v
+            positions.append("[red]上方[/red]" if above else "[green]下方[/green]")
+        ma_table.add_row("收盘位置", *positions)
+        console.print(ma_table)
+
+    vol_ratio = r.volume_ratio
+    vol_text = f"{vol_ratio:.2f}" if vol_ratio is not None else "-"
+    console.print(
+        f"[dim]量能：近5日均量 {r.volume_ma5:,.0f} 手 / 近20日均量 "
+        f"{r.volume_ma20:,.0f} 手，量比 {vol_text}[/dim]"
+    )
+
+
+def run_analyze(code: str, days: int, adjust: str) -> None:
+    from .analysis import analyze
+
+    console.print(f"[cyan]正在拉取 {code} 历史数据（近 {days} 个交易日）…[/cyan]")
+    try:
+        report = analyze(code, days=days, adjust=adjust)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]分析失败：{exc}[/red]")
+        return
+    render_report(report)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="A 股交易信息监控")
     parser.add_argument("--config", help="配置文件路径（默认 config.yaml）")
@@ -142,10 +216,17 @@ def main() -> None:
 
     sub.add_parser("monitor", help="持续监控（默认命令）")
     sub.add_parser("once", help="获取一次行情快照后退出")
+    p_analyze = sub.add_parser("analyze", help="拉取个股历史数据并分析")
+    p_analyze.add_argument("code", help="6 位证券代码，如 600519")
+    p_analyze.add_argument("--days", type=int, default=250, help="回看交易日数（默认 250）")
+    p_analyze.add_argument("--adjust", default="qfq",
+                           choices=["qfq", "hfq", ""], help="复权方式（默认 qfq 前复权）")
 
     args = parser.parse_args()
     if args.command == "once":
         run_once(args.config)
+    elif args.command == "analyze":
+        run_analyze(args.code, args.days, args.adjust)
     else:
         run_monitor(args.config)
 

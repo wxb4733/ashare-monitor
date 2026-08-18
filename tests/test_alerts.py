@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import pytest
+
 from ashare_monitor.alerts import AlertEngine
 from ashare_monitor.config import AlertConfig
 from ashare_monitor.quotes import DepthLevel, Quote, is_trading_time
@@ -123,3 +125,31 @@ def test_big_order_cooldown_reset():
     # 撤单后重置
     engine.check(make_depth_quote())
     assert len(engine.check(make_depth_quote(bid_vols=(6000, 0, 0, 0, 0)))) == 1
+
+
+# ---------- 振幅波动规则 ----------
+
+def test_amplitude_property():
+    q = make_quote(price=105.0)  # high=105, low=85, prev_close=95
+    assert q.amplitude == pytest.approx((105 - 85) / 95 * 100)
+
+
+def test_amplitude_alert():
+    engine = AlertEngine(AlertConfig(amplitude_threshold=10.0))
+    # price=105: high=105, low=85, prev_close=95 → 振幅约 21%
+    alerts = engine.check(make_quote(price=105.0, change_pct=0.5))
+    assert [a.rule for a in alerts] == ["amplitude"]
+    assert "21.05%" in alerts[0].message
+    # 冷却中不重复
+    assert engine.check(make_quote(price=105.0, change_pct=0.5)) == []
+    # 振幅收窄到阈值内后冷却重置
+    q3 = make_quote(price=105.0, change_pct=0.5)
+    q3.high, q3.low = 96.0, 93.0  # 振幅约 3.2%，低于阈值
+    engine.check(q3)
+    assert len(engine.check(make_quote(price=105.0, change_pct=0.5))) == 1
+
+
+def test_amplitude_disabled_by_default():
+    engine = AlertEngine(AlertConfig())
+    rules = [a.rule for a in engine.check(make_quote(change_pct=0.5))]
+    assert "amplitude" not in rules

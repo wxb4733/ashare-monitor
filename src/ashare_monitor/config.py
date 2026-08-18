@@ -18,6 +18,8 @@ class AlertConfig:
     # 盘口规则（需数据源支持五档，sina/tencent 可用；None 表示不启用）
     weibi_threshold: float | None = None       # 委比绝对值超过该百分比预警
     big_order_threshold: float | None = None   # 单档挂单量（手）超过预警
+    # 波动规则：当日振幅（(最高-最低)/昨收）超过该百分比预警
+    amplitude_threshold: float | None = None
 
 
 @dataclass
@@ -75,6 +77,10 @@ def load_config(path: str | None = None) -> Config:
             big_order_threshold=(
                 float(alerts_raw["big_order_threshold"])
                 if alerts_raw.get("big_order_threshold") is not None else None
+            ),
+            amplitude_threshold=(
+                float(alerts_raw["amplitude_threshold"])
+                if alerts_raw.get("amplitude_threshold") is not None else None
             ),
         ),
         monitor=MonitorConfig(

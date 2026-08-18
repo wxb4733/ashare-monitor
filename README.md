@@ -39,9 +39,21 @@ python -m ashare_monitor.main once
 
 # 持续监控
 python -m ashare_monitor.main monitor
+
+# 历史数据分析（近 120 个交易日，前复权）
+python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze`。
+
+## 历史数据分析（analyze）
+
+拉取个股日线历史（优先东财 akshare，失败自动降级腾讯 K 线），输出：
+
+- **概览**：最新收盘、区间涨跌幅、上涨/下跌天数与胜率
+- **波动指标**：年化波动率、近 20 日波动率、最大回撤、平均日振幅
+- **趋势**：MA5/10/20/60 与收盘价相对位置
+- **量能**：近 5 日 / 20 日均量与量比
 
 ## 配置说明（config.yaml）
 
@@ -52,6 +64,7 @@ python -m ashare_monitor.main monitor
 | `alerts.price_above / price_below` | 按代码设置价格上破 / 下破提醒 |
 | `alerts.weibi_threshold` | 委比绝对值超阈值预警（%），需五档数据，不设则关闭 |
 | `alerts.big_order_threshold` | 单档挂单量（手）超阈值预警，不设则关闭 |
+| `alerts.amplitude_threshold` | 当日振幅（%）超阈值波动预警，不设则关闭 |
 | `monitor.interval_seconds` | 轮询间隔，默认 30s |
 | `monitor.trading_hours_only` | 是否仅在交易时段运行 |
 | `quotes.sources` | 行情数据源及优先级，默认 `["sina", "tencent", "eastmoney"]` |
