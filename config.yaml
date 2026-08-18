@@ -1,0 +1,35 @@
+# A 股监控配置
+# 自选股列表：code 为 6 位证券代码
+watchlist:
+  - code: "600519"   # 贵州茅台
+    name: "贵州茅台"
+  - code: "000001"   # 平安银行
+    name: "平安银行"
+  - code: "300750"   # 宁德时代
+    name: "宁德时代"
+
+# 预警规则
+alerts:
+  # 涨跌幅超过该百分比触发预警（正数为涨幅，负数为跌幅取绝对值）
+  change_pct_threshold: 3.0
+  # 价格突破提醒（可选，按代码配置）
+  price_above:
+    # "600519": 1800.0
+  price_below:
+    # "600519": 1500.0
+
+# 监控设置
+monitor:
+  # 轮询间隔（秒），注意交易时间外无数据更新
+  interval_seconds: 30
+  # 仅在交易时段运行
+  trading_hours_only: true
+  # 交易时段（24 小时制）
+  trading_sessions:
+    - ["09:30", "11:30"]
+    - ["13:00", "15:00"]
+
+# 日志
+logging:
+  level: "INFO"
+  file: "logs/monitor.log"

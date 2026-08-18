@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ashare-monitor"
+version = "0.1.0"
+description = "A 股交易信息监控：实时行情、涨跌幅预警、异动提醒"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "akshare>=1.14",
+    "pandas>=2.0",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "schedule>=1.2",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+ashare-monitor = "ashare_monitor.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
