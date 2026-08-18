@@ -29,6 +29,12 @@ class MonitorConfig:
     trading_sessions: list[list[str]] = field(
         default_factory=lambda: [["09:30", "11:30"], ["13:00", "15:00"]]
     )
+    # 监控启动时输出自选股历史波动基线
+    startup_profile: bool = True
+    # 预警触发时附带该股近期波动画像（按交易日缓存）
+    alert_profile: bool = True
+    # 画像回看交易日数
+    profile_days: int = 120
 
 
 @dataclass
@@ -89,6 +95,9 @@ def load_config(path: str | None = None) -> Config:
             trading_sessions=monitor_raw.get(
                 "trading_sessions", [["09:30", "11:30"], ["13:00", "15:00"]]
             ),
+            startup_profile=bool(monitor_raw.get("startup_profile", True)),
+            alert_profile=bool(monitor_raw.get("alert_profile", True)),
+            profile_days=int(monitor_raw.get("profile_days", 120)),
         ),
         quotes=QuoteConfig(
             sources=[str(s) for s in quotes_raw.get(

@@ -17,9 +17,13 @@ class Alert:
     name: str
     rule: str      # 触发的规则描述
     message: str
+    profile: str | None = None  # 可选：该股近期波动画像（analyze 生成）
 
     def __str__(self) -> str:
-        return f"[{self.rule}] {self.name}({self.code}): {self.message}"
+        base = f"[{self.rule}] {self.name}({self.code}): {self.message}"
+        if self.profile:
+            return f"{base}\n    └─ 波动画像: {self.profile}"
+        return base
 
 
 class AlertEngine:

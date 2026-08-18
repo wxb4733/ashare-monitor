@@ -55,6 +55,10 @@ python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
 - **趋势**：MA5/10/20/60 与收盘价相对位置
 - **量能**：近 5 日 / 20 日均量与量比
 
+分析能力已接入监控流程：监控启动时输出自选股波动基线表；预警触发时自动附带
+该股一行波动画像（近 N 日涨跌 / 年化波动 / 最大回撤 / 日均振幅 / MA20 位置 / 量比），
+按交易日缓存，每只股票每天只拉取一次历史数据，不影响轮询性能。
+
 ## 配置说明（config.yaml）
 
 | 配置项 | 说明 |
@@ -67,6 +71,9 @@ python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
 | `alerts.amplitude_threshold` | 当日振幅（%）超阈值波动预警，不设则关闭 |
 | `monitor.interval_seconds` | 轮询间隔，默认 30s |
 | `monitor.trading_hours_only` | 是否仅在交易时段运行 |
+| `monitor.startup_profile` | 启动时输出自选股历史波动基线，默认开 |
+| `monitor.alert_profile` | 预警触发时附带该股近期波动画像（按交易日缓存），默认开 |
+| `monitor.profile_days` | 画像回看交易日数，默认 120 |
 | `quotes.sources` | 行情数据源及优先级，默认 `["sina", "tencent", "eastmoney"]` |
 
 如需本地私有配置，复制为 `config.local.yaml`（已被 gitignore）。

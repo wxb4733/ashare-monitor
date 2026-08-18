@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .alerts import AlertEngine
-from .analysis import HistoryReport
+from .analysis import HistoryReport, ProfileCache
 from .config import load_config
 from .notify import ConsoleNotifier, Notifier
 from .quotes import Quote, fetch_spot_quotes, is_trading_time
@@ -76,6 +76,7 @@ def snapshot(
     notifiers: list[Notifier],
     engine: AlertEngine,
     sources: list[str] | None = None,
+    profile_cache: "ProfileCache | None" = None,
 ) -> None:
     quotes, source = fetch_spot_quotes(codes, sources=sources)
     if not quotes:
@@ -85,8 +86,22 @@ def snapshot(
     console.print(f"[dim]数据源: {source}[/dim]")
     for q in quotes:
         for alert in engine.check(q):
+            if profile_cache is not None:
+                # 预警触发时附带该股近期波动画像（按交易日缓存，失败不阻塞）
+                alert.profile = profile_cache.get(q.code)
             for n in notifiers:
                 n.send(alert)
+
+
+def render_baseline(codes: list[str], cache: "ProfileCache") -> None:
+    """监控启动时输出自选股历史波动基线。"""
+    table = Table(title="自选股波动基线（历史数据分析）")
+    table.add_column("代码", justify="left")
+    table.add_column("近期波动画像", justify="left")
+    for code in codes:
+        profile = cache.get(code)
+        table.add_row(code, profile or "[dim]画像拉取失败[/dim]")
+    console.print(table)
 
 
 def run_monitor(config_path: str | None) -> None:
@@ -106,6 +121,12 @@ def run_monitor(config_path: str | None) -> None:
 
         notifiers.append(WebhookNotifier(webhook))
 
+    profile_cache: ProfileCache | None = None
+    if cfg.monitor.startup_profile or cfg.monitor.alert_profile:
+        profile_cache = ProfileCache(days=cfg.monitor.profile_days)
+        if cfg.monitor.startup_profile:
+            render_baseline(codes, profile_cache)
+
     interval = cfg.monitor.interval_seconds
     console.print(
         f"[cyan]开始监控 {len(codes)} 只股票，间隔 {interval}s，Ctrl+C 退出[/cyan]"
@@ -120,7 +141,11 @@ def run_monitor(config_path: str | None) -> None:
                 time.sleep(interval)
                 continue
             try:
-                snapshot(codes, notifiers, engine, sources=cfg.quotes.sources)
+                snapshot(
+                    codes, notifiers, engine,
+                    sources=cfg.quotes.sources,
+                    profile_cache=profile_cache if cfg.monitor.alert_profile else None,
+                )
             except Exception:
                 logger.exception("本轮行情获取失败")
             time.sleep(interval)

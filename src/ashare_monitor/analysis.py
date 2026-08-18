@@ -229,3 +229,47 @@ def analyze(code: str, days: int = 250, adjust: str = "qfq") -> HistoryReport:
     """拉取历史数据并计算指标（网络 + 计算的组合入口）。"""
     df, name = fetch_history(code, days=days, adjust=adjust)
     return compute_metrics(df, code=code[-6:], name=name)
+
+
+def brief_profile(report: HistoryReport) -> str:
+    """把分析报告压缩成一行画像，供监控预警附带展示。"""
+    parts = [
+        f"近{report.bars}日 {report.period_return_pct:+.1f}%",
+        f"年化波动 {report.annual_volatility_pct:.1f}%",
+        f"近20日波动 {report.recent20_volatility_pct:.1f}%",
+        f"最大回撤 {report.max_drawdown_pct:.1f}%",
+        f"日均振幅 {report.avg_amplitude_pct:.1f}%",
+    ]
+    if report.ma.get(20):
+        pos = "上方" if report.latest_close >= report.ma[20] else "下方"
+        parts.append(f"MA20{pos}")
+    vol_ratio = report.volume_ratio
+    if vol_ratio is not None:
+        parts.append(f"量比 {vol_ratio:.2f}")
+    return " | ".join(parts)
+
+
+class ProfileCache:
+    """波动画像按交易日缓存：每只股票每天只拉取一次历史数据。
+
+    监控轮询间隔以秒计，而历史画像在单个交易日内基本不变，
+    缓存避免预警密集时反复请求拖慢轮询。
+    """
+
+    def __init__(self, days: int = 120):
+        self.days = days
+        self._cache: dict[str, tuple[str, str]] = {}  # code -> (交易日, 画像)
+
+    def get(self, code: str) -> str | None:
+        """返回该股当日画像；拉取失败返回 None（不抛异常，不影响监控主流程）。"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        cached = self._cache.get(code)
+        if cached and cached[0] == today:
+            return cached[1]
+        try:
+            profile = brief_profile(analyze(code, days=self.days))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("波动画像拉取失败 %s: %s", code, exc)
+            return None
+        self._cache[code] = (today, profile)
+        return profile

@@ -7,7 +7,9 @@ import pytest
 
 from ashare_monitor.analysis import (
     TRADING_DAYS_PER_YEAR,
+    ProfileCache,
     _parse_tencent_kline,
+    brief_profile,
     compute_metrics,
 )
 
@@ -129,3 +131,47 @@ def test_parse_tencent_kline_empty_raises():
 
     with _pytest.raises(RuntimeError):
         _parse_tencent_kline({"data": {}}, "sh600519", "600519")
+
+
+# ---------- 波动画像与缓存 ----------
+
+def test_brief_profile():
+    df = make_df([100.0 + i for i in range(70)])
+    r = compute_metrics(df, code="600519", name="测试股")
+    text = brief_profile(r)
+    assert "近70日" in text
+    assert "年化波动" in text
+    assert "最大回撤" in text
+    assert "MA20上方" in text  # 稳定上行，收盘在 MA20 上方
+    assert "量比" in text
+
+
+def test_profile_cache_per_day(monkeypatch):
+    import ashare_monitor.analysis as analysis_mod
+
+    calls = []
+
+    def fake_analyze(code, days=250):
+        calls.append(code)
+        df = make_df([100.0, 101.0, 102.0])
+        return compute_metrics(df, code=code)
+
+    monkeypatch.setattr(analysis_mod, "analyze", fake_analyze)
+    cache = ProfileCache(days=60)
+    p1 = cache.get("600519")
+    p2 = cache.get("600519")   # 同一天应命中缓存，不再拉取
+    p3 = cache.get("000001")   # 不同股票独立拉取
+    assert p1 == p2
+    assert p3 is not None
+    assert calls == ["600519", "000001"]
+
+
+def test_profile_cache_failure_returns_none(monkeypatch):
+    import ashare_monitor.analysis as analysis_mod
+
+    def boom(code, days=250):
+        raise ConnectionError("network down")
+
+    monkeypatch.setattr(analysis_mod, "analyze", boom)
+    cache = ProfileCache()
+    assert cache.get("600519") is None  # 失败返回 None，不抛异常
