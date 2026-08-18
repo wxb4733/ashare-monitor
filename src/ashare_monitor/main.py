@@ -176,6 +176,12 @@ def run_monitor(config_path: str | None) -> None:
 
                     path, day_quotes, day_records = generate_review(today, cfg)
                     console.print(f"[green]复盘报告已生成: {path}[/green]")
+                    try:
+                        from .storage import save_review
+
+                        save_review(today, str(path), day_quotes, day_records)
+                    except Exception:
+                        logger.exception("复盘记录 SQLite 落盘失败")
                     for n in notifiers:
                         if hasattr(n, "send_text"):
                             n.send_text(build_push_summary(
@@ -202,6 +208,12 @@ def run_monitor(config_path: str | None) -> None:
                     )
                     if fired:
                         append_alerts(fired)
+                        try:
+                            from .storage import record_alerts
+
+                            record_alerts(fired, market=market)
+                        except Exception:
+                            logger.exception("预警 SQLite 落盘失败（%s）", market)
                 except Exception:
                     logger.exception("本轮行情获取失败（%s）", market)
             if not any_active:
@@ -316,11 +328,81 @@ def run_review(date: str | None, config_path: str | None) -> None:
     setup_logging(cfg.logging)
     console.print("[cyan]正在生成复盘报告…[/cyan]")
     try:
-        path, _quotes, _records = generate_review(date, cfg)
+        path, quotes, records = generate_review(date, cfg)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]复盘报告生成失败：{exc}[/red]")
         return
+    try:
+        from .storage import save_review
+
+        save_review(date or datetime.now().strftime("%Y-%m-%d"),
+                    str(path), quotes, records)
+    except Exception:
+        logger.exception("复盘记录 SQLite 落盘失败")
     console.print(f"[green]复盘报告已生成: {path}[/green]")
+
+
+def render_scan(result) -> None:
+    """以表格打印全市场异动榜单（A 股习惯：涨红跌绿）。"""
+    def board(title: str, rows: list[dict], fmt: str) -> None:
+        if not rows:
+            return
+        table = Table(title=title)
+        table.add_column("代码", justify="left")
+        table.add_column("名称", justify="left")
+        table.add_column("最新价", justify="right")
+        for col in ("涨跌幅", "量比", "换手率", "振幅"):
+            table.add_column(col, justify="right")
+        for r in rows:
+            color = "red" if r["change_pct"] > 0 else ("green" if r["change_pct"] < 0 else "white")
+            table.add_row(
+                r["code"], r["name"], f"{r['price']:.2f}",
+                f"[{color}]{r['change_pct']:+.2f}%[/{color}]",
+                f"{r['volume_ratio']:.2f}" if r["volume_ratio"] is not None else "-",
+                f"{r['turnover_rate']:.1f}%" if r["turnover_rate"] is not None else "-",
+                f"{r['amplitude']:.2f}%" if r["amplitude"] is not None else "-",
+            )
+        console.print(table)
+
+    board("涨幅榜", result.gainers, "+")
+    board("跌幅榜", result.losers, "-")
+    board("放量异动（量比 ≥ 阈值）", result.volume_spikes, "")
+    board("高换手", result.hot_turnover, "")
+    board("高振幅", result.wide_amplitude, "")
+
+
+def run_scan(config_path: str | None) -> None:
+    from .screener import ScanConfig, scan_market
+
+    cfg = load_config(config_path)
+    setup_logging(cfg.logging)
+    console.print("[cyan]正在拉取全市场快照并扫描异动…[/cyan]")
+    try:
+        result = scan_market(cfg=ScanConfig(
+            limit=cfg.scan.limit,
+            exclude_st=cfg.scan.exclude_st,
+            min_price=cfg.scan.min_price,
+            volume_ratio=cfg.scan.volume_ratio,
+            turnover_rate=cfg.scan.turnover_rate,
+        ))
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]扫描失败：{exc}[/red]")
+        return
+    render_scan(result)
+
+
+def run_report(period: str, date: str | None, config_path: str | None) -> None:
+    from .review import generate_period_report
+
+    cfg = load_config(config_path)
+    setup_logging(cfg.logging)
+    console.print(f"[cyan]正在生成{period}复盘汇总报告…[/cyan]")
+    try:
+        path = generate_period_report(period, date, cfg)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]汇总报告生成失败：{exc}[/red]")
+        return
+    console.print(f"[green]汇总报告已生成: {path}[/green]")
 
 
 def main() -> None:
@@ -339,6 +421,11 @@ def main() -> None:
                            choices=["qfq", "hfq", ""], help="复权方式（默认 qfq 前复权）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
+    sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
+    p_report = sub.add_parser("report", help="生成周/月复盘汇总报告")
+    p_report.add_argument("--weekly", action="store_true", help="周报（默认）")
+    p_report.add_argument("--monthly", action="store_true", help="月报")
+    p_report.add_argument("--date", help="周期结束日期 YYYY-MM-DD，默认今天")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -347,6 +434,11 @@ def main() -> None:
         run_analyze(args.code, args.days, args.adjust, args.market)
     elif args.command == "review":
         run_review(args.date, args.config)
+    elif args.command == "scan":
+        run_scan(args.config)
+    elif args.command == "report":
+        period = "monthly" if args.monthly else "weekly"
+        run_report(period, args.date, args.config)
     else:
         run_monitor(args.config)
 

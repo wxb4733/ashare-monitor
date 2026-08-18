@@ -52,9 +52,29 @@ python -m ashare_monitor.main analyze BTCUSDT --market crypto --days 60
 
 # 生成复盘报告（默认今天，可指定日期）
 python -m ashare_monitor.main review [--date 2026-08-18]
+
+# 全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）
+python -m ashare_monitor.main scan
+
+# 周/月复盘汇总报告（基于 SQLite 积累的数据）
+python -m ashare_monitor.main report --weekly
+python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor review`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## 全市场异动扫描（scan）
+
+从自选股盯盘升级到全市场发现，输出五个榜单：**涨幅榜 / 跌幅榜 / 放量异动（量比≥阈值）/ 高换手 / 高振幅**。
+
+- 数据源：优先东财全市场快照（字段全，含量比/换手率），失败自动降级新浪（仅基础字段，放量/换手榜不可用）
+- 默认剔除 ST 与低价股（`scan.exclude_st` / `scan.min_price` 配置）
+
+## 历史复盘数据积累（SQLite + report）
+
+- 监控期间预警双写：JSONL 审计日志 + **SQLite**（`data/ashore_monitor.db`），支持按日期/规则/标的聚合查询
+- 每日复盘报告生成后自动入库（行情摘要、预警统计）
+- `report --weekly/--monthly` 输出汇总报告：区间行情表现、预警规则分布 / 每日预警数 / 标的排行（ECharts 柱状图）、每日复盘记录、预警明细
 
 ## 收盘复盘报告（review）
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .alerts import Alert
@@ -373,3 +373,215 @@ def build_push_summary(
     lines.append(f"当日预警 {len(records)} 条")
     lines.append(f"报告：{report_path}")
     return "\n".join(lines)
+
+
+# ---------- 周 / 月复盘汇总 ----------
+
+_PERIOD_DAYS = {"weekly": 7, "monthly": 30}
+_PERIOD_LABEL = {"weekly": "周报", "monthly": "月报"}
+
+
+def _period_range(period: str, end_date: str | None) -> tuple[str, str]:
+    """返回周期起止日期。"""
+    end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.now()
+    start = end - timedelta(days=_PERIOD_DAYS.get(period, 7) - 1)
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+def generate_period_report(
+    period: str, end_date: str | None, cfg: Config, output_dir: str = OUTPUT_DIR
+) -> Path:
+    """基于 SQLite 积累的数据生成周 / 月复盘汇总报告。"""
+    from .storage import (
+        count_alerts_by_code,
+        count_alerts_by_rule,
+        count_alerts_daily,
+        load_alerts_range,
+        load_reviews_range,
+    )
+
+    start, end = _period_range(period, end_date)
+    label = _PERIOD_LABEL.get(period, "汇总")
+
+    rule_counts = count_alerts_by_rule(start, end)
+    daily_counts = count_alerts_daily(start, end)
+    code_counts = count_alerts_by_code(start, end)
+    alerts = load_alerts_range(start, end)
+    reviews = load_reviews_range(start, end)
+
+    # 区间行情表现（每只自选标的：期初→期末涨跌幅）
+    stock_rows = []
+    for item in cfg.watchlist:
+        code = str(item["code"])
+        market = str(item.get("market", "ashare"))
+        try:
+            df, name = fetch_history(
+                code, days=_PERIOD_DAYS.get(period, 7) * 2 + 10,
+                adjust="qfq" if market != "crypto" else "",
+                market=market,
+            )
+            df = df[df["日期"].astype(str) >= start]
+            if len(df) >= 2:
+                first, last = float(df["收盘"].iloc[0]), float(df["收盘"].iloc[-1])
+                stock_rows.append({
+                    "code": code, "name": name or code, "market": market,
+                    "first": first, "last": last,
+                    "return_pct": (last / first - 1) * 100,
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("汇总：%s 行情拉取失败: %s", code, exc)
+
+    html = _build_period_html(
+        label, start, end, alerts, rule_counts, daily_counts,
+        code_counts, stock_rows, reviews,
+    )
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"report-{period}-{end}.html"
+    out_path.write_text(html, encoding="utf-8")
+    logger.info("%s汇总报告已生成: %s", label, out_path)
+    return out_path
+
+
+_PERIOD_JS = """
+function renderBar(elId, title, cats, values, color) {
+  var chart = echarts.init(document.getElementById(elId));
+  chart.setOption({
+    title: { text: title, left: 8, textStyle: { fontSize: 13 } },
+    tooltip: {},
+    grid: { left: 50, right: 20, top: 42, bottom: 40 },
+    xAxis: { type: 'category', data: cats, axisLabel: { rotate: 40, fontSize: 10 } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#f0f0f0' } } },
+    series: [{
+      type: 'bar', data: values,
+      itemStyle: { color: color, borderRadius: [3, 3, 0, 0] },
+      label: { show: true, position: 'top', fontSize: 10 }
+    }]
+  });
+}
+"""
+
+
+def _build_period_html(
+    label: str, start: str, end: str,
+    alerts: list[dict],
+    rule_counts: list[dict],
+    daily_counts: list[dict],
+    code_counts: list[dict],
+    stock_rows: list[dict],
+    reviews: list[dict],
+) -> str:
+    def bar_block(el_id: str, title: str, cats: list[str], vals: list, color: str) -> str:
+        return (
+            f'<div class="card"><div class="chart-sm" id="{el_id}"></div></div>'
+            f'<script>renderBar("{el_id}", {json.dumps(title, ensure_ascii=False)}, '
+            f'{json.dumps(cats, ensure_ascii=False)}, {json.dumps(vals)}, "{color}");</script>'
+        )
+
+    # 行情表现表
+    stock_table = ""
+    if stock_rows:
+        rows = []
+        for r in sorted(stock_rows, key=lambda x: x["return_pct"], reverse=True):
+            cls = "up" if r["return_pct"] > 0 else ("down" if r["return_pct"] < 0 else "")
+            rows.append(
+                "<tr>"
+                f"<td>{r['market']}</td><td>{r['name']}({r['code']})</td>"
+                f"<td>{r['first']:.2f}</td><td>{r['last']:.2f}</td>"
+                f'<td><span class="{cls}">{r["return_pct"]:+.2f}%</span></td>'
+                "</tr>"
+            )
+        stock_table = f"""
+<h2>一、区间行情表现（{start} ~ {end}）</h2>
+<div class="card">
+<table>
+<tr><th>市场</th><th>标的</th><th>期初</th><th>期末</th><th>区间涨跌</th></tr>
+{''.join(rows)}
+</table>
+</div>"""
+
+    # 每日复盘记录
+    review_rows = ""
+    if reviews:
+        rows = []
+        for r in reviews:
+            rows.append(
+                "<tr>"
+                f"<td>{r['date']}</td><td>预警 {r['alert_count']} 条</td>"
+                f"<td>{r['generated_at']}</td>"
+                f'<td><a href="{r["report_path"]}">{r["report_path"]}</a></td>'
+                "</tr>"
+            )
+        review_rows = "".join(rows)
+
+    rule_cats = [RULE_NAMES.get(r["rule"], r["rule"]) for r in rule_counts]
+    rule_vals = [r["count"] for r in rule_counts]
+    daily_cats = [r["date"][5:] for r in daily_counts]
+    daily_vals = [r["count"] for r in daily_counts]
+    code_cats = [f"{r['name'] or r['code']}" for r in code_counts]
+    code_vals = [r["count"] for r in code_counts]
+
+    # 每日预警明细表
+    alert_detail = ""
+    if alerts:
+        rows = []
+        for r in alerts:
+            rows.append(
+                "<tr>"
+                f"<td>{r['date']}</td><td>{r['time']}</td>"
+                f"<td>{r['name']}({r['code']})</td>"
+                f'<td><span class="tag">{RULE_NAMES.get(r["rule"], r["rule"])}</span></td>'
+                f"<td style=\"text-align:left\">{r['message']}</td>"
+                "</tr>"
+            )
+        alert_detail = f"""
+<h2>四、预警明细（{start} ~ {end}，共 {len(alerts)} 条）</h2>
+<div class="card">
+<table>
+<tr><th>日期</th><th>时间</th><th>标的</th><th>规则</th><th style="text-align:left">详情</th></tr>
+{''.join(rows)}
+</table>
+</div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A 股{label}复盘汇总 {end}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>{_CSS}
+.chart-sm {{ width: 100%; height: 260px; }}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>A 股{label}复盘汇总</h1>
+<div class="meta">{start} ~ {end} · 生成于 {datetime.now():%Y-%m-%d %H:%M:%S} · 数据来源：公开行情接口 + 本地监控积累</div>
+{stock_table}
+
+<h2>二、预警统计</h2>
+<div class="card" style="display:flex;gap:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:220px">
+<p class="meta">区间共触发 <b>{len(alerts)}</b> 条预警</p>
+<p class="meta">涉及 <b>{len(code_counts)}</b> 只标的</p>
+<p class="meta">累计生成 <b>{len(reviews)}</b> 份日复盘</p>
+</div>
+</div>
+{bar_block("chart-rule", "预警规则分布", rule_cats or ["-"], rule_vals or [0], "#c0392b")}
+{bar_block("chart-daily", "每日预警数", daily_cats or ["-"], daily_vals or [0], "#2980b9")}
+{bar_block("chart-code", "预警排行（按标的）", code_cats or ["-"], code_vals or [0], "#8e44ad")}
+
+<h2>三、每日复盘记录</h2>
+<div class="card">
+<table>
+<tr><th>日期</th><th>摘要</th><th>生成时间</th><th>报告</th></tr>
+{review_rows or '<tr><td colspan="4" style="text-align:center;color:#86909c">区间内暂无复盘记录</td></tr>'}
+</table>
+</div>
+{alert_detail}
+
+<div class="footer">{_DISCLAIMER}</div>
+</div>
+<script>{_JS}{_PERIOD_JS}</script>
+</body>
+</html>"""

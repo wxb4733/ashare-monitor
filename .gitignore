@@ -8,6 +8,8 @@ config.local.yaml
 data/
 logs/
 output/
+# 项目内置数据文件除外（新浪全市场快照用的代码表）
+!src/ashare_monitor/data/
 .pytest_cache/
 .idea/
 .vscode/

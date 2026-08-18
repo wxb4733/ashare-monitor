@@ -58,12 +58,26 @@ class ReviewConfig:
 
 
 @dataclass
+class ScanConfig:
+    # 每个榜单展示条数
+    limit: int = 10
+    # 剔除 ST / 低价股
+    exclude_st: bool = True
+    min_price: float = 2.0
+    # 放量异动量比阈值
+    volume_ratio: float = 2.0
+    # 高换手阈值（%）
+    turnover_rate: float = 5.0
+
+
+@dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     quotes: QuoteConfig = field(default_factory=QuoteConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    scan: ScanConfig = field(default_factory=ScanConfig)
     logging: dict = field(default_factory=dict)
 
 
@@ -83,6 +97,7 @@ def load_config(path: str | None = None) -> Config:
     monitor_raw = raw.get("monitor", {}) or {}
     quotes_raw = raw.get("quotes", {}) or {}
     review_raw = raw.get("review", {}) or {}
+    scan_raw = raw.get("scan", {}) or {}
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
@@ -124,6 +139,13 @@ def load_config(path: str | None = None) -> Config:
                 "indexes", ["sh000001", "sz399001", "sz399006"]
             )],
             kline_days=int(review_raw.get("kline_days", 60)),
+        ),
+        scan=ScanConfig(
+            limit=int(scan_raw.get("limit", 10)),
+            exclude_st=bool(scan_raw.get("exclude_st", True)),
+            min_price=float(scan_raw.get("min_price", 2.0)),
+            volume_ratio=float(scan_raw.get("volume_ratio", 2.0)),
+            turnover_rate=float(scan_raw.get("turnover_rate", 5.0)),
         ),
         logging=raw.get("logging", {}) or {},
     )

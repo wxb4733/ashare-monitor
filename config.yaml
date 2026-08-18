@@ -65,6 +65,14 @@ review:
   # 报告内 K 线回看交易日数
   kline_days: 60
 
+# 全市场异动扫描
+scan:
+  limit: 10          # 每个榜单展示条数
+  exclude_st: true   # 剔除 ST
+  min_price: 2.0     # 剔除低价股
+  volume_ratio: 2.0  # 放量异动量比阈值
+  turnover_rate: 5.0 # 高换手阈值（%）
+
 # 日志
 logging:
   level: "INFO"

@@ -25,11 +25,16 @@ _HEADERS = {
     "Referer": "https://finance.sina.com.cn/",
 }
 
-# 名称 + 29 个数值字段 + 日期 + 时间
-_DETAIL_RE = re.compile(
-    r"(\w{2}\d+)=\"([^\s,]+?)%s%s\";"
-    % (r",([\.\d]+)" * 29, r",([-\d:]+)" * 2)
-)
+# 提取代码与整个记录（字段数随新浪升级变化，改用分隔符解析而非严格正则）
+_LINE_RE = re.compile(r'(\w{2}\d+)="([^"]*)"')
+
+# 报文固定位置（索引从 0 计，忽略末尾新增字段）
+_IDX = {
+    "name": 0,
+    "open": 1, "prev_close": 2, "now": 3, "high": 4, "low": 5,
+    "buy": 6, "sell": 7, "turnover": 8, "volume": 9,
+    "date": 30, "time": 31,
+}
 
 
 class SinaProvider(QuoteProvider):
@@ -51,30 +56,45 @@ class SinaProvider(QuoteProvider):
 
     @staticmethod
     def parse(text: str) -> list[Quote]:
-        """解析新浪行情文本为 Quote 列表（独立出来便于测试）。"""
+        """解析新浪行情文本为 Quote 列表（独立出来便于测试）。
+
+        兼容新浪 32/33/34 字段等不同版本报文：只取固定位置的字段，
+        尾部新增字段（如涨速、盘口）一律忽略。
+        """
         text = text.replace(" ", "")
         quotes: list[Quote] = []
-        for m in _DETAIL_RE.finditer(text):
-            f = m.groups()
-            symbol, name = f[0], f[1]
-            (
-                open_, prev_close, now, high, low,
-                _buy, _sell, turnover, volume,
-            ) = (float(f[i]) for i in range(2, 11))
-            date_str, time_str = f[31], f[32]
+        for m in _LINE_RE.finditer(text):
+            symbol, payload = m.group(1), m.group(2)
+            if not payload:
+                continue
+            f = payload.split(",")
+            if len(f) < 33:
+                continue
+            name = f[_IDX["name"]]
+            try:
+                open_ = float(f[_IDX["open"]])
+                prev_close = float(f[_IDX["prev_close"]])
+                now = float(f[_IDX["now"]])
+                high = float(f[_IDX["high"]])
+                low = float(f[_IDX["low"]])
+                turnover = float(f[_IDX["turnover"]])
+                volume = float(f[_IDX["volume"]])
+            except ValueError:
+                continue
+            date_str, time_str = f[_IDX["date"]], f[_IDX["time"]]
             try:
                 ts = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 ts = datetime.now()
             change = now - prev_close
             change_pct = change / prev_close * 100 if prev_close else 0.0
-            # 五档盘口：f[11..30]，每档「挂单量(股), 价格」交替，买 10 个值 + 卖 10 个值
+            # 五档盘口：f[10..29]，每档「挂单量(股), 价格」交替，买 10 个值 + 卖 10 个值
             bids = [
-                DepthLevel(price=float(f[12 + 2 * i]), volume=int(float(f[11 + 2 * i]) / 100))
+                DepthLevel(price=float(f[11 + 2 * i]), volume=int(float(f[10 + 2 * i]) / 100))
                 for i in range(5)
             ]
             asks = [
-                DepthLevel(price=float(f[22 + 2 * i]), volume=int(float(f[21 + 2 * i]) / 100))
+                DepthLevel(price=float(f[21 + 2 * i]), volume=int(float(f[20 + 2 * i]) / 100))
                 for i in range(5)
             ]
             quotes.append(
