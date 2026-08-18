@@ -50,6 +50,10 @@ python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
 python -m ashare_monitor.main analyze 00700 --market hk --days 60
 python -m ashare_monitor.main analyze BTCUSDT --market crypto --days 60
 
+# 规则化交易信号（结合实时行情；仅供参考，不构成投资建议）
+python -m ashare_monitor.main advice 600519 --days 120
+python -m ashare_monitor.main advice BTCUSDT --market crypto --days 60
+
 # 生成复盘报告（默认今天，可指定日期）
 python -m ashare_monitor.main review [--date 2026-08-18]
 
@@ -61,7 +65,22 @@ python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## 交易信号（advice）
+
+`advice` 命令结合**实时行情 + 历史分析**，输出规则化信号：
+
+- **均线信号**：MA5/10/20 多空排列、现价相对 MA20/MA60 位置
+- **量能信号**：量比放量 / 缩量（`signals.volume_ratio_high/low` 配置）
+- **波动信号**：近 20 日波动相对年化放大（风险上升）/ 收窄（临近变盘）
+- **动量信号**：近 N 日累计涨跌（`signals.momentum_window/pct` 配置）
+
+每条信号带方向与得分，最后给出综合研判（偏多/中性/偏空 + 信号一致度）。
+`analyze` 报告同样附带信号板块。
+
+> **重要提示**：本模块输出为规则化参考信号，**不构成投资建议**。所有输出均附完整免责声明，
+> 交易决策请结合个人风险承受能力独立判断。
 
 ## 全市场异动扫描（scan）
 

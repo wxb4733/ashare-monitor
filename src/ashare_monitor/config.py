@@ -71,6 +71,16 @@ class ScanConfig:
 
 
 @dataclass
+class SignalConfig:
+    # 量能信号阈值
+    volume_ratio_high: float = 1.2
+    volume_ratio_low: float = 0.8
+    # 动量回看周期与强弱阈值（%）
+    momentum_window: int = 20
+    momentum_pct: float = 3.0
+
+
+@dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     alerts: AlertConfig = field(default_factory=AlertConfig)
@@ -78,6 +88,7 @@ class Config:
     quotes: QuoteConfig = field(default_factory=QuoteConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    signals: SignalConfig = field(default_factory=SignalConfig)
     logging: dict = field(default_factory=dict)
 
 
@@ -98,6 +109,7 @@ def load_config(path: str | None = None) -> Config:
     quotes_raw = raw.get("quotes", {}) or {}
     review_raw = raw.get("review", {}) or {}
     scan_raw = raw.get("scan", {}) or {}
+    signals_raw = raw.get("signals", {}) or {}
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
@@ -146,6 +158,12 @@ def load_config(path: str | None = None) -> Config:
             min_price=float(scan_raw.get("min_price", 2.0)),
             volume_ratio=float(scan_raw.get("volume_ratio", 2.0)),
             turnover_rate=float(scan_raw.get("turnover_rate", 5.0)),
+        ),
+        signals=SignalConfig(
+            volume_ratio_high=float(signals_raw.get("volume_ratio_high", 1.2)),
+            volume_ratio_low=float(signals_raw.get("volume_ratio_low", 0.8)),
+            momentum_window=int(signals_raw.get("momentum_window", 20)),
+            momentum_pct=float(signals_raw.get("momentum_pct", 3.0)),
         ),
         logging=raw.get("logging", {}) or {},
     )

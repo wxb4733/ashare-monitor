@@ -309,8 +309,41 @@ def render_report(r: HistoryReport) -> None:
     )
 
 
+def render_signals(signals: list, verdict) -> None:
+    """渲染规则信号表与综合研判。"""
+    if not signals:
+        return
+    table = Table(title="交易信号（规则化，仅供参考）")
+    table.add_column("信号", justify="left")
+    table.add_column("方向", justify="center")
+    table.add_column("说明", justify="left")
+    for s in signals:
+        if s.direction == "bullish":
+            style, label = "red", "偏多"
+        elif s.direction == "bearish":
+            style, label = "green", "偏空"
+        else:
+            style, label = "yellow", "中性"
+        table.add_row(s.name, f"[{style}]{label}[/{style}]", s.detail)
+    console.print(table)
+    v_style = "red" if verdict.direction == "偏多" else (
+        "green" if verdict.direction == "偏空" else "yellow"
+    )
+    console.print(
+        f"综合研判：[{v_style}]{verdict.direction}[/{v_style}] "
+        f"（多空净得分 {verdict.score:+d}，信号一致度 {verdict.confidence:.0%}）"
+    )
+
+
+def print_disclaimer() -> None:
+    from .signals import DISCLAIMER
+
+    console.print(f"[dim]{DISCLAIMER}[/dim]")
+
+
 def run_analyze(code: str, days: int, adjust: str, market: str) -> None:
     from .analysis import analyze
+    from .signals import generate_signals, make_verdict
 
     console.print(f"[cyan]正在拉取 {code}（{market}）历史数据（近 {days} 个周期）…[/cyan]")
     try:
@@ -319,6 +352,48 @@ def run_analyze(code: str, days: int, adjust: str, market: str) -> None:
         console.print(f"[red]分析失败：{exc}[/red]")
         return
     render_report(report)
+    signals = generate_signals(report)
+    render_signals(signals, make_verdict(signals))
+    print_disclaimer()
+
+
+def run_advice(code: str, market: str, days: int, config_path: str | None) -> None:
+    """结合实时行情 + 历史分析，输出规则化交易信号。"""
+    from .analysis import analyze
+    from .quotes import fetch_spot_quotes
+    from .signals import SignalConfig, generate_signals, make_verdict
+
+    cfg = load_config(config_path)
+    console.print(
+        f"[cyan]正在获取 {code}（{market}）实时行情与历史数据…[/cyan]"
+    )
+    try:
+        quotes, _source = fetch_spot_quotes(
+            [code], sources=cfg.quotes.sources if market == "ashare" else None,
+            market=market,
+        )
+        quote = quotes[0] if quotes else None
+        report = analyze(code, days=days, adjust="qfq" if market != "crypto" else "",
+                         market=market)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]信号生成失败：{exc}[/red]")
+        return
+
+    title = f"{report.name or code}({code}) 交易信号  {datetime.now():%Y-%m-%d %H:%M:%S}"
+    console.print(f"[bold cyan]{title}[/bold cyan]")
+    if quote:
+        console.print(
+            f"实时价 [bold]{quote.price:.2f}[/bold]（{quote.change_pct:+.2f}%） "
+            f"| 历史收盘 {report.latest_close:.2f} | 数据源 {_source}"
+        )
+    signals = generate_signals(report, quote, cfg=SignalConfig(
+        volume_ratio_high=cfg.signals.volume_ratio_high,
+        volume_ratio_low=cfg.signals.volume_ratio_low,
+        momentum_window=cfg.signals.momentum_window,
+        momentum_pct=cfg.signals.momentum_pct,
+    ))
+    render_signals(signals, make_verdict(signals))
+    print_disclaimer()
 
 
 def run_review(date: str | None, config_path: str | None) -> None:
@@ -419,6 +494,11 @@ def main() -> None:
     p_analyze.add_argument("--days", type=int, default=250, help="回看交易日数（默认 250）")
     p_analyze.add_argument("--adjust", default="qfq",
                            choices=["qfq", "hfq", ""], help="复权方式（默认 qfq 前复权）")
+    p_advice = sub.add_parser("advice", help="规则化交易信号（结合实时行情）")
+    p_advice.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
+    p_advice.add_argument("--market", default="ashare",
+                          choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
+    p_advice.add_argument("--days", type=int, default=120, help="回看交易日数（默认 120）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -432,6 +512,8 @@ def main() -> None:
         run_once(args.config)
     elif args.command == "analyze":
         run_analyze(args.code, args.days, args.adjust, args.market)
+    elif args.command == "advice":
+        run_advice(args.code, args.market, args.days, args.config)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":

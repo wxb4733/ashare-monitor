@@ -73,6 +73,13 @@ scan:
   volume_ratio: 2.0  # 放量异动量比阈值
   turnover_rate: 5.0 # 高换手阈值（%）
 
+# 交易信号（规则化，仅供参考，不构成投资建议）
+signals:
+  volume_ratio_high: 1.2  # 量比高于此值视为放量
+  volume_ratio_low: 0.8   # 量比低于此值视为缩量
+  momentum_window: 20     # 动量回看周期（交易日）
+  momentum_pct: 3.0       # 动量强弱阈值（%）
+
 # 日志
 logging:
   level: "INFO"
