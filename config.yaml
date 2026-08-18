@@ -50,6 +50,13 @@ monitor:
 quotes:
   sources: ["sina", "tencent", "eastmoney"]
 
+# 复盘报告
+review:
+  # 大盘指数对照（带市场前缀，避免 000001 指数与平安银行冲突）
+  indexes: ["sh000001", "sz399001", "sz399006"]
+  # 报告内 K 线回看交易日数
+  kline_days: 60
+
 # 日志
 logging:
   level: "INFO"

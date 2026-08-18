@@ -35,14 +35,18 @@ class WebhookNotifier(Notifier):
         self.url = url
 
     def send(self, alert: Alert) -> None:
+        self.send_text(str(alert))
+
+    def send_text(self, content: str) -> None:
+        """推送纯文本消息（用于复盘摘要等非预警场景）。"""
         import requests
 
         try:
             resp = requests.post(
                 self.url,
-                json={"msgtype": "text", "text": {"content": str(alert)}},
+                json={"msgtype": "text", "text": {"content": content}},
                 timeout=5,
             )
             resp.raise_for_status()
         except Exception:
-            logger.exception("Webhook 通知发送失败: %s", alert)
+            logger.exception("Webhook 通知发送失败: %s", content[:50])

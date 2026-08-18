@@ -54,11 +54,14 @@ python -m ashare_monitor.main review [--date 2026-08-18]
 监控运行期间，触发的预警实时落盘到 `logs/alerts/alerts-YYYY-MM-DD.jsonl`；
 收盘后（15:00 后）自动生成 HTML 复盘报告到 `output/review-YYYY-MM-DD.html`，包含：
 
+- **大盘指数对照**：上证 / 深成 / 创业板当日点位、涨跌幅与近 60 日 K 线
 - **自选股当日表现**：收盘、涨跌幅、振幅、量能
 - **预警时间线**：全天触发的预警（含各股波动画像）
 - **近期 K 线**：每只自选股近 60 日蜡烛图 + 成交量（ECharts，涨红跌绿）
 
 `monitor.auto_review: false` 可关闭自动生成，随时可用 `review` 命令手动补生成。
+若配置了 `ASHARE_MONITOR_WEBHOOK`，报告生成后会自动推送一条复盘摘要到 webhook。
+指数列表与 K 线天数在 `review.indexes` / `review.kline_days` 配置。
 
 ## 历史数据分析（analyze）
 

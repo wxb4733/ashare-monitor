@@ -109,3 +109,47 @@ def test_is_after_close():
     assert not _is_after_close(sessions, datetime(2026, 8, 18, 12, 0))  # 午休不触发
     assert not _is_after_close(sessions, datetime(2026, 8, 18, 14, 59))
     assert not _is_after_close(sessions, datetime(2026, 8, 15, 16, 0))  # 周六
+
+
+# ---------- 大盘指数板块与推送摘要 ----------
+
+def make_index_quote() -> Quote:
+    return Quote(
+        code="000001", name="上证指数", price=3968.95, change_pct=-0.34,
+        change=-13.6, volume=0, turnover=6.5e11, high=3990.0,
+        low=3954.0, open=3980.0, prev_close=3982.55,
+        timestamp=datetime(2026, 8, 18, 15, 0),
+    )
+
+
+def test_build_html_with_index_section():
+    html = build_html(
+        "2026-08-18",
+        [make_quote()],
+        [make_alert().to_dict()],
+        [make_chart()],
+        index_quotes=[make_index_quote()],
+        index_charts=[{**make_chart(), "id": "chart-000001-idx", "title": "上证指数"}],
+    )
+    # 指数板块存在且章节编号顺延
+    assert "一、大盘指数" in html
+    assert "二、自选股当日表现" in html
+    assert "三、当日预警时间线" in html
+    assert "上证指数" in html and "3,968.95" in html
+    assert 'renderKline("chart-000001-idx"' in html
+    # 无指数时保持原章节编号
+    html2 = build_html("2026-08-18", [make_quote()], [], [])
+    assert "一、自选股当日表现" in html2
+    assert "大盘指数" not in html2
+
+
+def test_build_push_summary():
+    from ashare_monitor.review import build_push_summary
+
+    text = build_push_summary(
+        "2026-08-18", [make_quote()], [make_alert().to_dict()], "output/review-2026-08-18.html"
+    )
+    assert "A 股复盘 2026-08-18" in text
+    assert "贵州茅台(600519) 1290.69 -0.19%" in text
+    assert "当日预警 1 条" in text
+    assert "review-2026-08-18.html" in text

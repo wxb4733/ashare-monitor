@@ -157,8 +157,16 @@ def run_monitor(config_path: str | None) -> None:
                     reviewed_date = today
                     console.print("[cyan]已收盘，正在生成复盘报告…[/cyan]")
                     try:
-                        path = generate_review(today, cfg)
+                        from .review import build_push_summary
+
+                        path, day_quotes, day_records = generate_review(today, cfg)
                         console.print(f"[green]复盘报告已生成: {path}[/green]")
+                        # 推送复盘摘要到 webhook
+                        for n in notifiers:
+                            if hasattr(n, "send_text"):
+                                n.send_text(build_push_summary(
+                                    today, day_quotes, day_records, path
+                                ))
                     except Exception:
                         logger.exception("复盘报告生成失败")
                 was_trading = False
@@ -278,7 +286,7 @@ def run_review(date: str | None, config_path: str | None) -> None:
     setup_logging(cfg.logging)
     console.print("[cyan]正在生成复盘报告…[/cyan]")
     try:
-        path = generate_review(date, cfg)
+        path, _quotes, _records = generate_review(date, cfg)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]复盘报告生成失败：{exc}[/red]")
         return

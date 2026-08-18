@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .alerts import Alert
-from .analysis import ProfileCache, fetch_history, brief_profile, compute_metrics
+from .analysis import ProfileCache, fetch_history
 from .config import Config
 from .quotes import Quote, fetch_spot_quotes
 
@@ -173,21 +173,54 @@ def _alert_rows(records: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def _index_rows(quotes: list[Quote]) -> str:
+    rows = []
+    for q in quotes:
+        amp = q.amplitude
+        rows.append(
+            "<tr>"
+            f"<td>{q.code}</td><td>{q.name}</td>"
+            f"<td>{q.price:,.2f}</td>"
+            f"<td>{_pct_html(q.change_pct)}</td>"
+            f"<td>{f'{amp:.2f}%' if amp is not None else '-'}</td>"
+            f"<td>{q.turnover / 1e8:,.0f}亿</td>"
+            "</tr>"
+        )
+    return "\n".join(rows)
+
+
 def build_html(
     date_str: str,
     quotes: list[Quote],
     records: list[dict],
     charts: list[dict],
+    index_quotes: list[Quote] | None = None,
+    index_charts: list[dict] | None = None,
 ) -> str:
     """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。"""
     chart_cards = []
     chart_inits = []
-    for c in charts:
+    for c in (index_charts or []) + charts:
         chart_cards.append(f'<div class="card"><div class="chart" id="{c["id"]}"></div></div>')
         chart_inits.append(
             f'renderKline("{c["id"]}", {json.dumps(c["title"], ensure_ascii=False)}, '
             f'{json.dumps(c["dates"])}, {json.dumps(c["kdata"])}, {json.dumps(c["volumes"])});'
         )
+
+    index_section = ""
+    if index_quotes:
+        index_section = f"""
+<h2>一、大盘指数</h2>
+<div class="card">
+<table>
+<tr><th>代码</th><th>指数</th><th>点位</th><th>涨跌幅</th><th>振幅</th><th>成交额</th></tr>
+{_index_rows(index_quotes)}
+</table>
+</div>"""
+
+    stock_sec_no = "二" if index_quotes else "一"
+    alert_sec_no = "三" if index_quotes else "二"
+    kline_sec_no = "四" if index_quotes else "三"
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -201,8 +234,8 @@ def build_html(
 <div class="container">
 <h1>A 股收盘复盘报告</h1>
 <div class="meta">{date_str} · 生成于 {datetime.now():%Y-%m-%d %H:%M:%S} · 数据来源：新浪/腾讯/东方财富公开行情接口</div>
-
-<h2>一、自选股当日表现</h2>
+{index_section}
+<h2>{stock_sec_no}、自选股当日表现</h2>
 <div class="card">
 <table>
 <tr><th>代码</th><th>名称</th><th>收盘/最新</th><th>涨跌幅</th><th>振幅</th><th>成交量(手)</th><th>成交额</th></tr>
@@ -210,7 +243,7 @@ def build_html(
 </table>
 </div>
 
-<h2>二、当日预警时间线（共 {len(records)} 条）</h2>
+<h2>{alert_sec_no}、当日预警时间线（共 {len(records)} 条）</h2>
 <div class="card">
 <table>
 <tr><th>时间</th><th>标的</th><th>规则</th><th style="text-align:left">详情</th></tr>
@@ -218,7 +251,7 @@ def build_html(
 </table>
 </div>
 
-<h2>三、近期 K 线走势</h2>
+<h2>{kline_sec_no}、近期 K 线走势</h2>
 {''.join(chart_cards)}
 
 <div class="footer">{_DISCLAIMER}</div>
@@ -232,20 +265,58 @@ def build_html(
 
 # ---------- 报告生成 ----------
 
+def _fetch_kline_chart(symbol: str, days: int, adjust: str,
+                       title_prefix: str = "") -> dict | None:
+    """拉取单个标的的 K 线图数据，失败返回 None。"""
+    try:
+        df, name = fetch_history(symbol, days=days, adjust=adjust)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("复盘：%s K 线拉取失败: %s", symbol, exc)
+        return None
+    code6 = symbol[-6:]
+    return {
+        "id": f"chart-{code6}-{'idx' if title_prefix else 'stk'}",
+        "title": f"{title_prefix}{name or code6}({code6})  近{days}日",
+        "dates": [str(d)[:10] for d in df["日期"]],
+        "kdata": [
+            [round(float(o), 2), round(float(c), 2),
+             round(float(lo), 2), round(float(hi), 2)]
+            for o, c, lo, hi in zip(df["开盘"], df["收盘"], df["最低"], df["最高"])
+        ],
+        "volumes": [int(v) for v in df["成交量"]],
+    }
+
+
 def generate_review(
     date_str: str | None,
     cfg: Config,
     alerts_dir: str = ALERTS_DIR,
     output_dir: str = OUTPUT_DIR,
-    kline_days: int = 60,
 ) -> Path:
     """生成某天的复盘报告 HTML，返回文件路径。
 
-    各数据项独立容错：行情 / K 线拉取失败不阻塞其余部分。
+    各数据项独立容错：行情 / 指数 / K 线拉取失败不阻塞其余部分。
     """
     date_str = date_str or datetime.now().strftime("%Y-%m-%d")
     codes = [str(item["code"]) for item in cfg.watchlist]
+    kline_days = cfg.review.kline_days
 
+    # 大盘指数（行情 + K 线）
+    index_quotes: list[Quote] = []
+    index_charts: list[dict] = []
+    if cfg.review.indexes:
+        try:
+            index_quotes, _ = fetch_spot_quotes(
+                cfg.review.indexes, sources=cfg.quotes.sources
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("复盘：指数行情拉取失败: %s", exc)
+        for symbol in cfg.review.indexes:
+            chart = _fetch_kline_chart(symbol, kline_days, adjust="")
+            if chart:
+                index_charts.append(chart)
+
+    # 自选股行情
     try:
         quotes, _source = fetch_spot_quotes(codes, sources=cfg.quotes.sources)
     except Exception as exc:  # noqa: BLE001
@@ -254,31 +325,36 @@ def generate_review(
 
     records = load_alerts(date_str, alerts_dir)
 
+    # 自选股 K 线（图题带波动画像）
     cache = ProfileCache(days=cfg.monitor.profile_days)
     charts: list[dict] = []
     for code in codes:
-        try:
-            df, name = fetch_history(code, days=kline_days)
-            report = compute_metrics(df, code=code, name=name)
-            charts.append({
-                "id": f"chart-{code}",
-                "title": f"{name or code}({code})  近{kline_days}日"
-                         f"  |  {brief_profile(report)}",
-                "dates": [str(d)[:10] for d in df["日期"]],
-                "kdata": [
-                    [round(float(o), 2), round(float(c), 2),
-                     round(float(lo), 2), round(float(hi), 2)]
-                    for o, c, lo, hi in zip(df["开盘"], df["收盘"], df["最低"], df["最高"])
-                ],
-                "volumes": [int(v) for v in df["成交量"]],
-            })
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("复盘：%s K 线拉取失败: %s", code, exc)
+        chart = _fetch_kline_chart(code, kline_days, adjust="qfq")
+        if chart:
+            profile = cache.get(code)
+            if profile:
+                chart["title"] += f"  |  {profile}"
+            charts.append(chart)
 
-    html = build_html(date_str, quotes, records, charts)
+    html = build_html(
+        date_str, quotes, records, charts,
+        index_quotes=index_quotes, index_charts=index_charts,
+    )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"review-{date_str}.html"
     out_path.write_text(html, encoding="utf-8")
     logger.info("复盘报告已生成: %s", out_path)
-    return out_path
+    return out_path, quotes, records
+
+
+def build_push_summary(
+    date_str: str, quotes: list[Quote], records: list[dict], report_path: Path
+) -> str:
+    """生成 webhook 推送的复盘摘要文本。"""
+    lines = [f"A 股复盘 {date_str}"]
+    for q in quotes:
+        lines.append(f"{q.name}({q.code}) {q.price:.2f} {q.change_pct:+.2f}%")
+    lines.append(f"当日预警 {len(records)} 条")
+    lines.append(f"报告：{report_path}")
+    return "\n".join(lines)

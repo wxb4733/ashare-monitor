@@ -48,11 +48,22 @@ class QuoteConfig:
 
 
 @dataclass
+class ReviewConfig:
+    # 复盘报告对照的大盘指数（带市场前缀，避免与个股代码冲突）
+    indexes: list[str] = field(
+        default_factory=lambda: ["sh000001", "sz399001", "sz399006"]
+    )
+    # 报告内 K 线回看交易日数
+    kline_days: int = 60
+
+
+@dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     quotes: QuoteConfig = field(default_factory=QuoteConfig)
+    review: ReviewConfig = field(default_factory=ReviewConfig)
     logging: dict = field(default_factory=dict)
 
 
@@ -71,6 +82,7 @@ def load_config(path: str | None = None) -> Config:
     alerts_raw = raw.get("alerts", {}) or {}
     monitor_raw = raw.get("monitor", {}) or {}
     quotes_raw = raw.get("quotes", {}) or {}
+    review_raw = raw.get("review", {}) or {}
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
@@ -106,6 +118,12 @@ def load_config(path: str | None = None) -> Config:
             sources=[str(s) for s in quotes_raw.get(
                 "sources", ["sina", "tencent", "eastmoney"]
             )],
+        ),
+        review=ReviewConfig(
+            indexes=[str(s) for s in review_raw.get(
+                "indexes", ["sh000001", "sz399001", "sz399006"]
+            )],
+            kline_days=int(review_raw.get("kline_days", 60)),
         ),
         logging=raw.get("logging", {}) or {},
     )
