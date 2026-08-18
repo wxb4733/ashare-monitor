@@ -15,6 +15,9 @@ class AlertConfig:
     change_pct_threshold: float = 3.0
     price_above: dict[str, float] = field(default_factory=dict)
     price_below: dict[str, float] = field(default_factory=dict)
+    # 盘口规则（需数据源支持五档，sina/tencent 可用；None 表示不启用）
+    weibi_threshold: float | None = None       # 委比绝对值超过该百分比预警
+    big_order_threshold: float | None = None   # 单档挂单量（手）超过预警
 
 
 @dataclass
@@ -65,6 +68,14 @@ def load_config(path: str | None = None) -> Config:
             change_pct_threshold=float(alerts_raw.get("change_pct_threshold", 3.0)),
             price_above={str(k): float(v) for k, v in (alerts_raw.get("price_above") or {}).items()},
             price_below={str(k): float(v) for k, v in (alerts_raw.get("price_below") or {}).items()},
+            weibi_threshold=(
+                float(alerts_raw["weibi_threshold"])
+                if alerts_raw.get("weibi_threshold") is not None else None
+            ),
+            big_order_threshold=(
+                float(alerts_raw["big_order_threshold"])
+                if alerts_raw.get("big_order_threshold") is not None else None
+            ),
         ),
         monitor=MonitorConfig(
             interval_seconds=int(monitor_raw.get("interval_seconds", 30)),

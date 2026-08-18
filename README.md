@@ -5,7 +5,8 @@ A 股交易信息监控工具：实时行情快照、涨跌幅预警、价格突
 ## 功能
 
 - **实时行情**：多数据源自动降级（新浪 → 腾讯 → 东方财富），单一接口故障不影响监控
-- **预警规则**：涨跌幅超阈值、价格上破 / 下破指定价位，内置冷却去抖避免重复告警
+- **五档盘口**：买一~买五 / 卖一~卖五挂单明细与委比计算（sina / tencent 源）
+- **预警规则**：涨跌幅超阈值、价格上破 / 下破、委比失衡、单档大单挂单，内置冷却去抖避免重复告警
 - **交易时段控制**：默认仅在 09:30–11:30 / 13:00–15:00 轮询
 - **通知渠道**：控制台彩色输出（涨红跌绿），支持 webhook（企业微信 / 钉钉机器人）
 
@@ -49,6 +50,8 @@ python -m ashare_monitor.main monitor
 | `watchlist` | 自选股列表，6 位代码 |
 | `alerts.change_pct_threshold` | 涨跌幅预警阈值（%），默认 ±3% |
 | `alerts.price_above / price_below` | 按代码设置价格上破 / 下破提醒 |
+| `alerts.weibi_threshold` | 委比绝对值超阈值预警（%），需五档数据，不设则关闭 |
+| `alerts.big_order_threshold` | 单档挂单量（手）超阈值预警，不设则关闭 |
 | `monitor.interval_seconds` | 轮询间隔，默认 30s |
 | `monitor.trading_hours_only` | 是否仅在交易时段运行 |
 | `quotes.sources` | 行情数据源及优先级，默认 `["sina", "tencent", "eastmoney"]` |

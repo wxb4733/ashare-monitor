@@ -21,14 +21,18 @@ def test_market_prefix():
 # ---------- 新浪解析 ----------
 
 def make_sina_text() -> str:
-    # 名称后 29 个数值：9 个基础字段 + 10 个买盘 + 10 个卖盘
-    fields = [
+    # 名称后 29 个数值：9 个基础字段 + 买五档 10 个（量,价交替）+ 卖五档 10 个
+    base = [
         "1690.000", "1690.000", "1705.000", "1710.000", "1680.000",
         "1705.000", "1706.000", "123456700", "2100000000.000",
-    ] + [f"{i}.000" for i in range(20)]
+    ]
+    # 买一至买五：挂单量 (i+1)*1000 股，价格 1704-i
+    bids = [f"{(i + 1) * 1000}.000,{1704 - i}.000" for i in range(5)]
+    # 卖一至卖五：挂单量 (i+6)*1000 股，价格 1706+i
+    asks = [f"{(i + 6) * 1000}.000,{1706 + i}.000" for i in range(5)]
     return (
         'var hq_str_sh600519="贵州茅台,'
-        + ",".join(fields)
+        + ",".join(base + bids + asks)
         + ',2026-08-18,09:35:00";'
     )
 
@@ -46,6 +50,10 @@ def test_sina_parse():
     assert q.volume == 1234567.0          # 股 → 手
     assert q.turnover == 2100000000.0
     assert q.timestamp.hour == 9 and q.timestamp.minute == 35
+    # 五档盘口：买一 1704.00 / 10 手（1000 股），卖一 1706.00 / 60 手
+    assert len(q.bids) == 5 and len(q.asks) == 5
+    assert q.bids[0].price == 1704.0 and q.bids[0].volume == 10
+    assert q.asks[0].price == 1706.0 and q.asks[0].volume == 60
 
 
 def test_sina_parse_empty_returns_nothing():
@@ -62,6 +70,11 @@ def make_tencent_text() -> str:
     f[3] = "1705.00"      # 最新价
     f[4] = "1690.00"      # 昨收
     f[5] = "1695.00"      # 今开
+    # 买一：1704.00 / 100 手；卖一：1706.00 / 200 手
+    f[9] = "1704.00"
+    f[10] = "100"
+    f[19] = "1706.00"
+    f[20] = "200"
     f[30] = "20260818093500"
     f[31] = "15.00"       # 涨跌额
     f[32] = "0.89"        # 涨跌幅
@@ -83,6 +96,10 @@ def test_tencent_parse():
     assert q.volume == 1234567
     assert q.turnover == 210000.0 * 10000
     assert q.timestamp.year == 2026
+    # 五档盘口
+    assert len(q.bids) == 5 and len(q.asks) == 5
+    assert q.bids[0].price == 1704.0 and q.bids[0].volume == 100
+    assert q.asks[0].price == 1706.0 and q.asks[0].volume == 200
 
 
 def test_tencent_parse_short_record_skipped():

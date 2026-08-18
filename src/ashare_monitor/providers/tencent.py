@@ -12,7 +12,7 @@ from datetime import datetime
 
 import requests
 
-from ..quotes import Quote
+from ..quotes import DepthLevel, Quote
 from .base import QuoteProvider
 
 _HEADERS = {
@@ -50,6 +50,15 @@ class TencentProvider(QuoteProvider):
                 ts = datetime.strptime(f[30], "%Y%m%d%H%M%S")
             except ValueError:
                 ts = datetime.now()
+            # 五档盘口：买 f[9..18]、卖 f[19..28]（价格、挂单手数交替）
+            bids = [
+                DepthLevel(price=float(f[9 + 2 * i]), volume=int(f[10 + 2 * i]))
+                for i in range(5)
+            ]
+            asks = [
+                DepthLevel(price=float(f[19 + 2 * i]), volume=int(f[20 + 2 * i]))
+                for i in range(5)
+            ]
             quotes.append(
                 Quote(
                     code=f[2],
@@ -64,6 +73,8 @@ class TencentProvider(QuoteProvider):
                     high=float(f[33]),
                     low=float(f[34]),
                     timestamp=ts,
+                    bids=bids,
+                    asks=asks,
                 )
             )
         return quotes

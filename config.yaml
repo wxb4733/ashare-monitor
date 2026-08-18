@@ -12,6 +12,11 @@ watchlist:
 alerts:
   # 涨跌幅超过该百分比触发预警（正数为涨幅，负数为跌幅取绝对值）
   change_pct_threshold: 3.0
+  # 委比绝对值超过该百分比触发盘口失衡预警（需五档数据，sina/tencent 源支持）
+  # 设为 null 或不配置则关闭
+  weibi_threshold: 80
+  # 单档挂单量（手）超过该值触发大单预警
+  big_order_threshold: 5000
   # 价格突破提醒（可选，按代码配置）
   price_above:
     # "600519": 1800.0

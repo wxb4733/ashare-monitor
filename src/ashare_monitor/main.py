@@ -36,13 +36,17 @@ def setup_logging(cfg: dict) -> None:
 
 def render_quotes(quotes: list[Quote]) -> None:
     """以表格形式打印行情快照（A 股习惯：涨红跌绿）。"""
+    has_depth = any(q.bids or q.asks for q in quotes)
     table = Table(title=f"A 股实时行情  {datetime.now():%Y-%m-%d %H:%M:%S}")
-    for col in ("代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交量(手)", "成交额(万)"):
+    columns = ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交量(手)", "成交额(万)"]
+    if has_depth:
+        columns += ["买一", "卖一", "委比"]
+    for col in columns:
         table.add_column(col, justify="right" if col not in ("代码", "名称") else "left")
 
     for q in quotes:
         color = "red" if q.change_pct > 0 else ("green" if q.change_pct < 0 else "white")
-        table.add_row(
+        row = [
             q.code,
             q.name,
             f"{q.price:.2f}",
@@ -50,7 +54,17 @@ def render_quotes(quotes: list[Quote]) -> None:
             f"[{color}]{q.change:+.2f}[/{color}]",
             f"{q.volume:,.0f}",
             f"{q.turnover / 1e4:,.0f}",
-        )
+        ]
+        if has_depth:
+            bid1 = f"{q.bids[0].price:.2f}/{q.bids[0].volume}" if q.bids else "-"
+            ask1 = f"{q.asks[0].price:.2f}/{q.asks[0].volume}" if q.asks else "-"
+            weibi = q.weibi
+            row += [
+                f"[green]{bid1}[/green]" if q.bids else "-",
+                f"[red]{ask1}[/red]" if q.asks else "-",
+                f"{weibi:+.0f}%" if weibi is not None else "-",
+            ]
+        table.add_row(*row)
     console.print(table)
 
 

@@ -68,7 +68,45 @@ class AlertEngine:
             else:
                 self._triggered.discard((quote.code, "price_below"))
 
+        # 委比异动（需五档盘口数据）
+        weibi_threshold = self.config.weibi_threshold
+        if weibi_threshold is not None:
+            weibi = quote.weibi
+            if weibi is not None and abs(weibi) >= weibi_threshold:
+                side = "买盘" if weibi > 0 else "卖盘"
+                alerts.append(self._make_alert(
+                    quote, "weibi",
+                    f"委比 {weibi:+.1f}%，{side}力量显著占优（阈值 ±{weibi_threshold:.0f}%）",
+                ))
+            else:
+                self._triggered.discard((quote.code, "weibi"))
+
+        # 单档大单挂单
+        big_threshold = self.config.big_order_threshold
+        if big_threshold is not None and (quote.bids or quote.asks):
+            big = self._find_big_order(quote, big_threshold)
+            if big is not None:
+                side, level, depth = big
+                alerts.append(self._make_alert(
+                    quote, "big_order",
+                    f"{side}{level}档出现大单挂单 {depth.volume:,} 手 @ {depth.price:.2f}"
+                    f"（阈值 {big_threshold:,.0f} 手）",
+                ))
+            else:
+                self._triggered.discard((quote.code, "big_order"))
+
         return [a for a in alerts if a is not None]
+
+    @staticmethod
+    def _find_big_order(quote: Quote, threshold: float):
+        """返回 (方向, 档位, DepthLevel)，无大单返回 None。"""
+        for i, d in enumerate(quote.bids, 1):
+            if d.volume >= threshold:
+                return ("买", i, d)
+        for i, d in enumerate(quote.asks, 1):
+            if d.volume >= threshold:
+                return ("卖", i, d)
+        return None
 
     def _make_alert(self, quote: Quote, rule: str, message: str) -> Alert | None:
         key = (quote.code, rule)

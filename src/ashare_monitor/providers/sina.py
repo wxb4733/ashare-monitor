@@ -14,7 +14,7 @@ from datetime import datetime
 
 import requests
 
-from ..quotes import Quote
+from ..quotes import DepthLevel, Quote
 from .base import QuoteProvider
 
 _HEADERS = {
@@ -68,6 +68,15 @@ class SinaProvider(QuoteProvider):
                 ts = datetime.now()
             change = now - prev_close
             change_pct = change / prev_close * 100 if prev_close else 0.0
+            # 五档盘口：f[11..30]，每档「挂单量(股), 价格」交替，买 10 个值 + 卖 10 个值
+            bids = [
+                DepthLevel(price=float(f[12 + 2 * i]), volume=int(float(f[11 + 2 * i]) / 100))
+                for i in range(5)
+            ]
+            asks = [
+                DepthLevel(price=float(f[22 + 2 * i]), volume=int(float(f[21 + 2 * i]) / 100))
+                for i in range(5)
+            ]
             quotes.append(
                 Quote(
                     code=symbol[-6:],
@@ -82,6 +91,8 @@ class SinaProvider(QuoteProvider):
                     open=open_,
                     prev_close=prev_close,
                     timestamp=ts,
+                    bids=bids,
+                    asks=asks,
                 )
             )
         return quotes

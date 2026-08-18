@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import pandas as pd
@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 # 默认数据源顺序：新浪/腾讯按需查询快，东财全市场快照兜底
 DEFAULT_SOURCES = ["sina", "tencent", "eastmoney"]
+
+
+@dataclass
+class DepthLevel:
+    """盘口单档：价格 + 挂单量（手）。"""
+    price: float
+    volume: int
 
 
 @dataclass
@@ -33,6 +40,18 @@ class Quote:
     open: float
     prev_close: float     # 昨收
     timestamp: datetime
+    bids: list[DepthLevel] = field(default_factory=list)  # 买一至买五
+    asks: list[DepthLevel] = field(default_factory=list)  # 卖一至卖五
+
+    @property
+    def weibi(self) -> float | None:
+        """委比 %：(Σ买档量 - Σ卖档量) / (Σ买档量 + Σ卖档量) × 100。"""
+        bid_vol = sum(d.volume for d in self.bids)
+        ask_vol = sum(d.volume for d in self.asks)
+        total = bid_vol + ask_vol
+        if total == 0:
+            return None
+        return (bid_vol - ask_vol) / total * 100
 
 
 def fetch_spot_quotes(
