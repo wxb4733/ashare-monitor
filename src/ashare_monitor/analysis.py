@@ -334,14 +334,21 @@ class ProfileCache:
         self._cache: dict[tuple[str, str], tuple[str, str]] = {}  # (market, code) -> (日期, 画像)
 
     def get(self, code: str, market: str = "ashare") -> str | None:
-        """返回该标的当日画像；拉取失败返回 None（不抛异常，不影响监控主流程）。"""
+        """返回该标的当日画像（波动 + 技术指标）；失败返回 None 不阻塞监控。"""
         today = datetime.now().strftime("%Y-%m-%d")
         key = (market, code)
         cached = self._cache.get(key)
         if cached and cached[0] == today:
             return cached[1]
         try:
-            profile = brief_profile(analyze(code, days=self.days, market=market))
+            from .indicators import compute_indicators
+
+            adjust = "qfq" if market != "crypto" else ""
+            df, _name = fetch_history(code, days=self.days, adjust=adjust, market=market)
+            periods = 365 if market == "crypto" else TRADING_DAYS_PER_YEAR
+            report = compute_metrics(df, code=code, periods_per_year=periods)
+            ind = compute_indicators(df)
+            profile = f"{brief_profile(report)} | {ind.summary_line()}"
         except Exception as exc:  # noqa: BLE001
             logger.warning("波动画像拉取失败 %s(%s): %s", code, market, exc)
             return None

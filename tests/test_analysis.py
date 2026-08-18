@@ -154,12 +154,11 @@ def test_profile_cache_per_day(monkeypatch):
 
     calls = []
 
-    def fake_analyze(code, days=250, market="ashare"):
+    def fake_fetch_history(code, days=250, adjust="qfq", market="ashare"):
         calls.append((code, market))
-        df = make_df([100.0, 101.0, 102.0])
-        return compute_metrics(df, code=code)
+        return make_df([100.0 * 1.002**i for i in range(30)]), "测试股"
 
-    monkeypatch.setattr(analysis_mod, "analyze", fake_analyze)
+    monkeypatch.setattr(analysis_mod, "fetch_history", fake_fetch_history)
     cache = ProfileCache(days=60)
     p1 = cache.get("600519")
     p2 = cache.get("600519")   # 同一天应命中缓存，不再拉取
@@ -169,14 +168,16 @@ def test_profile_cache_per_day(monkeypatch):
     assert p3 is not None
     assert p4 is not None
     assert calls == [("600519", "ashare"), ("000001", "ashare"), ("600519", "hk")]
+    # 画像应同时包含波动与指标摘要
+    assert "MACD" in p1 and "年化波动" in p1
 
 
 def test_profile_cache_failure_returns_none(monkeypatch):
     import ashare_monitor.analysis as analysis_mod
 
-    def boom(code, days=250, market="ashare"):
+    def boom(code, days=250, adjust="qfq", market="ashare"):
         raise ConnectionError("network down")
 
-    monkeypatch.setattr(analysis_mod, "analyze", boom)
+    monkeypatch.setattr(analysis_mod, "fetch_history", boom)
     cache = ProfileCache()
     assert cache.get("600519") is None  # 失败返回 None，不抛异常

@@ -54,6 +54,10 @@ python -m ashare_monitor.main analyze BTCUSDT --market crypto --days 60
 python -m ashare_monitor.main advice 600519 --days 120
 python -m ashare_monitor.main advice BTCUSDT --market crypto --days 60
 
+# 技术指标监控（MACD/RSI/KDJ/BOLL）
+python -m ashare_monitor.main indicator 600519 --days 120
+python -m ashare_monitor.main indicator BTCUSDT --market crypto --days 60
+
 # 生成复盘报告（默认今天，可指定日期）
 python -m ashare_monitor.main review [--date 2026-08-18]
 
@@ -65,7 +69,19 @@ python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## 技术指标监控（indicator）
+
+`indicator` 命令输出四类指标（纯 pandas 实现，无 TA-Lib 依赖）：
+
+- **MACD(12,26,9)**：DIF/DEA/柱，金叉/死叉状态、最近交叉日期与距今天数
+- **RSI(14)**：含 6/24 日多周期值，超买（≥70）/ 超卖（≤30）判定
+- **KDJ(9,3,3)**：K/D/J 值，金叉/死叉与超买超卖
+- **BOLL(20,2)**：上中下轨、现价位置（超上轨/中上/中下/超下轨）、带宽
+
+`advice` 命令同样附带指标板块；**监控预警的波动画像中也自动带上指标摘要**
+（如 `MACD死叉(2日前) | RSI 48 | KDJ死叉 | BOLL中下`），实现"指标状态入预警"。
 
 ## 交易信号（advice）
 

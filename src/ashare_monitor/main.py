@@ -341,6 +341,59 @@ def print_disclaimer() -> None:
     console.print(f"[dim]{DISCLAIMER}[/dim]")
 
 
+def _trend_label(trend: str) -> str:
+    style = "red" if trend == "金叉" else ("green" if trend == "死叉" else "yellow")
+    return f"[{style}]{trend}[/{style}]"
+
+
+def render_indicators(ir) -> None:
+    """渲染技术指标板块（MACD / RSI / KDJ / BOLL）。"""
+    m = ir.macd
+    cross_info = ""
+    if m.last_cross_date:
+        cross_info = f"，最近{m.trend} {m.last_cross_date}（{m.days_since_cross}日前）"
+    table = Table(title="技术指标")
+    table.add_column("指标", justify="left")
+    table.add_column("状态", justify="center")
+    table.add_column("数值", justify="right")
+    table.add_row("MACD", _trend_label(m.trend), f"DIF {m.dif:.3f} / DEA {m.dea:.3f} / 柱 {m.hist:.3f}{cross_info}")
+    table.add_row("RSI(14)", ir.rsi.level, f"{ir.rsi.value:.1f}（6日 {ir.rsi.rsi6:.0f} / 24日 {ir.rsi.rsi24:.0f}）")
+    table.add_row("KDJ(9)", f"{_trend_label(ir.kdj.trend)} / {ir.kdj.level}",
+                  f"K {ir.kdj.k:.1f} / D {ir.kdj.d:.1f} / J {ir.kdj.j:.1f}")
+    table.add_row("BOLL(20,2)", ir.boll.position,
+                  f"上轨 {ir.boll.upper:.2f} / 中轨 {ir.boll.mid:.2f} / 下轨 {ir.boll.lower:.2f}"
+                  f"（带宽 {ir.boll.bandwidth:.1f}%）")
+    console.print(table)
+
+
+def run_indicator(code: str, market: str, days: int, config_path: str | None) -> None:
+    """查看指定标的的技术指标（MACD/RSI/KDJ/BOLL）。"""
+    from .analysis import fetch_history
+    from .indicators import compute_indicators
+    from .quotes import fetch_spot_quotes
+
+    cfg = load_config(config_path)
+    console.print(f"[cyan]正在获取 {code}（{market}）历史数据与技术指标…[/cyan]")
+    try:
+        quotes, _source = fetch_spot_quotes(
+            [code], sources=cfg.quotes.sources if market == "ashare" else None,
+            market=market,
+        )
+        price = quotes[0].price if quotes else None
+        adjust = "qfq" if market != "crypto" else ""
+        df, name = fetch_history(code, days=days, adjust=adjust, market=market)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]指标获取失败：{exc}[/red]")
+        return
+    ir = compute_indicators(df, price=price)
+    console.print(f"[bold cyan]{name or code}({code}) 技术指标  {datetime.now():%Y-%m-%d %H:%M:%S}[/bold cyan]")
+    if price:
+        console.print(f"现价 [bold]{price:.2f}[/bold] | 数据源 {_source}")
+    render_indicators(ir)
+    console.print(f"[dim]指标摘要：{ir.summary_line()}[/dim]")
+    print_disclaimer()
+
+
 def run_analyze(code: str, days: int, adjust: str, market: str) -> None:
     from .analysis import analyze
     from .signals import generate_signals, make_verdict
@@ -359,7 +412,6 @@ def run_analyze(code: str, days: int, adjust: str, market: str) -> None:
 
 def run_advice(code: str, market: str, days: int, config_path: str | None) -> None:
     """结合实时行情 + 历史分析，输出规则化交易信号。"""
-    from .analysis import analyze
     from .quotes import fetch_spot_quotes
     from .signals import SignalConfig, generate_signals, make_verdict
 
@@ -373,8 +425,11 @@ def run_advice(code: str, market: str, days: int, config_path: str | None) -> No
             market=market,
         )
         quote = quotes[0] if quotes else None
-        report = analyze(code, days=days, adjust="qfq" if market != "crypto" else "",
-                         market=market)
+        df, name = _fetch_history_for(code, market, days)
+        from .analysis import TRADING_DAYS_PER_YEAR, compute_metrics
+
+        periods = 365 if market == "crypto" else TRADING_DAYS_PER_YEAR
+        report = compute_metrics(df, code=code, name=name, periods_per_year=periods)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]信号生成失败：{exc}[/red]")
         return
@@ -386,6 +441,9 @@ def run_advice(code: str, market: str, days: int, config_path: str | None) -> No
             f"实时价 [bold]{quote.price:.2f}[/bold]（{quote.change_pct:+.2f}%） "
             f"| 历史收盘 {report.latest_close:.2f} | 数据源 {_source}"
         )
+    from .indicators import compute_indicators
+
+    render_indicators(compute_indicators(df, price=quote.price if quote else None))
     signals = generate_signals(report, quote, cfg=SignalConfig(
         volume_ratio_high=cfg.signals.volume_ratio_high,
         volume_ratio_low=cfg.signals.volume_ratio_low,
@@ -394,6 +452,15 @@ def run_advice(code: str, market: str, days: int, config_path: str | None) -> No
     ))
     render_signals(signals, make_verdict(signals))
     print_disclaimer()
+
+
+def _fetch_history_for(code: str, market: str, days: int):
+    """advice 场景共用：拉取日线（一次网络请求，供指标计算）。"""
+    from .analysis import fetch_history
+
+    return fetch_history(
+        code, days=days, adjust="qfq" if market != "crypto" else "", market=market
+    )
 
 
 def run_review(date: str | None, config_path: str | None) -> None:
@@ -499,6 +566,11 @@ def main() -> None:
     p_advice.add_argument("--market", default="ashare",
                           choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
     p_advice.add_argument("--days", type=int, default=120, help="回看交易日数（默认 120）")
+    p_ind = sub.add_parser("indicator", help="技术指标（MACD/RSI/KDJ/BOLL）")
+    p_ind.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
+    p_ind.add_argument("--market", default="ashare",
+                       choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
+    p_ind.add_argument("--days", type=int, default=120, help="回看交易日数（默认 120）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -514,6 +586,8 @@ def main() -> None:
         run_analyze(args.code, args.days, args.adjust, args.market)
     elif args.command == "advice":
         run_advice(args.code, args.market, args.days, args.config)
+    elif args.command == "indicator":
+        run_indicator(args.code, args.market, args.days, args.config)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
