@@ -1,0 +1,284 @@
+"""收盘复盘报告：预警持久化 + HTML 报告生成。
+
+工作流程：
+1. 监控运行期间，触发的预警以 JSONL 追加到 logs/alerts/alerts-YYYY-MM-DD.jsonl
+2. 收盘后（或手动 review 命令）汇总：当日行情、预警时间线、
+   各股 K 线与波动画像，生成 output/review-YYYY-MM-DD.html
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
+from .alerts import Alert
+from .analysis import ProfileCache, fetch_history, brief_profile, compute_metrics
+from .config import Config
+from .quotes import Quote, fetch_spot_quotes
+
+logger = logging.getLogger(__name__)
+
+ALERTS_DIR = "logs/alerts"
+OUTPUT_DIR = "output"
+
+
+# ---------- 预警持久化 ----------
+
+def alerts_file(date_str: str, directory: str = ALERTS_DIR) -> Path:
+    return Path(directory) / f"alerts-{date_str}.jsonl"
+
+
+def append_alerts(alerts: list[Alert], date_str: str | None = None,
+                  directory: str = ALERTS_DIR) -> Path:
+    """把当天触发的预警追加写入 JSONL 文件。"""
+    date_str = date_str or datetime.now().strftime("%Y-%m-%d")
+    path = alerts_file(date_str, directory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for a in alerts:
+            f.write(json.dumps(a.to_dict(), ensure_ascii=False) + "\n")
+    return path
+
+
+def load_alerts(date_str: str, directory: str = ALERTS_DIR) -> list[dict]:
+    """读取某天的预警记录，不存在返回空列表。"""
+    path = alerts_file(date_str, directory)
+    if not path.exists():
+        return []
+    records = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
+
+
+# ---------- 规则中文名 ----------
+
+RULE_NAMES = {
+    "change_pct": "涨跌幅",
+    "price_above": "价格上破",
+    "price_below": "价格下破",
+    "weibi": "委比失衡",
+    "big_order": "大单挂单",
+    "amplitude": "振幅波动",
+}
+
+
+# ---------- HTML 模板 ----------
+
+_CSS = """
+body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f5f6f8;
+       color: #1f2329; margin: 0; padding: 24px; }
+.container { max-width: 1080px; margin: 0 auto; }
+h1 { font-size: 22px; } h2 { font-size: 17px; margin-top: 32px;
+     border-left: 4px solid #c0392b; padding-left: 8px; }
+.meta { color: #86909c; font-size: 13px; }
+.card { background: #fff; border-radius: 8px; padding: 16px 20px;
+        margin-top: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #f0f0f0; }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+th { color: #86909c; font-weight: normal; }
+.up { color: #c0392b; font-weight: 600; } .down { color: #1e9e4f; font-weight: 600; }
+.tag { display: inline-block; padding: 1px 8px; border-radius: 10px;
+       background: #fdf0ef; color: #c0392b; font-size: 12px; }
+.profile { color: #4e5969; font-size: 12px; margin: 4px 0 0; }
+.chart { width: 100%; height: 360px; }
+.footer { margin-top: 32px; color: #86909c; font-size: 12px; line-height: 1.8; }
+"""
+
+_JS = """
+function renderKline(elId, title, dates, kdata, volumes) {
+  var chart = echarts.init(document.getElementById(elId));
+  var upColor = '#c0392b', downColor = '#1e9e4f';
+  chart.setOption({
+    title: { text: title, left: 8, textStyle: { fontSize: 14 } },
+    animation: false,
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    grid: [
+      { left: 60, right: 16, top: 40, height: '58%' },
+      { left: 60, right: 16, top: '74%', height: '16%' }
+    ],
+    xAxis: [
+      { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false } },
+      { type: 'category', data: dates, gridIndex: 1, axisLabel: { fontSize: 10 } }
+    ],
+    yAxis: [
+      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+      { scale: true, gridIndex: 1, splitLine: { show: false } }
+    ],
+    dataZoom: [{ type: 'inside', xAxisIndex: [0, 1] }],
+    series: [
+      { type: 'candlestick', xAxisIndex: 0, yAxisIndex: 0, data: kdata,
+        itemStyle: { color: upColor, color0: downColor,
+                     borderColor: upColor, borderColor0: downColor } },
+      { type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: volumes,
+        itemStyle: { color: '#c9cdd4' } }
+    ]
+  });
+}
+"""
+
+_DISCLAIMER = (
+    "本报告基于公开行情数据自动生成，仅供学习与技术研究，不构成任何投资建议。"
+    "市场有风险，投资需谨慎。过往表现不预示未来收益。"
+)
+
+
+def _pct_html(value: float) -> str:
+    cls = "up" if value > 0 else ("down" if value < 0 else "")
+    return f'<span class="{cls}">{value:+.2f}%</span>'
+
+
+def _quote_rows(quotes: list[Quote]) -> str:
+    rows = []
+    for q in quotes:
+        amp = q.amplitude
+        rows.append(
+            "<tr>"
+            f"<td>{q.code}</td><td>{q.name}</td>"
+            f"<td>{q.price:.2f}</td>"
+            f"<td>{_pct_html(q.change_pct)}</td>"
+            f"<td>{f'{amp:.2f}%' if amp is not None else '-'}</td>"
+            f"<td>{q.volume:,.0f}</td>"
+            f"<td>{q.turnover / 1e8:.2f}亿</td>"
+            "</tr>"
+        )
+    return "\n".join(rows)
+
+
+def _alert_rows(records: list[dict]) -> str:
+    if not records:
+        return '<tr><td colspan="4" style="text-align:center;color:#86909c">当日无预警记录</td></tr>'
+    rows = []
+    for r in records:
+        rule = RULE_NAMES.get(r["rule"], r["rule"])
+        profile_html = (
+            f'<div class="profile">波动画像：{r["profile"]}</div>'
+            if r.get("profile") else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{r['time']}</td>"
+            f"<td>{r['name']}({r['code']})</td>"
+            f'<td><span class="tag">{rule}</span></td>'
+            f"<td style=\"text-align:left\">{r['message']}{profile_html}</td>"
+            "</tr>"
+        )
+    return "\n".join(rows)
+
+
+def build_html(
+    date_str: str,
+    quotes: list[Quote],
+    records: list[dict],
+    charts: list[dict],
+) -> str:
+    """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。"""
+    chart_cards = []
+    chart_inits = []
+    for c in charts:
+        chart_cards.append(f'<div class="card"><div class="chart" id="{c["id"]}"></div></div>')
+        chart_inits.append(
+            f'renderKline("{c["id"]}", {json.dumps(c["title"], ensure_ascii=False)}, '
+            f'{json.dumps(c["dates"])}, {json.dumps(c["kdata"])}, {json.dumps(c["volumes"])});'
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>A 股复盘报告 {date_str}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>{_CSS}</style>
+</head>
+<body>
+<div class="container">
+<h1>A 股收盘复盘报告</h1>
+<div class="meta">{date_str} · 生成于 {datetime.now():%Y-%m-%d %H:%M:%S} · 数据来源：新浪/腾讯/东方财富公开行情接口</div>
+
+<h2>一、自选股当日表现</h2>
+<div class="card">
+<table>
+<tr><th>代码</th><th>名称</th><th>收盘/最新</th><th>涨跌幅</th><th>振幅</th><th>成交量(手)</th><th>成交额</th></tr>
+{_quote_rows(quotes)}
+</table>
+</div>
+
+<h2>二、当日预警时间线（共 {len(records)} 条）</h2>
+<div class="card">
+<table>
+<tr><th>时间</th><th>标的</th><th>规则</th><th style="text-align:left">详情</th></tr>
+{_alert_rows(records)}
+</table>
+</div>
+
+<h2>三、近期 K 线走势</h2>
+{''.join(chart_cards)}
+
+<div class="footer">{_DISCLAIMER}</div>
+</div>
+<script>{_JS}
+{chr(10).join(chart_inits)}
+</script>
+</body>
+</html>"""
+
+
+# ---------- 报告生成 ----------
+
+def generate_review(
+    date_str: str | None,
+    cfg: Config,
+    alerts_dir: str = ALERTS_DIR,
+    output_dir: str = OUTPUT_DIR,
+    kline_days: int = 60,
+) -> Path:
+    """生成某天的复盘报告 HTML，返回文件路径。
+
+    各数据项独立容错：行情 / K 线拉取失败不阻塞其余部分。
+    """
+    date_str = date_str or datetime.now().strftime("%Y-%m-%d")
+    codes = [str(item["code"]) for item in cfg.watchlist]
+
+    try:
+        quotes, _source = fetch_spot_quotes(codes, sources=cfg.quotes.sources)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("复盘：行情快照拉取失败: %s", exc)
+        quotes = []
+
+    records = load_alerts(date_str, alerts_dir)
+
+    cache = ProfileCache(days=cfg.monitor.profile_days)
+    charts: list[dict] = []
+    for code in codes:
+        try:
+            df, name = fetch_history(code, days=kline_days)
+            report = compute_metrics(df, code=code, name=name)
+            charts.append({
+                "id": f"chart-{code}",
+                "title": f"{name or code}({code})  近{kline_days}日"
+                         f"  |  {brief_profile(report)}",
+                "dates": [str(d)[:10] for d in df["日期"]],
+                "kdata": [
+                    [round(float(o), 2), round(float(c), 2),
+                     round(float(lo), 2), round(float(hi), 2)]
+                    for o, c, lo, hi in zip(df["开盘"], df["收盘"], df["最低"], df["最高"])
+                ],
+                "volumes": [int(v) for v in df["成交量"]],
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("复盘：%s K 线拉取失败: %s", code, exc)
+
+    html = build_html(date_str, quotes, records, charts)
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"review-{date_str}.html"
+    out_path.write_text(html, encoding="utf-8")
+    logger.info("复盘报告已生成: %s", out_path)
+    return out_path

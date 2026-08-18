@@ -42,9 +42,23 @@ python -m ashare_monitor.main monitor
 
 # 历史数据分析（近 120 个交易日，前复权）
 python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
+
+# 生成复盘报告（默认今天，可指定日期）
+python -m ashare_monitor.main review [--date 2026-08-18]
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor review`。
+
+## 收盘复盘报告（review）
+
+监控运行期间，触发的预警实时落盘到 `logs/alerts/alerts-YYYY-MM-DD.jsonl`；
+收盘后（15:00 后）自动生成 HTML 复盘报告到 `output/review-YYYY-MM-DD.html`，包含：
+
+- **自选股当日表现**：收盘、涨跌幅、振幅、量能
+- **预警时间线**：全天触发的预警（含各股波动画像）
+- **近期 K 线**：每只自选股近 60 日蜡烛图 + 成交量（ECharts，涨红跌绿）
+
+`monitor.auto_review: false` 可关闭自动生成，随时可用 `review` 命令手动补生成。
 
 ## 历史数据分析（analyze）
 

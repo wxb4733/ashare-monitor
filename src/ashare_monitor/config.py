@@ -35,6 +35,8 @@ class MonitorConfig:
     alert_profile: bool = True
     # 画像回看交易日数
     profile_days: int = 120
+    # 收盘后自动生成复盘报告
+    auto_review: bool = True
 
 
 @dataclass
@@ -98,6 +100,7 @@ def load_config(path: str | None = None) -> Config:
             startup_profile=bool(monitor_raw.get("startup_profile", True)),
             alert_profile=bool(monitor_raw.get("alert_profile", True)),
             profile_days=int(monitor_raw.get("profile_days", 120)),
+            auto_review=bool(monitor_raw.get("auto_review", True)),
         ),
         quotes=QuoteConfig(
             sources=[str(s) for s in quotes_raw.get(

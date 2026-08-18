@@ -41,6 +41,8 @@ monitor:
   alert_profile: true
   # 画像回看交易日数
   profile_days: 120
+  # 收盘后自动生成复盘报告（output/review-YYYY-MM-DD.html）
+  auto_review: true
 
 # 行情数据源（按顺序降级，首个可用的生效）
 # sina / tencent：按需查询、速度快，适合盘中轮询（借鉴自 easyquotation）

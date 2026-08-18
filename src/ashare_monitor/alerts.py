@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 
 from .config import AlertConfig
 from .quotes import Quote
@@ -18,12 +19,23 @@ class Alert:
     rule: str      # 触发的规则描述
     message: str
     profile: str | None = None  # 可选：该股近期波动画像（analyze 生成）
+    fired_at: datetime = field(default_factory=datetime.now)
 
     def __str__(self) -> str:
         base = f"[{self.rule}] {self.name}({self.code}): {self.message}"
         if self.profile:
             return f"{base}\n    └─ 波动画像: {self.profile}"
         return base
+
+    def to_dict(self) -> dict:
+        return {
+            "time": self.fired_at.strftime("%H:%M:%S"),
+            "code": self.code,
+            "name": self.name,
+            "rule": self.rule,
+            "message": self.message,
+            "profile": self.profile,
+        }
 
 
 class AlertEngine:
