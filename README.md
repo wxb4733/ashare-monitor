@@ -64,12 +64,25 @@ python -m ashare_monitor.main review [--date 2026-08-18]
 # 全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）
 python -m ashare_monitor.main scan
 
+# 公告与研报（仅 A 股，带原文链接与机构预测）
+python -m ashare_monitor.main news 600519 --days 90
+
 # 周/月复盘汇总报告（基于 SQLite 积累的数据）
 python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## 公告与研报（news）
+
+`news` 命令查看被监控标的的公开信息（**仅 A 股**，港股/加密货币暂无数据源）：
+
+- **公告**：东财公告接口（最近 N 条，含原文链接）
+- **研报**：东财研报接口（机构名称、报告标题、**预测 EPS / 预测 PE**、原文链接）
+
+数据源自动降级：东财直连接口 → akshare。收盘复盘报告自动附「公告与研报」板块，
+每只自选股展示最近公告与研报标题及原文链接——复盘时快速定位"异动是否有消息面支撑"。
 
 ## 技术指标监控（indicator）
 

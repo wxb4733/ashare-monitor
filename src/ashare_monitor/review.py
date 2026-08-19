@@ -202,6 +202,7 @@ def build_html(
     index_quotes: list[Quote] | None = None,
     index_charts: list[dict] | None = None,
     indicator_rows: list[dict] | None = None,
+    news_rows: list[dict] | None = None,
 ) -> str:
     """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。"""
     chart_cards = []
@@ -252,7 +253,32 @@ def build_html(
         base += 1
     stock_sec_no = _cn_num(base)
     alert_sec_no = _cn_num(base + 1)
-    kline_sec_no = _cn_num(base + 2)
+    news_sec_no = _cn_num(base + 2)
+    kline_sec_no = _cn_num(base + 2 if not news_rows else base + 3)
+
+    news_section = ""
+    if news_rows:
+        rows = []
+        for r in news_rows:
+            kind = "公告" if r["kind"] == "ann" else "研报"
+            src = r.get("org") or ""
+            rows.append(
+                "<tr>"
+                f"<td>{r['date']}</td><td>{r['name']}({r['code']})</td>"
+                f'<td><span class="tag">{kind}</span></td>'
+                f"<td style=\"text-align:left\">{r['title']}"
+                f"{f'<div class=\"profile\">{src}</div>' if src else ''}</td>"
+                f'<td><a href="{r["url"]}">原文</a></td>'
+                "</tr>"
+            )
+        news_section = f"""
+<h2>{news_sec_no}、公告与研报</h2>
+<div class="card">
+<table>
+<tr><th>日期</th><th>标的</th><th>类型</th><th style="text-align:left">标题</th><th>原文</th></tr>
+{''.join(rows)}
+</table>
+</div>"""
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -283,6 +309,7 @@ def build_html(
 {_alert_rows(records)}
 </table>
 </div>
+{news_section}
 
 <h2>{kline_sec_no}、近期 K 线走势</h2>
 {''.join(chart_cards)}
@@ -414,10 +441,35 @@ def generate_review(
                     chart["title"] += "  |  " + "  |  ".join(extra)
                 charts.append(chart)
 
+    # 公告与研报（仅 A 股；失败不阻塞报告生成）
+    news_rows: list[dict] = []
+    for item in cfg.watchlist:
+        if str(item.get("market", "ashare")) != "ashare":
+            continue
+        code = str(item["code"])
+        name = str(item.get("name", code))
+        try:
+            from .announcements import fetch_announcements, fetch_research_reports
+
+            for a in fetch_announcements(code, limit=3):
+                news_rows.append({
+                    "kind": "ann", "code": code, "name": name,
+                    "date": a["date"], "title": a["title"], "url": a["url"],
+                })
+            for r in fetch_research_reports(code, days=30, limit=2):
+                news_rows.append({
+                    "kind": "report", "code": code, "name": name,
+                    "date": r["date"], "title": r["title"],
+                    "url": r["url"], "org": r["org"],
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("复盘：%s 公告/研报拉取失败: %s", code, exc)
+    news_rows.sort(key=lambda r: r["date"], reverse=True)
+
     html = build_html(
         date_str, quotes, records, charts,
         index_quotes=index_quotes, index_charts=index_charts,
-        indicator_rows=indicator_rows,
+        indicator_rows=indicator_rows, news_rows=news_rows,
     )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

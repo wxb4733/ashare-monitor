@@ -463,6 +463,46 @@ def _fetch_history_for(code: str, market: str, days: int):
     )
 
 
+def run_news(code: str, market: str, days: int, config_path: str | None) -> None:
+    """查看标的的公告与研报（仅 A 股支持）。"""
+    from .announcements import fetch_announcements, fetch_research_reports
+
+    if market != "ashare":
+        console.print("[yellow]公告/研报数据源仅支持 A 股，港股与加密货币暂无[/yellow]")
+        return
+    console.print(f"[cyan]正在获取 {code} 公告与研报…[/cyan]")
+    try:
+        anns = fetch_announcements(code, limit=15)
+        reports = fetch_research_reports(code, days=days, limit=15)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]公告/研报获取失败：{exc}[/red]")
+        return
+
+    console.print(f"[bold cyan]{code} 最新公告（{len(anns)} 条）[/bold cyan]")
+    ann_table = Table()
+    ann_table.add_column("日期", justify="left")
+    ann_table.add_column("标题", justify="left", overflow="fold")
+    ann_table.add_column("链接", justify="left", overflow="fold")
+    for a in anns:
+        ann_table.add_row(a["date"], a["title"], a["url"])
+    console.print(ann_table or "暂无公告")
+
+    console.print(f"[bold cyan]{code} 近期研报（{len(reports)} 条）[/bold cyan]")
+    rep_table = Table()
+    rep_table.add_column("日期", justify="left")
+    rep_table.add_column("机构", justify="left")
+    rep_table.add_column("标题", justify="left", overflow="fold")
+    rep_table.add_column("预测EPS", justify="right")
+    rep_table.add_column("预测PE", justify="right")
+    for r in reports:
+        rep_table.add_row(
+            r["date"], r["org"], r["title"],
+            f"{r['eps_this_year']:.2f}" if r["eps_this_year"] is not None else "-",
+            f"{r['pe_this_year']:.1f}" if r["pe_this_year"] is not None else "-",
+        )
+    console.print(rep_table or "暂无研报")
+
+
 def run_review(date: str | None, config_path: str | None) -> None:
     from .review import generate_review
 
@@ -571,6 +611,9 @@ def main() -> None:
     p_ind.add_argument("--market", default="ashare",
                        choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
     p_ind.add_argument("--days", type=int, default=120, help="回看交易日数（默认 120）")
+    p_news = sub.add_parser("news", help="公告与研报（仅 A 股）")
+    p_news.add_argument("code", help="6 位证券代码，如 600519")
+    p_news.add_argument("--days", type=int, default=90, help="研报回看天数（默认 90）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -588,6 +631,8 @@ def main() -> None:
         run_advice(args.code, args.market, args.days, args.config)
     elif args.command == "indicator":
         run_indicator(args.code, args.market, args.days, args.config)
+    elif args.command == "news":
+        run_news(args.code, "ashare", args.days, args.config)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":

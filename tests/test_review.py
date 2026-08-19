@@ -172,7 +172,7 @@ def test_build_html_indicator_section():
         [make_chart()],
         indicator_rows=ind_rows,
     )
-    # 指标板块存在，章节编号顺延
+    # 指标板块存在，章节编号顺延（无公告时 K 线紧随其后）
     assert "一、技术指标状态" in html
     assert "二、自选股当日表现" in html
     assert "三、当日预警时间线" in html
@@ -182,3 +182,32 @@ def test_build_html_indicator_section():
     html2 = build_html("2026-08-18", [make_quote()], [], [])
     assert "一、自选股当日表现" in html2
     assert "技术指标状态" not in html2
+
+
+def test_build_html_news_section():
+    ind_rows = [{
+        "code": "600519", "name": "贵州茅台", "market": "ashare",
+        "summary": "MACD死叉 | RSI 48 | KDJ死叉 | BOLL中下",
+        "macd": "死叉", "rsi": "48", "kdj": "死叉", "boll": "中下",
+    }]
+    news = [
+        {"kind": "ann", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-15", "title": "关于召开业绩说明会的公告",
+         "url": "https://example.com/ann"},
+        {"kind": "report", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-18", "title": "短期业绩承压，i茅台延续高增",
+         "url": "https://example.com/report", "org": "山西证券"},
+    ]
+    html = build_html(
+        "2026-08-18", [make_quote()], [], [make_chart()],
+        indicator_rows=ind_rows, news_rows=news,
+    )
+    assert "四、公告与研报" in html
+    assert "五、近期 K 线走势" in html
+    assert "公告" in html and "研报" in html
+    assert "山西证券" in html
+    assert 'href="https://example.com/ann"' in html
+    # 无公告时 K 线编号顺延回来
+    html2 = build_html("2026-08-18", [make_quote()], [], [],
+                       indicator_rows=ind_rows)
+    assert "四、近期 K 线走势" in html2
