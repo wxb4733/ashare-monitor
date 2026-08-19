@@ -117,9 +117,10 @@ python -m ashare_monitor.main report --monthly
 收盘后（15:00 后）自动生成 HTML 复盘报告到 `output/review-YYYY-MM-DD.html`，包含：
 
 - **大盘指数对照**：上证 / 深成 / 创业板当日点位、涨跌幅与近 60 日 K 线
+- **技术指标状态**：每只自选股当日 MACD / RSI / KDJ / BOLL 一览
 - **自选股当日表现**：收盘、涨跌幅、振幅、量能
 - **预警时间线**：全天触发的预警（含各股波动画像）
-- **近期 K 线**：每只自选股近 60 日蜡烛图 + 成交量（ECharts，涨红跌绿）
+- **近期 K 线**：每只自选股近 60 日蜡烛图 + 成交量（ECharts，涨红跌绿），图题标注波动画像与指标摘要
 
 `monitor.auto_review: false` 可关闭自动生成，随时可用 `review` 命令手动补生成。
 若配置了 `ASHARE_MONITOR_WEBHOOK`，报告生成后会自动推送一条复盘摘要到 webhook。

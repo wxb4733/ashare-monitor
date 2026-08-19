@@ -130,6 +130,11 @@ _DISCLAIMER = (
 )
 
 
+def _cn_num(n: int) -> str:
+    """阿拉伯数字转中文序号（1-10）。"""
+    return ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][n]
+
+
 def _pct_html(value: float) -> str:
     cls = "up" if value > 0 else ("down" if value < 0 else "")
     return f'<span class="{cls}">{value:+.2f}%</span>'
@@ -196,6 +201,7 @@ def build_html(
     charts: list[dict],
     index_quotes: list[Quote] | None = None,
     index_charts: list[dict] | None = None,
+    indicator_rows: list[dict] | None = None,
 ) -> str:
     """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。"""
     chart_cards = []
@@ -218,9 +224,35 @@ def build_html(
 </table>
 </div>"""
 
-    stock_sec_no = "二" if index_quotes else "一"
-    alert_sec_no = "三" if index_quotes else "二"
-    kline_sec_no = "四" if index_quotes else "三"
+    indicator_section = ""
+    if indicator_rows:
+        rows = []
+        for r in indicator_rows:
+            macd_style = "red" if r["macd"].startswith("金叉") else (
+                "green" if r["macd"].startswith("死叉") else ""
+            )
+            rows.append(
+                "<tr>"
+                f"<td>{r['market']}</td><td>{r['name']}({r['code']})</td>"
+                f'<td><span class="{macd_style}">{r["macd"]}</span></td>'
+                f"<td>{r['rsi']}</td><td>{r['kdj']}</td><td>{r['boll']}</td>"
+                "</tr>"
+            )
+        indicator_section = f"""
+<h2>{'二' if index_quotes else '一'}、技术指标状态</h2>
+<div class="card">
+<table>
+<tr><th>市场</th><th>标的</th><th>MACD</th><th>RSI(14)</th><th>KDJ</th><th>BOLL</th></tr>
+{''.join(rows)}
+</table>
+</div>"""
+
+    base = 2 if index_quotes else 1          # 指数占位后起始编号
+    if indicator_rows:
+        base += 1
+    stock_sec_no = _cn_num(base)
+    alert_sec_no = _cn_num(base + 1)
+    kline_sec_no = _cn_num(base + 2)
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -235,6 +267,7 @@ def build_html(
 <h1>A 股收盘复盘报告</h1>
 <div class="meta">{date_str} · 生成于 {datetime.now():%Y-%m-%d %H:%M:%S} · 数据来源：新浪/腾讯/东方财富公开行情接口</div>
 {index_section}
+{indicator_section}
 <h2>{stock_sec_no}、自选股当日表现</h2>
 <div class="card">
 <table>
@@ -267,13 +300,35 @@ def build_html(
 
 def _fetch_kline_chart(symbol: str, days: int, adjust: str,
                        title_prefix: str = "", market: str = "ashare") -> dict | None:
-    """拉取单个标的的 K 线图数据，失败返回 None。"""
+    """拉取单个标的的 K 线图数据，失败返回 None。
+
+    返回 dict 额外包含 indicator 字段：当日指标状态行（供报告标注）。
+    """
     try:
         df, name = fetch_history(symbol, days=days, adjust=adjust, market=market)
     except Exception as exc:  # noqa: BLE001
         logger.warning("复盘：%s(%s) K 线拉取失败: %s", symbol, market, exc)
         return None
     code6 = symbol[-6:]
+    indicator = None
+    try:
+        from .indicators import compute_indicators
+
+        ir = compute_indicators(df)
+        indicator = {
+            "code": code6,
+            "name": name or code6,
+            "market": market,
+            "summary": ir.summary_line(),
+            "macd": ir.macd.trend + (
+                f"({ir.macd.days_since_cross}日前)" if ir.macd.days_since_cross is not None else ""
+            ),
+            "rsi": f"{ir.rsi.value:.0f}",
+            "kdj": ir.kdj.trend,
+            "boll": ir.boll.position,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("复盘：%s 指标计算失败: %s", symbol, exc)
     return {
         "id": f"chart-{code6}-{'idx' if title_prefix else 'stk'}",
         "title": f"{title_prefix}{name or code6}({code6})  近{days}日",
@@ -284,6 +339,7 @@ def _fetch_kline_chart(symbol: str, days: int, adjust: str,
             for o, c, lo, hi in zip(df["开盘"], df["收盘"], df["最低"], df["最高"])
         ],
         "volumes": [int(v) for v in df["成交量"]],
+        "indicator": indicator,
     }
 
 
@@ -335,9 +391,10 @@ def generate_review(
 
     records = load_alerts(date_str, alerts_dir)
 
-    # 自选股 K 线（图题带波动画像）
+    # 自选股 K 线（图题带波动画像与指标摘要）
     cache = ProfileCache(days=cfg.monitor.profile_days)
     charts: list[dict] = []
+    indicator_rows: list[dict] = []
     for market, mcodes in watch_groups.items():
         for code in mcodes:
             chart = _fetch_kline_chart(
@@ -347,13 +404,20 @@ def generate_review(
             )
             if chart:
                 profile = cache.get(code, market)
+                extra = []
                 if profile:
-                    chart["title"] += f"  |  {profile}"
+                    extra.append(profile)
+                if chart.get("indicator"):
+                    extra.append(chart["indicator"]["summary"])
+                    indicator_rows.append(chart["indicator"])
+                if extra:
+                    chart["title"] += "  |  " + "  |  ".join(extra)
                 charts.append(chart)
 
     html = build_html(
         date_str, quotes, records, charts,
         index_quotes=index_quotes, index_charts=index_charts,
+        indicator_rows=indicator_rows,
     )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

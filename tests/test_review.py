@@ -153,3 +153,32 @@ def test_build_push_summary():
     assert "贵州茅台(600519) 1290.69 -0.19%" in text
     assert "当日预警 1 条" in text
     assert "review-2026-08-18.html" in text
+
+
+# ---------- 技术指标板块 ----------
+
+def test_build_html_indicator_section():
+    ind_rows = [
+        {
+            "code": "600519", "name": "贵州茅台", "market": "ashare",
+            "summary": "MACD死叉(2日前) | RSI 48 | KDJ死叉 | BOLL中下",
+            "macd": "死叉(2日前)", "rsi": "48", "kdj": "死叉", "boll": "中下",
+        },
+    ]
+    html = build_html(
+        "2026-08-18",
+        [make_quote()],
+        [make_alert().to_dict()],
+        [make_chart()],
+        indicator_rows=ind_rows,
+    )
+    # 指标板块存在，章节编号顺延
+    assert "一、技术指标状态" in html
+    assert "二、自选股当日表现" in html
+    assert "三、当日预警时间线" in html
+    assert "四、近期 K 线走势" in html
+    assert "死叉(2日前)" in html and "48" in html and "BOLL" in html
+    # 无指标时保持原编号
+    html2 = build_html("2026-08-18", [make_quote()], [], [])
+    assert "一、自选股当日表现" in html2
+    assert "技术指标状态" not in html2
