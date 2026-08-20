@@ -80,10 +80,10 @@ signals:
   momentum_window: 20     # 动量回看周期（交易日）
   momentum_pct: 3.0       # 动量强弱阈值（%）
 
-# Obsidian 集成：复盘报告同步导出 Markdown
+# Obsidian 集成：项目内独立知识库（obsidian-vault/，相对路径基于 config 所在目录）
 obsidian:
-  vault: ""              # Obsidian 库根目录（留空禁用），例如 D:/Obsidian/MyVault
-  reports_dir: "A股复盘"  # 库内复盘子目录
+  vault: "obsidian-vault"   # 留空禁用；先运行 `obsidian init` 初始化库结构
+  reports_dir: "A股复盘"     # 库内复盘子目录
 
 # 日志
 logging:

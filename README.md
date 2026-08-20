@@ -85,19 +85,37 @@ python -m ashare_monitor.main report --monthly
 
 安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor ipo` / `ashare-monitor review` / `ashare-monitor export` / `ashare-monitor scan` / `ashare-monitor report`。
 
-## Obsidian 集成
+## Obsidian 集成（独立知识库）
 
-配置 `config.yaml` 的 `obsidian` 段后，每次复盘报告生成时**同步导出 Markdown** 到 Obsidian 库：
+项目内置一个**独立 Obsidian 知识库** `obsidian-vault/`（可被 Obsidian 直接打开），
+复盘报告生成时自动导出 Markdown 进去：
+
+```bash
+python -m ashare_monitor.main obsidian init   # 初始化库结构（.obsidian 配置 + 模板 + 首页）
+python -m ashare_monitor.main obsidian index  # 重建首页复盘索引（wikilink）
+python -m ashare_monitor.main review          # 生成复盘并自动导出到 obsidian-vault/A股复盘/
+```
 
 ```yaml
 obsidian:
-  vault: "D:/Obsidian/MyVault"  # Obsidian 库根目录（留空禁用）
-  reports_dir: "A股复盘"          # 库内子目录
+  vault: "obsidian-vault"   # 独立库目录（相对 config 解析；留空禁用）
+  reports_dir: "A股复盘"     # 库内复盘子目录
 ```
 
-导出的 Markdown 包含 frontmatter（date/tags，可直接被 Obsidian 检索与双链）、
+库结构：
+
+```
+obsidian-vault/
+├── .obsidian/          # 应用配置（新文件默认入复盘目录、启用模板）
+├── README.md           # 知识库首页（自动维护复盘索引）
+├── 模板/复盘模板.md     # 复盘笔记模板
+└── A股复盘/            # 每日复盘 Markdown（本地数据，git 忽略）
+```
+
+导出的 Markdown 包含 frontmatter（date/tags，可检索与双链）、
 大盘指数 / 技术指标 / 当日表现 / 预警时间线 / 财报速览 / 公告与研报（含原文链接）/
 近期 IPO 各板块表格；K 线图（ECharts）无法入 Markdown，以链接指向 HTML 报告。
+复盘数据由 vault 内 `.gitignore` 排除，仅模板与配置入库。
 
 ## IPO 公司分析（ipo）
 

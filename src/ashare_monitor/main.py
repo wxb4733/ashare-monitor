@@ -746,6 +746,27 @@ def run_ipo(keyword: str | None, limit: int) -> None:
     print_disclaimer()
 
 
+def run_obsidian(action: str, vault: str | None, config_path: str | None) -> None:
+    """管理独立 Obsidian 知识库（init / index）。"""
+    from .obsidian_vault import build_vault_index, init_vault
+
+    cfg = load_config(config_path)
+    vault_path = vault or cfg.obsidian.vault
+    if not vault_path:
+        console.print("[red]未配置 obsidian.vault（config.yaml），或指定 --vault 路径[/red]")
+        return
+    try:
+        if action == "init":
+            root = init_vault(vault_path, cfg.obsidian.reports_dir)
+            console.print(f"[green]Obsidian 知识库已初始化: {root}[/green]")
+            console.print("[dim]用 Obsidian 打开该目录即可使用（含 .obsidian 配置与复盘模板）[/dim]")
+        else:  # index
+            home = build_vault_index(vault_path, cfg.obsidian.reports_dir)
+            console.print(f"[green]知识库索引已更新: {home}[/green]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]Obsidian 操作失败：{exc}[/red]")
+
+
 def run_report(period: str, date: str | None, config_path: str | None) -> None:
     from .review import generate_period_report
 
@@ -799,6 +820,10 @@ def main() -> None:
     p_export.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     p_export.add_argument("--obsidian", action="store_true",
                           help="导出 Markdown 到 Obsidian 库（需 config.obsidian.vault）")
+    p_ob = sub.add_parser("obsidian", help="管理独立 Obsidian 知识库")
+    p_ob.add_argument("action", choices=["init", "index"],
+                      help="init=初始化库结构；index=重建首页索引")
+    p_ob.add_argument("--vault", help="vault 路径（默认取 config.obsidian.vault）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -832,6 +857,8 @@ def main() -> None:
         run_review(args.date, args.config)
         console.print("[dim]提示：Obsidian 导出由 config.obsidian.vault 控制，"
                       "review 生成时自动执行[/dim]")
+    elif args.command == "obsidian":
+        run_obsidian(args.action, args.vault, args.config)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":

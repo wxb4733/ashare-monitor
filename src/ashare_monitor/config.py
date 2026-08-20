@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import yaml
 
@@ -82,8 +83,9 @@ class SignalConfig:
 
 @dataclass
 class ObsidianConfig:
-    # Obsidian 库根目录（留空禁用复盘 Markdown 导出）
-    vault: str = ""
+    # Obsidian 库根目录（留空禁用复盘 Markdown 导出）。
+    # 支持相对路径：相对 config 文件所在目录解析（默认项目内 obsidian-vault/）
+    vault: str = "obsidian-vault"
     # 库内复盘报告子目录
     reports_dir: str = "A股复盘"
 
@@ -176,8 +178,18 @@ def load_config(path: str | None = None) -> Config:
             momentum_pct=float(signals_raw.get("momentum_pct", 3.0)),
         ),
         obsidian=ObsidianConfig(
-            vault=str(obsidian_raw.get("vault", "")),
+            vault=_resolve_vault(str(obsidian_raw.get("vault", "obsidian-vault")), path),
             reports_dir=str(obsidian_raw.get("reports_dir", "A股复盘")),
         ),
         logging=raw.get("logging", {}) or {},
     )
+
+
+def _resolve_vault(vault: str, config_path: str) -> str:
+    """vault 相对路径 → 相对 config 文件所在目录解析为绝对路径。"""
+    if not vault.strip():
+        return ""
+    p = Path(vault)
+    if p.is_absolute():
+        return str(p)
+    return str((Path(config_path).resolve().parent / p).resolve())

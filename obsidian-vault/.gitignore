@@ -1,0 +1,8 @@
+# Obsidian 本地状态（不入库）
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+
+# 复盘数据（本地积累，不入库）
+A股复盘/
+附件/

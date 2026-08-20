@@ -1,0 +1,155 @@
+"""独立 Obsidian 知识库（vault）管理。
+
+在项目内创建一个可被 Obsidian 直接打开的独立库：
+- obsidian-vault/.obsidian/：应用配置（新文件默认放入复盘目录、启用模板）
+- obsidian-vault/README.md：知识库首页（自动生成复盘索引）
+- obsidian-vault/模板/复盘模板.md：复盘笔记模板
+- obsidian-vault/A股复盘/：每日复盘 Markdown（由 review 导出，本地数据不入 git）
+
+CLI：`obsidian init` 初始化，`obsidian index` 重建首页索引。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# .obsidian 基础配置
+_APP_JSON = {
+    "alwaysUpdateLinks": True,
+    "showLineNumber": True,
+    "newFileLocation": "folder",
+    "newFileFolderPath": "A股复盘",
+    "attachmentFolderPath": "附件",
+}
+
+_CORE_PLUGINS_JSON = [
+    "file-explorer", "global-search", "switcher", "graph",
+    "backlink", "outgoing-link", "tag-pane", "page-preview",
+    "templates", "daily-notes", "note-composer", "command-palette",
+]
+
+_TEMPLATES_JSON = {"folder": "模板"}
+
+_DAILY_NOTES_JSON = {
+    "format": "YYYY-MM-DD",
+    "folder": "A股复盘",
+    "template": "模板/复盘模板",
+}
+
+_HOME_MD = """# A 股监控知识库
+
+由 [ashare-monitor](https://github.com/wxb4733/ashare-monitor) 自动维护的独立 Obsidian 库。
+
+## 目录
+
+- `A股复盘/`：每日复盘报告（Markdown，自动导出）
+- `模板/`：复盘笔记模板
+
+## 复盘索引
+
+<!-- INDEX_START -->
+<!-- INDEX_END -->
+
+## 说明
+
+- 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘
+- 复盘包含：大盘指数、技术指标、当日表现、预警、财报速览、公告与研报、近期 IPO
+- K 线图（ECharts）以链接指向 HTML 报告
+- 数据仅供学习与技术研究，不构成投资建议
+"""
+
+_TEMPLATE_MD = """---
+title: A股复盘 {{date}}
+date: {{date}}
+tags: [复盘, A股]
+---
+
+# A股收盘复盘 {{date}}
+
+> 该笔记由复盘报告导出生成。每日收盘后运行：
+> `python -m ashare_monitor.main review`
+"""
+
+_VAULT_GITIGNORE = """# Obsidian 本地状态（不入库）
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/cache
+
+# 复盘数据（本地积累，不入库）
+A股复盘/
+附件/
+"""
+
+
+def init_vault(vault_path: str | Path, reports_dir: str = "A股复盘") -> Path:
+    """初始化独立 Obsidian 库（幂等，重复执行安全）。"""
+    root = Path(vault_path)
+    (root / ".obsidian").mkdir(parents=True, exist_ok=True)
+    (root / reports_dir).mkdir(parents=True, exist_ok=True)
+    (root / "模板").mkdir(parents=True, exist_ok=True)
+
+    # .obsidian 配置（仅在不存在时写入，避免覆盖用户自定义）
+    def _write_if_missing(rel: str, content: str) -> None:
+        target = root / rel
+        if not target.exists():
+            target.write_text(content, encoding="utf-8")
+
+    _write_if_missing(".obsidian/app.json", json.dumps(_APP_JSON, ensure_ascii=False, indent=2))
+    _write_if_missing(".obsidian/core-plugins.json",
+                      json.dumps(_CORE_PLUGINS_JSON, ensure_ascii=False, indent=2))
+    _write_if_missing(".obsidian/community-plugins.json", "[]")
+    _write_if_missing(".obsidian/templates.json",
+                      json.dumps(_TEMPLATES_JSON, ensure_ascii=False, indent=2))
+    _write_if_missing(".obsidian/daily-notes.json",
+                      json.dumps(_DAILY_NOTES_JSON, ensure_ascii=False, indent=2))
+    _write_if_missing(".gitignore", _VAULT_GITIGNORE)
+
+    # 首页与模板
+    home = root / "README.md"
+    if not home.exists():
+        home.write_text(_HOME_MD, encoding="utf-8")
+    tpl = root / "模板" / "复盘模板.md"
+    if not tpl.exists():
+        tpl.write_text(_TEMPLATE_MD, encoding="utf-8")
+
+    # 重建首页索引（幂等更新）
+    build_vault_index(root, reports_dir)
+    return root
+
+
+def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -> Path:
+    """重建首页 README 的复盘索引（<!-- INDEX_START --> 与 <!-- INDEX_END --> 之间）。"""
+    root = Path(vault_path)
+    home = root / "README.md"
+    if not home.exists():
+        home.write_text(_HOME_MD, encoding="utf-8")
+
+    reports = sorted(
+        (root / reports_dir).glob("review-*.md"),
+        key=lambda p: p.name,
+    )
+    if not reports:
+        links = "（暂无复盘记录，运行 `review` 生成）"
+    else:
+        links = "\n".join(
+            f"- [[{reports_dir}/{r.stem}|{r.stem.replace('review-', '复盘 ')}]]"
+            for r in reports[-30:]  # 最近 30 篇
+        )
+
+    new_index = f"<!-- INDEX_START -->\n{links}\n<!-- INDEX_END -->"
+    text = home.read_text(encoding="utf-8")
+    if "<!-- INDEX_START -->" in text:
+        import re
+
+        text = re.sub(r"<!-- INDEX_START -->.*?<!-- INDEX_END -->",
+                      new_index, text, flags=re.S)
+    else:
+        text = text.replace("<!-- INDEX_END -->",
+                            new_index + "\n<!-- INDEX_END -->")
+    home.write_text(text, encoding="utf-8")
+    logger.info("知识库索引已更新: %s", home)
+    return home
