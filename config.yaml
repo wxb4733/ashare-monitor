@@ -80,6 +80,11 @@ signals:
   momentum_window: 20     # 动量回看周期（交易日）
   momentum_pct: 3.0       # 动量强弱阈值（%）
 
+# Obsidian 集成：复盘报告同步导出 Markdown
+obsidian:
+  vault: ""              # Obsidian 库根目录（留空禁用），例如 D:/Obsidian/MyVault
+  reports_dir: "A股复盘"  # 库内复盘子目录
+
 # 日志
 logging:
   level: "INFO"

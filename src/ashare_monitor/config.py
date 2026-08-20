@@ -81,6 +81,14 @@ class SignalConfig:
 
 
 @dataclass
+class ObsidianConfig:
+    # Obsidian 库根目录（留空禁用复盘 Markdown 导出）
+    vault: str = ""
+    # 库内复盘报告子目录
+    reports_dir: str = "A股复盘"
+
+
+@dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     alerts: AlertConfig = field(default_factory=AlertConfig)
@@ -89,6 +97,7 @@ class Config:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
     signals: SignalConfig = field(default_factory=SignalConfig)
+    obsidian: ObsidianConfig = field(default_factory=ObsidianConfig)
     logging: dict = field(default_factory=dict)
 
 
@@ -110,6 +119,7 @@ def load_config(path: str | None = None) -> Config:
     review_raw = raw.get("review", {}) or {}
     scan_raw = raw.get("scan", {}) or {}
     signals_raw = raw.get("signals", {}) or {}
+    obsidian_raw = raw.get("obsidian", {}) or {}
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
@@ -164,6 +174,10 @@ def load_config(path: str | None = None) -> Config:
             volume_ratio_low=float(signals_raw.get("volume_ratio_low", 0.8)),
             momentum_window=int(signals_raw.get("momentum_window", 20)),
             momentum_pct=float(signals_raw.get("momentum_pct", 3.0)),
+        ),
+        obsidian=ObsidianConfig(
+            vault=str(obsidian_raw.get("vault", "")),
+            reports_dir=str(obsidian_raw.get("reports_dir", "A股复盘")),
         ),
         logging=raw.get("logging", {}) or {},
     )

@@ -580,7 +580,174 @@ def generate_review(
     out_path = out_dir / f"review-{date_str}.html"
     out_path.write_text(html, encoding="utf-8")
     logger.info("复盘报告已生成: %s", out_path)
+
+    # 导出 Markdown 到 Obsidian 库（配置了 vault 才执行）
+    obsidian_path = export_obsidian(
+        cfg, date_str, quotes, records, index_quotes,
+        indicator_rows, news_rows, financial_rows, ipo_rows,
+        html_path=out_path,
+    )
+    if obsidian_path:
+        logger.info("Obsidian Markdown 已导出: %s", obsidian_path)
+
     return out_path, quotes, records
+
+
+def export_obsidian(
+    cfg: Config,
+    date_str: str,
+    quotes: list[Quote],
+    records: list[dict],
+    index_quotes: list[Quote],
+    indicator_rows: list[dict],
+    news_rows: list[dict],
+    financial_rows: list[dict],
+    ipo_rows: list[dict],
+    html_path: Path,
+) -> Path | None:
+    """把复盘报告导出为 Markdown 存入 Obsidian vault（未配置则返回 None）。"""
+    vault = getattr(cfg.obsidian, "vault", "").strip()
+    if not vault:
+        return None
+    md = build_review_markdown(
+        date_str, quotes, records, index_quotes,
+        indicator_rows, news_rows, financial_rows, ipo_rows,
+        html_path=html_path,
+    )
+    vault_dir = Path(vault)
+    reports_dir = vault_dir / (getattr(cfg.obsidian, "reports_dir", "A股复盘") or "A股复盘")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    out = reports_dir / f"review-{date_str}.md"
+    out.write_text(md, encoding="utf-8")
+    return out
+
+
+def build_review_markdown(
+    date_str: str,
+    quotes: list[Quote],
+    records: list[dict],
+    index_quotes: list[Quote] | None = None,
+    indicator_rows: list[dict] | None = None,
+    news_rows: list[dict] | None = None,
+    financial_rows: list[dict] | None = None,
+    ipo_rows: list[dict] | None = None,
+    html_path: Path | None = None,
+) -> str:
+    """把复盘数据渲染为 Obsidian Markdown（纯函数，便于测试）。
+
+    板块与 HTML 报告保持一致；K 线图（ECharts）无法入 Markdown，
+    通过链接指向 HTML 报告。
+    """
+    lines = [
+        "---",
+        f"title: A股复盘 {date_str}",
+        f"date: {date_str}",
+        "tags: [复盘, A股]",
+        f"generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}",
+        "---",
+        "",
+        f"# A股收盘复盘 {date_str}",
+        "",
+    ]
+
+    def _md_table(headers: list[str], rows: list[list[str]]) -> str:
+        sep = "| " + " | ".join(["---"] * len(headers)) + " |"
+        out = ["| " + " | ".join(headers) + " |", sep]
+        out += ["| " + " | ".join(r) + " |" for r in rows]
+        return "\n".join(out)
+
+    def _fmt(v, suffix: str = "", nd: int = 2) -> str:
+        return f"{v:.{nd}f}{suffix}" if v is not None else "-"
+
+    # 大盘指数
+    if index_quotes:
+        lines.append("## 大盘指数")
+        lines.append("")
+        lines.append(_md_table(
+            ["指数", "点位", "涨跌幅", "振幅", "成交额"],
+            [[q.name, _fmt(q.price, nd=2), f"{q.change_pct:+.2f}%",
+              _fmt(q.amplitude, "%", 1), _fmt(q.turnover / 1e8, "亿", 1)]
+             for q in index_quotes],
+        ))
+        lines.append("")
+
+    # 技术指标
+    if indicator_rows:
+        lines.append("## 技术指标状态")
+        lines.append("")
+        lines.append(_md_table(
+            ["市场", "标的", "MACD", "RSI(14)", "KDJ", "BOLL"],
+            [[r["market"], f"{r['name']}({r['code']})", r["macd"], r["rsi"],
+              r["kdj"], r["boll"]] for r in indicator_rows],
+        ))
+        lines.append("")
+
+    # 自选股当日表现
+    lines.append("## 自选股当日表现")
+    lines.append("")
+    lines.append(_md_table(
+        ["代码", "名称", "收盘/最新", "涨跌幅", "振幅", "成交额"],
+        [[q.code, q.name, _fmt(q.price), f"{q.change_pct:+.2f}%",
+          _fmt(q.amplitude, "%", 1), _fmt(q.turnover / 1e8, "亿", 1)]
+         for q in quotes],
+    ))
+    lines.append("")
+
+    # 预警时间线
+    lines.append(f"## 当日预警时间线（共 {len(records)} 条）")
+    lines.append("")
+    if records:
+        for r in records:
+            lines.append(f"- {r.get('time', '')} **{r.get('name', r.get('code', ''))}** "
+                         f"`{r.get('rule', '')}` — {r.get('message', '')}")
+    else:
+        lines.append("当日无预警")
+    lines.append("")
+
+    # 财报速览
+    if financial_rows:
+        lines.append("## 财报速览（最新报告期）")
+        lines.append("")
+        lines.append(_md_table(
+            ["标的", "报告期", "营收(亿)", "营收同比", "净利(亿)", "净利同比", "ROE", "毛利率"],
+            [[f"{r['name']}({r['code']})", r["report_date"],
+              _fmt(r["revenue"]), f"{r['revenue_yoy']:+.1f}%" if r["revenue_yoy"] is not None else "-",
+              _fmt(r["net_profit"]), f"{r['profit_yoy']:+.1f}%" if r["profit_yoy"] is not None else "-",
+              _fmt(r["roe"], "%", 1), _fmt(r["gross_margin"], "%", 1)]
+             for r in financial_rows],
+        ))
+        lines.append("")
+
+    # 公告与研报
+    if news_rows:
+        lines.append("## 公告与研报")
+        lines.append("")
+        for r in news_rows:
+            kind = "公告" if r["kind"] == "ann" else "研报"
+            extra = f"（{r['org']}）" if r.get("org") else ""
+            lines.append(f"- [{kind}] {r['date']} **{r['title']}**{extra} — {r['url']}")
+        lines.append("")
+
+    # 近期 IPO
+    if ipo_rows:
+        lines.append("## 近期 IPO")
+        lines.append("")
+        lines.append(_md_table(
+            ["代码", "名称", "交易所", "申购日", "发行价", "行业PE", "募资(亿)", "状态"],
+            [[r["code"], r["name"], r["market"], r["apply_date"] or "-",
+              _fmt(r["issue_price"]), _fmt(r["industry_pe"], nd=1),
+              _fmt(r["raise_funds"]), r["stage"]] for r in ipo_rows],
+        ))
+        lines.append("")
+
+    # K 线走势（引用 HTML 报告）
+    lines.append("## 近期 K 线走势")
+    lines.append("")
+    lines.append("K 线图（ECharts 蜡烛图）请查看 HTML 报告："
+                 + (f"[review-{date_str}.html]({html_path})" if html_path else f"`output/review-{date_str}.html`"))
+    lines.append("")
+    lines.append(f"> {_DISCLAIMER}")
+    return "\n".join(lines)
 
 
 def build_push_summary(

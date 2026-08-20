@@ -74,12 +74,30 @@ python -m ashare_monitor.main financial 600519 --periods 6
 python -m ashare_monitor.main ipo --limit 30
 python -m ashare_monitor.main ipo 马矿股份
 
+# 导出复盘到 Obsidian（Markdown，需配置 obsidian.vault）
+python -m ashare_monitor.main review        # 生成时自动导出
+python -m ashare_monitor.main export        # 等效命令
+
 # 周/月复盘汇总报告（基于 SQLite 积累的数据）
 python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor ipo` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor ipo` / `ashare-monitor review` / `ashare-monitor export` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## Obsidian 集成
+
+配置 `config.yaml` 的 `obsidian` 段后，每次复盘报告生成时**同步导出 Markdown** 到 Obsidian 库：
+
+```yaml
+obsidian:
+  vault: "D:/Obsidian/MyVault"  # Obsidian 库根目录（留空禁用）
+  reports_dir: "A股复盘"          # 库内子目录
+```
+
+导出的 Markdown 包含 frontmatter（date/tags，可直接被 Obsidian 检索与双链）、
+大盘指数 / 技术指标 / 当日表现 / 预警时间线 / 财报速览 / 公告与研报（含原文链接）/
+近期 IPO 各板块表格；K 线图（ECharts）无法入 Markdown，以链接指向 HTML 报告。
 
 ## IPO 公司分析（ipo）
 

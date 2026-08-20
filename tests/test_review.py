@@ -247,3 +247,92 @@ def test_build_html_financial_and_ipo_sections():
     # 无财报/IPO 时不渲染
     html2 = build_html("2026-08-18", [make_quote()], [], [])
     assert "财报速览" not in html2 and "近期 IPO" not in html2
+
+
+# ---------- Obsidian Markdown 导出 ----------
+
+def test_build_review_markdown_full():
+    from ashare_monitor.review import build_review_markdown
+
+    ind_rows = [{
+        "code": "600519", "name": "贵州茅台", "market": "ashare",
+        "summary": "MACD死叉 | RSI 48 | KDJ死叉 | BOLL中下",
+        "macd": "死叉(2日前)", "rsi": "48", "kdj": "死叉", "boll": "中下",
+    }]
+    news = [
+        {"kind": "ann", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-15", "title": "业绩说明会公告", "url": "https://x/1"},
+        {"kind": "report", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-18", "title": "短期业绩承压", "url": "https://x/2", "org": "山西证券"},
+    ]
+    financial = [
+        {"code": "600519", "name": "贵州茅台", "report_date": "2026-06-30",
+         "revenue": 922.8, "net_profit": 445.2, "revenue_yoy": 1.3,
+         "profit_yoy": -1.9, "roe": 16.8, "gross_margin": 89.6, "net_margin": 48.2},
+    ]
+    ipo = [
+        {"code": "601123", "name": "马矿股份", "market": "上海",
+         "apply_date": "2026-08-21", "issue_price": 6.65,
+         "industry_pe": 36.1, "raise_funds": 8.21, "stage": "待申购"},
+    ]
+    md = build_review_markdown(
+        "2026-08-20", [make_quote()], [make_alert().to_dict()],
+        index_quotes=[make_index_quote()],
+        indicator_rows=ind_rows, news_rows=news,
+        financial_rows=financial, ipo_rows=ipo,
+        html_path="output/review-2026-08-20.html",
+    )
+    # frontmatter
+    assert md.startswith("---\ntitle: A股复盘 2026-08-20")
+    assert "tags: [复盘, A股]" in md
+    # 各板块
+    for h in ("## 大盘指数", "## 技术指标状态", "## 自选股当日表现",
+              "## 当日预警时间线", "## 财报速览", "## 公告与研报",
+              "## 近期 IPO", "## 近期 K 线走势"):
+        assert h in md, h
+    # 内容
+    assert "贵州茅台(600519)" in md
+    assert "死叉(2日前)" in md
+    assert "山西证券" in md and "https://x/2" in md
+    assert "马矿股份" in md and "待申购" in md
+    assert "922.8" in md and "16.8%" in md
+    # 预警 + 免责声明
+    assert "涨跌幅 -3.19%" in md or "change_pct" in md
+    assert "不构成任何投资建议" in md
+    # HTML 报告引用
+    assert "review-2026-08-20.html" in md
+
+
+def test_build_review_markdown_empty():
+    from ashare_monitor.review import build_review_markdown
+
+    md = build_review_markdown("2026-08-20", [], [])
+    assert "## 自选股当日表现" in md
+    assert "当日无预警" in md
+    assert "## 大盘指数" not in md
+    assert "## 财报速览" not in md
+    assert "## 近期 IPO" not in md
+    assert "## 近期 K 线走势" in md
+
+
+def test_export_obsidian(tmp_path, monkeypatch):
+    from ashare_monitor.config import ObsidianConfig
+    from ashare_monitor.review import export_obsidian
+
+    vault = tmp_path / "vault"
+    cfg = type("Cfg", (), {"obsidian": ObsidianConfig(vault=str(vault), reports_dir="A股复盘")})()
+
+    html = tmp_path / "review-2026-08-20.html"
+    out = export_obsidian(
+        cfg, "2026-08-20", [make_quote()], [make_alert().to_dict()],
+        index_quotes=[], indicator_rows=[], news_rows=[], financial_rows=[],
+        ipo_rows=[], html_path=html,
+    )
+    assert out is not None and out.exists()
+    assert out.name == "review-2026-08-20.md"
+    assert "A股复盘" in str(out.parent)
+    assert "title: A股复盘 2026-08-20" in out.read_text(encoding="utf-8")
+    # vault 留空 → 不导出
+    cfg2 = type("Cfg", (), {"obsidian": ObsidianConfig(vault="", reports_dir="x")})()
+    assert export_obsidian(cfg2, "2026-08-20", [], [], index_quotes=[], indicator_rows=[],
+                           news_rows=[], financial_rows=[], ipo_rows=[], html_path=html) is None

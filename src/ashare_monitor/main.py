@@ -795,6 +795,10 @@ def main() -> None:
     p_ipo = sub.add_parser("ipo", help="IPO 公司分析（近期新股列表 / 单只详情）")
     p_ipo.add_argument("keyword", nargs="?", default="", help="新股代码或名称（缺省显示列表）")
     p_ipo.add_argument("--limit", type=int, default=30, help="列表条数（默认 30）")
+    p_export = sub.add_parser("export", help="导出复盘报告（Obsidian Markdown）")
+    p_export.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
+    p_export.add_argument("--obsidian", action="store_true",
+                          help="导出 Markdown 到 Obsidian 库（需 config.obsidian.vault）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -824,6 +828,10 @@ def main() -> None:
         run_financial(args.code, args.periods)
     elif args.command == "ipo":
         run_ipo(args.keyword, args.limit)
+    elif args.command == "export":
+        run_review(args.date, args.config)
+        console.print("[dim]提示：Obsidian 导出由 config.obsidian.vault 控制，"
+                      "review 生成时自动执行[/dim]")
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
