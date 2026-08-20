@@ -80,9 +80,16 @@ python -m ashare_monitor.main report --monthly
 
 - **公告**：东财公告接口（最近 N 条，含原文链接）
 - **研报**：东财研报接口（机构名称、报告标题、**预测 EPS / 预测 PE**、原文链接）
+- **持久化**：拉取结果自动存入 SQLite（`data/ashare_monitor.db` 的 `announcements` / `research_reports` 表，url 唯一去重），随用随查、离线可读
+
+```bash
+python -m ashare_monitor.main news 600519 --days 90   # 拉取 + 入库
+python -m ashare_monitor.main news 600519 --local     # 仅读数据库，不联网
+python -m ashare_monitor.main news --watchlist --days 30  # 批量采集全部 A 股自选股入库
+```
 
 数据源自动降级：东财直连接口 → akshare。收盘复盘报告自动附「公告与研报」板块，
-每只自选股展示最近公告与研报标题及原文链接——复盘时快速定位"异动是否有消息面支撑"。
+每只自选股展示最近公告与研报标题及原文链接（拉取时同步入库）——复盘时快速定位"异动是否有消息面支撑"。
 
 ## 技术指标监控（indicator）
 

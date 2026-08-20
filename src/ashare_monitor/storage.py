@@ -46,6 +46,31 @@ CREATE TABLE IF NOT EXISTS reviews (
     quotes_json TEXT,
     indexes_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    name TEXT,
+    date TEXT,
+    title TEXT,
+    url TEXT UNIQUE,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ann_code ON announcements(code, date);
+
+CREATE TABLE IF NOT EXISTS research_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    name TEXT,
+    date TEXT,
+    title TEXT,
+    org TEXT,
+    eps REAL,
+    pe REAL,
+    url TEXT UNIQUE,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_report_code ON research_reports(code, date);
 """
 
 
@@ -241,5 +266,131 @@ def load_reviews_range(
                 item["indexes"] = []
             result.append(item)
         return result
+    finally:
+        conn.close()
+
+
+# ---------- 公告与研报 ----------
+
+def record_announcements(
+    items: list[dict],
+    code: str,
+    name: str = "",
+    db_path: str | Path = DB_PATH,
+) -> tuple[int, int]:
+    """入库公告（url 唯一去重）。
+
+    :return: (新增条数, 已存在条数)
+    """
+    if not items:
+        return 0, 0
+    conn = _connect(db_path)
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new = 0
+        for it in items:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO announcements (code, name, date, title, url, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (code, name or "", it.get("date", ""), it.get("title", ""),
+                 it.get("url", ""), now),
+            )
+            new += cur.rowcount
+        conn.commit()
+        total = conn.execute("SELECT COUNT(*) FROM announcements WHERE code=?", (code,)).fetchone()[0]
+        return new, max(total - new, 0)
+    finally:
+        conn.close()
+
+
+def load_announcements(
+    code: str,
+    limit: int = 30,
+    db_path: str | Path = DB_PATH,
+) -> list[dict]:
+    """查询某标的入库公告（按日期倒序）。"""
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT code, name, date, title, url FROM announcements "
+            "WHERE code=? ORDER BY date DESC, id DESC LIMIT ?",
+            (code[-6:], limit),
+        ).fetchall()
+        return [
+            {"code": r[0], "name": r[1], "date": r[2], "title": r[3], "url": r[4]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def record_research_reports(
+    items: list[dict],
+    code: str,
+    name: str = "",
+    db_path: str | Path = DB_PATH,
+) -> tuple[int, int]:
+    """入库研报（url 唯一去重）。
+
+    :return: (新增条数, 已存在条数)
+    """
+    if not items:
+        return 0, 0
+    conn = _connect(db_path)
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new = 0
+        for it in items:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO research_reports "
+                "(code, name, date, title, org, eps, pe, url, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (code, name or "", it.get("date", ""), it.get("title", ""),
+                 it.get("org", ""), it.get("eps_this_year"), it.get("pe_this_year"),
+                 it.get("url", ""), now),
+            )
+            new += cur.rowcount
+        conn.commit()
+        total = conn.execute("SELECT COUNT(*) FROM research_reports WHERE code=?", (code,)).fetchone()[0]
+        return new, max(total - new, 0)
+    finally:
+        conn.close()
+
+
+def load_research_reports(
+    code: str,
+    limit: int = 30,
+    db_path: str | Path = DB_PATH,
+) -> list[dict]:
+    """查询某标的入库研报（按日期倒序）。"""
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT code, name, date, title, org, eps, pe, url FROM research_reports "
+            "WHERE code=? ORDER BY date DESC, id DESC LIMIT ?",
+            (code[-6:], limit),
+        ).fetchall()
+        return [
+            {"code": r[0], "name": r[1], "date": r[2], "title": r[3],
+             "org": r[4], "eps_this_year": r[5], "pe_this_year": r[6], "url": r[7]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def count_news_by_code(db_path: str | Path = DB_PATH) -> list[dict]:
+    """统计各标的入库的公告/研报条数（按公告+研报总数降序）。"""
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT code, "
+            "(SELECT COUNT(*) FROM announcements a WHERE a.code = n.code) AS anns, "
+            "(SELECT COUNT(*) FROM research_reports r WHERE r.code = n.code) AS reps "
+            "FROM (SELECT DISTINCT code FROM announcements "
+            "      UNION SELECT DISTINCT code FROM research_reports) n "
+            "ORDER BY (anns + reps) DESC",
+        ).fetchall()
+        return [{"code": r[0], "anns": r[1], "reports": r[2]} for r in rows]
     finally:
         conn.close()

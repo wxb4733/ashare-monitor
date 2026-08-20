@@ -450,13 +450,22 @@ def generate_review(
         name = str(item.get("name", code))
         try:
             from .announcements import fetch_announcements, fetch_research_reports
+            from .storage import record_announcements, record_research_reports
 
-            for a in fetch_announcements(code, limit=3):
+            anns = fetch_announcements(code, limit=3)
+            reps = fetch_research_reports(code, days=30, limit=2)
+            # 拉取结果同步入库（url 去重，失败不阻塞报告）
+            try:
+                record_announcements(anns, code, name=name)
+                record_research_reports(reps, code, name=name)
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("复盘：%s 公告/研报入库失败: %s", code, exc2)
+            for a in anns:
                 news_rows.append({
                     "kind": "ann", "code": code, "name": name,
                     "date": a["date"], "title": a["title"], "url": a["url"],
                 })
-            for r in fetch_research_reports(code, days=30, limit=2):
+            for r in reps:
                 news_rows.append({
                     "kind": "report", "code": code, "name": name,
                     "date": r["date"], "title": r["title"],
