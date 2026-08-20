@@ -4,7 +4,7 @@ import datetime
 
 import pytest
 
-from ashare_monitor.backtest import backtest
+from ashare_monitor.backtest import backtest, dca_backtest
 
 
 def make_rows(prices: list[float], start: str = "2024-01-02") -> list[dict]:
@@ -96,3 +96,42 @@ def test_backtest_multiple_holds():
     assert len(results) == 2
     assert results[0]["return_pct"] == pytest.approx(20.0)    # 10→12
     assert results[1]["return_pct"] == pytest.approx(-10.0)   # 10→9
+
+
+# ---------- 定投回测 ----------
+
+def make_monthly_rows() -> list[dict]:
+    """24 个月日 K：每月 20 个交易日，价格每 6 个月上涨 20%。"""
+    rows = []
+    price = 10.0
+    for m in range(24):
+        for d in range(20):
+            rows.append({
+                "date": f"{2024 + m // 12}-{m % 12 + 1:02d}-{d + 1:02d}",
+                "open": price * 0.99, "close": price,
+                "high": price * 1.02, "low": price * 0.98, "volume": 10000.0,
+            })
+        price *= 1.2
+    return rows
+
+
+def test_dca_stats():
+    rows = make_monthly_rows()
+    result = dca_backtest("600001", "ashare", amount=10000, months=12,
+                          hold_days=250, rows=rows)
+    assert result["trades"] == 12
+    # 每月买入持有 250 日：价格 6 个月涨 20%，250 交易日约 12 个月 → 平均收益显著为正
+    assert result["avg_return_pct"] > 10
+    assert result["win_rate_pct"] == 100.0
+    assert result["best_pct"] >= result["median_return_pct"] >= result["worst_pct"]
+    assert len(result["detail"]) == 12
+    # 每笔买卖日差 ≈ 250 个交易日
+    assert result["detail"][0]["return_pct"] > 0
+
+
+def test_dca_insufficient_data():
+    rows = make_monthly_rows()[:100]   # 不到 5 个月
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError):
+        dca_backtest("600001", "ashare", months=60, hold_days=250, rows=rows)

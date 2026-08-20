@@ -119,3 +119,80 @@ def backtest(
             "span_days": span_days,
         })
     return results
+
+
+def dca_backtest(
+    code: str,
+    market: str = "ashare",
+    amount: float = 10000.0,
+    months: int = 60,
+    hold_days: int = 250,
+    lot_size: int | None = None,
+    rows: list[dict] | None = None,
+) -> dict:
+    """定投回测：每月首个交易日买入固定金额，持有 N 个交易日后卖出。
+
+    逐笔独立计算收益率（不复利），统计分布。
+    :param rows: 日 K 序列（测试可注入），None 时自动获取
+    """
+    rows = rows if rows is not None else _load_daily(code, market)
+    if len(rows) < 2:
+        raise RuntimeError(f"{code} 日 K 数据不足（{len(rows)} 根）")
+
+    lot = lot_size or _DEFAULT_LOT.get(market, 100)
+
+    # 每月首个交易日（按 YYYY-MM 分组取每组第一个）
+    monthly_idx: list[int] = []
+    seen: set[str] = set()
+    for i, r in enumerate(rows):
+        ym = r["date"][:7]
+        if ym not in seen:
+            seen.add(ym)
+            monthly_idx.append(i)
+
+    # 每笔：买 + 持有，卖出日需在数据范围内
+    trades = []
+    for buy_idx in monthly_idx:
+        sell_idx = buy_idx + hold_days
+        if sell_idx >= len(rows):
+            continue
+        buy, sell = rows[buy_idx], rows[sell_idx]
+        shares = int(amount / buy["close"] / lot) * lot
+        if shares <= 0:
+            continue
+        buy_amt = shares * buy["close"]
+        sell_amt = shares * sell["close"]
+        span = (datetime.strptime(sell["date"], "%Y-%m-%d")
+                - datetime.strptime(buy["date"], "%Y-%m-%d")).days
+        ret = (sell_amt / buy_amt - 1) * 100
+        trades.append({
+            "buy_date": buy["date"], "buy_price": buy["close"],
+            "sell_date": sell["date"], "sell_price": sell["close"],
+            "return_pct": round(ret, 2),
+            "annualized_pct": round(
+                ((sell_amt / buy_amt) ** (365 / span) - 1) * 100 if span > 0 else 0.0, 1
+            ),
+        })
+        if len(trades) >= months:
+            break
+
+    if not trades:
+        raise RuntimeError(
+            f"{code} 无可完成交易的月份（持有 {hold_days} 日超出数据范围）"
+        )
+
+    rets = [t["return_pct"] for t in trades]
+    wins = [r for r in rets if r > 0]
+    return {
+        "trades": len(trades),
+        "period": f"{trades[-1]['buy_date']} ~ {trades[0]['buy_date']}",
+        "avg_return_pct": round(sum(rets) / len(rets), 2),
+        "median_return_pct": round(sorted(rets)[len(rets) // 2], 2),
+        "win_rate_pct": round(len(wins) / len(rets) * 100, 1),
+        "best_pct": max(rets),
+        "worst_pct": min(rets),
+        "avg_annualized_pct": round(
+            sum(t["annualized_pct"] for t in trades) / len(trades), 1
+        ),
+        "detail": trades,
+    }

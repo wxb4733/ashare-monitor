@@ -77,6 +77,9 @@ python -m ashare_monitor.main history 002594            # 上市以来统计（�
 # 持有期回测：某日买入 X 元，持有 N 个交易日卖出
 python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100000 --hold-days 60,120,250
 
+# 定投回测：近 N 个月每月买入 X 元，持有 M 个交易日后卖出（收益分布统计）
+python -m ashare_monitor.main backtest 002594 --dca --months 60 --hold-days 250 --amount 10000 [--detail]
+
 # 财报分析（仅 A 股，近 6 个报告期）
 python -m ashare_monitor.main financial 600519 --periods 6
 
@@ -259,6 +262,9 @@ python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100
 （按整手：A 股 100 股、港股按每手）、买卖金额、**收益率**、年化、持有期最高/最低价。
 支持逗号分隔多档持有期对比；数据优先用已回填的全量 K 线（离线快速）。
 注：未计佣金与税费，回测为历史价格模拟，不构成投资建议。
+
+**定投模式（`--dca`）**：每月首个交易日买入固定金额、持有 N 个交易日后卖出（逐笔独立不复利），
+统计交易笔数、平均/中位数收益率、胜率、最好/最差一笔、平均年化；`--detail` 看逐笔明细。
 
 ## 历史数据分析（analyze）
 拉取个股历史 K 线（优先东财 akshare，失败自动降级腾讯 K 线），支持**日 / 周 / 月线**多周期

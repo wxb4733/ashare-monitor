@@ -838,11 +838,67 @@ def run_history(code: str, market: str | None, config_path: str | None) -> None:
 
 
 def run_backtest(code: str, market: str | None, buy_date: str | None,
-                 amount: float, holds: str, config_path: str | None) -> None:
-    """回测：买入日 + 金额 + 持有交易日数 → 收益率。"""
-    from .backtest import backtest
+                 amount: float, holds: str, config_path: str | None,
+                 dca: bool = False, months: int = 60,
+                 detail: bool = False) -> None:
+    """回测：单笔（买入日/金额/持有交易日数）或定投（每月买入持有统计）。"""
+    from .backtest import backtest, dca_backtest
 
     market = market or ("hk" if len(code) == 5 else "ashare")
+
+    if dca:
+        try:
+            hold = int(holds.split(",")[0])
+        except ValueError:
+            console.print("[red]--hold-days 需为整数（定投模式取第一档）[/red]")
+            return
+        console.print(f"[cyan]定投回测 {code}（{market}）：近 {months} 个月每月买入 "
+                      f"{amount:,.0f} 元，持有 {hold} 个交易日后卖出[/cyan]")
+        try:
+            result = dca_backtest(code, market, amount=amount, months=months,
+                                  hold_days=hold)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]定投回测失败：{exc}[/red]")
+            return
+        console.print(f"[bold cyan]{code} 定投统计（{result['period']}，共 {result['trades']} 笔）[/bold cyan]")
+        stat = Table()
+        stat.add_column("指标", justify="left")
+        stat.add_column("数值", justify="right")
+        stat.add_row("交易笔数", str(result["trades"]))
+        for label, key, suffix in (
+            ("平均收益率", "avg_return_pct", "%"),
+            ("中位数收益率", "median_return_pct", "%"),
+            ("胜率", "win_rate_pct", "%"),
+            ("最好一笔", "best_pct", "%"),
+            ("最差一笔", "worst_pct", "%"),
+            ("平均年化", "avg_annualized_pct", "%"),
+        ):
+            val = result[key]
+            style = "red" if val > 0 else ("green" if val < 0 else "")
+            cell = f"[{style}]{val:+.2f}{suffix}[/{style}]" if style else f"{val:+.2f}{suffix}"
+            stat.add_row(label, cell)
+        console.print(stat)
+
+        if detail:
+            console.print("[bold cyan]逐笔明细[/bold cyan]")
+            d = Table()
+            d.add_column("买入日", justify="left")
+            d.add_column("买入价", justify="right")
+            d.add_column("卖出日", justify="left")
+            d.add_column("卖出价", justify="right")
+            d.add_column("收益率", justify="right")
+            d.add_column("年化", justify="right")
+            for t in result["detail"]:
+                style = "red" if t["return_pct"] > 0 else ("green" if t["return_pct"] < 0 else "")
+                cell = f"[{style}]{t['return_pct']:+.2f}%[/{style}]" if style else f"{t['return_pct']:+.2f}%"
+                d.add_row(t["buy_date"], f"{t['buy_price']:.2f}",
+                          t["sell_date"], f"{t['sell_price']:.2f}",
+                          cell, f"{t['annualized_pct']:+.1f}%")
+            console.print(d)
+        console.print("[dim]注：每月首个交易日买入，逐笔独立不复利，未计佣金税费[/dim]")
+        print_disclaimer()
+        return
+
     try:
         hold_list = [int(h.strip()) for h in holds.split(",") if h.strip()]
     except ValueError:
@@ -973,6 +1029,10 @@ def main() -> None:
     p_bt.add_argument("--amount", type=float, default=100000.0, help="买入金额（元，默认 100000）")
     p_bt.add_argument("--hold-days", default="60,120,250",
                       help="持有交易日数，逗号分隔多档（默认 60,120,250）")
+    p_bt.add_argument("--dca", action="store_true",
+                      help="定投模式：每月首个交易日买入固定金额，持有统计")
+    p_bt.add_argument("--months", type=int, default=60, help="定投回看月数（默认 60）")
+    p_bt.add_argument("--detail", action="store_true", help="定投模式显示逐笔明细")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -1016,7 +1076,8 @@ def main() -> None:
         run_history(args.code, args.market, args.config)
     elif args.command == "backtest":
         run_backtest(args.code, args.market, args.buy_date or None,
-                     args.amount, args.hold_days, args.config)
+                     args.amount, args.hold_days, args.config,
+                     dca=args.dca, months=args.months, detail=args.detail)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
