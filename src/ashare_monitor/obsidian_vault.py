@@ -48,6 +48,7 @@ _HOME_MD = """# A 股监控知识库
 
 - `A股复盘/`：每日复盘报告（Markdown，自动导出）
 - `汇总报告/`：周报 / 月报 / 年报（Markdown，自动导出）
+- `IPO分析/`：IPO 分析报告（Markdown，自动导出）
 - `模板/`：复盘笔记模板
 
 ## 复盘索引
@@ -60,10 +61,16 @@ _HOME_MD = """# A 股监控知识库
 <!-- REPORT_INDEX_START -->
 <!-- REPORT_INDEX_END -->
 
+## IPO 分析索引
+
+<!-- IPO_INDEX_START -->
+<!-- IPO_INDEX_END -->
+
 ## 说明
 
 - 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘
 - 周 / 月 / 年报：`python -m ashare_monitor.main report --weekly|--monthly|--yearly`
+- IPO 分析报告：`python -m ashare_monitor.main ipo --report`
 - 复盘包含：大盘指数、技术指标、当日表现、预警、财报速览、公告与研报、近期 IPO
 - 汇总报告包含：区间行情表现、预警统计、每日复盘记录、预警明细
 - K 线图（ECharts）以链接指向 HTML 报告
@@ -90,6 +97,7 @@ _VAULT_GITIGNORE = """# Obsidian 本地状态（不入库）
 # 复盘与汇总数据（本地积累，不入库）
 A股复盘/
 汇总报告/
+IPO分析/
 附件/
 """
 
@@ -132,6 +140,8 @@ def init_vault(vault_path: str | Path, reports_dir: str = "A股复盘") -> Path:
 
 def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -> Path:
     """重建首页 README 的复盘索引与汇总报告索引。"""
+    import re
+
     root = Path(vault_path)
     home = root / "README.md"
     if not home.exists():
@@ -158,8 +168,6 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
     if not summaries:
         sum_links = "（暂无汇总报告，运行 `report --weekly|--monthly|--yearly` 生成）"
     else:
-        import re
-
         _PERIOD_CN = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
         sum_links = "\n".join(
             f"- [[汇总报告/{s.stem}|"
@@ -168,6 +176,21 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
             for s in summaries[-12:]
         )
     new_summary_index = f"<!-- REPORT_INDEX_START -->\n{sum_links}\n<!-- REPORT_INDEX_END -->"
+
+    # IPO 分析报告索引
+    ipo_reports = sorted(
+        (root / "IPO分析").glob("ipo-report-*.md"),
+        key=lambda p: p.name,
+    )
+    if not ipo_reports:
+        ipo_links = "（暂无 IPO 分析报告，运行 `ipo --report` 生成）"
+    else:
+        ipo_links = "\n".join(
+            f"- [[IPO分析/{r.stem}|IPO 分析 "
+            f"{re.search(r'\d{4}-\d{2}-\d{2}', r.name).group(0)}]]"
+            for r in ipo_reports[-12:]
+        )
+    new_ipo_index = f"<!-- IPO_INDEX_START -->\n{ipo_links}\n<!-- IPO_INDEX_END -->"
 
     text = home.read_text(encoding="utf-8")
 
@@ -190,6 +213,7 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
 
     text = _replace(text, "<!-- INDEX_START -->", new_index)
     text = _replace(text, "<!-- REPORT_INDEX_START -->", new_summary_index)
+    text = _replace(text, "<!-- IPO_INDEX_START -->", new_ipo_index)
     home.write_text(text, encoding="utf-8")
     logger.info("知识库索引已更新: %s", home)
     return home

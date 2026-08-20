@@ -48,6 +48,10 @@
 - [[汇总报告/report-weekly-2026-08-20|周报 2026-08-20]]
 - [[汇总报告/report-yearly-2026-08-20|年报 2026-08-20]]
 <!-- REPORT_INDEX_END -->
+
+<!-- IPO_INDEX_START -->
+- [[IPO分析/ipo-report-2026-08-20|IPO 分析 2026-08-20]]
+<!-- IPO_INDEX_END -->
 ## 说明
 
 - 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘

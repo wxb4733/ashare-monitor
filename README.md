@@ -92,9 +92,10 @@ python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --hold-days 
 # 财报分析（仅 A 股，近 6 个报告期）
 python -m ashare_monitor.main financial 600519 --periods 6
 
-# IPO 公司分析（近期新股列表 / 单只详情）
+# IPO 公司分析（近期新股列表 / 单只详情 / 分析报告）
 python -m ashare_monitor.main ipo --limit 30
 python -m ashare_monitor.main ipo 马矿股份
+python -m ashare_monitor.main ipo --report   # 生成 IPO 分析报告（HTML + Obsidian）
 
 # 导出复盘到 Obsidian（Markdown，需配置 obsidian.vault）
 python -m ashare_monitor.main review        # 生成时自动导出

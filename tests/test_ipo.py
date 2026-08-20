@@ -131,3 +131,76 @@ def test_ipo_record_defaults():
     rec = IPORecord("000001", "", "", "", "", "", None, None, None, None, None, None, "", "", None)
     assert rec.stage() == "待定价"
     assert rec.pe_ratio is None
+
+
+# ---------- IPO 分析报告 ----------
+
+def make_records() -> list:
+    from ashare_monitor.ipo import IPORecord
+
+    return [
+        IPORecord(
+            code="301689", name="电科思仪", market="深圳证券交易所",
+            industry="仪器仪表", apply_date="2026-08-28", listing_date="",
+            issue_price=None, issue_pe=None, industry_pe=61.9,
+            raise_funds=None, plan_funds=10.0, issue_num=None,
+            main_business="电子测量仪器", underwriter="", newest_price=None,
+        ),
+        IPORecord(
+            code="601123", name="马矿股份", market="上海证券交易所",
+            industry="钢铁", apply_date="2026-08-21", listing_date="",
+            issue_price=6.65, issue_pe=None, industry_pe=36.1,
+            raise_funds=8.21, plan_funds=10.0, issue_num=None,
+            main_business="铁矿石采选与铁精粉销售", underwriter="中信证券",
+            newest_price=None,
+        ),
+        IPORecord(
+            code="301688", name="格林生物", market="深圳证券交易所",
+            industry="化工", apply_date="2026-08-20", listing_date="2026-08-18",
+            issue_price=26.33, issue_pe=None, industry_pe=28.0,
+            raise_funds=8.78, plan_funds=8.0, issue_num=None,
+            main_business="香料香精", underwriter="", newest_price=24.0,
+        ),
+    ]
+
+
+def test_build_ipo_report():
+    from ashare_monitor.ipo import build_ipo_report
+
+    html, md = build_ipo_report(make_records(), as_of="2026-08-20")
+    # HTML 结构
+    assert "IPO 分析报告" in html
+    assert "近期新股日历" in html
+    assert "电科思仪" in html and "马矿股份" in html and "格林生物" in html
+    assert "重点新股分析" in html
+    assert "破发提示" in html                    # 格林生物 24.0 < 26.33
+    assert "待申购" in html and "待上市" in html
+    assert "不构成投资建议" in html
+    # 破发计算：24.0/26.33 - 1 = -8.85%
+    assert "-8.85%" in html or "-8.8%" in html
+    # Markdown 结构
+    assert md.startswith("---\ntitle: IPO分析报告 2026-08-20")
+    assert "tags: [IPO, A股]" in md
+    assert "| 301689 | 电科思仪 |" in md
+    assert "## 重点新股分析" in md
+    assert "## 破发提示" in md
+    assert "不构成投资建议" in md
+
+
+def test_build_ipo_report_no_focus():
+    from ashare_monitor.ipo import IPORecord, build_ipo_report
+
+    # 全是已上市且未破发 → 无重点分析、无破发提示
+    recs = [
+        IPORecord(code="600001", name="示例", market="上海证券交易所",
+                  industry="", apply_date="2026-08-01", listing_date="2026-08-10",
+                  issue_price=10.0, issue_pe=None, industry_pe=None,
+                  raise_funds=5.0, plan_funds=None, issue_num=None,
+                  main_business="", underwriter="", newest_price=12.0),
+    ]
+    html, md = build_ipo_report(recs, as_of="2026-08-20")
+    assert "重点新股分析" not in html
+    assert "破发提示" not in html
+    assert "已上市" in html
+    assert "重点新股分析" not in md
+    assert "破发提示" not in md

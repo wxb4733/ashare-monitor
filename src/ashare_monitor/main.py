@@ -707,8 +707,9 @@ def run_scan(config_path: str | None) -> None:
     render_scan(result)
 
 
-def run_ipo(keyword: str | None, limit: int) -> None:
-    """IPO 分析：无参数列出近期新股，带参数查看单只新股详情。"""
+def run_ipo(keyword: str | None, limit: int,
+            report: bool = False, config_path: str | None = None) -> None:
+    """IPO 分析：无参数列出近期新股，带参数查看单只新股详情，--report 生成分析报告。"""
     from .ipo import analyze_ipo, fetch_ipo_list, find_ipo
 
     console.print(f"[cyan]正在获取近期新股数据（{limit} 条）…[/cyan]")
@@ -716,6 +717,29 @@ def run_ipo(keyword: str | None, limit: int) -> None:
         items = fetch_ipo_list(limit=limit)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]IPO 数据获取失败：{exc}[/red]")
+        return
+
+    if report:
+        from pathlib import Path
+
+        from .ipo import build_ipo_report
+
+        html, md = build_ipo_report(items)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"ipo-report-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]IPO 分析报告已生成: {out_path}[/green]")
+        # 导出 Markdown 到 Obsidian 库（配置了 vault 才执行）
+        cfg = load_config(config_path)
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            ipo_dir = Path(vault) / "IPO分析"
+            ipo_dir.mkdir(parents=True, exist_ok=True)
+            md_path = ipo_dir / f"ipo-report-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
         return
 
     if not keyword:
@@ -1086,9 +1110,11 @@ def main() -> None:
     p_fin = sub.add_parser("financial", help="财报分析（仅 A 股，东财业绩报表）")
     p_fin.add_argument("code", help="6 位证券代码，如 600519")
     p_fin.add_argument("--periods", type=int, default=6, help="回看报告期数（默认 6）")
-    p_ipo = sub.add_parser("ipo", help="IPO 公司分析（近期新股列表 / 单只详情）")
+    p_ipo = sub.add_parser("ipo", help="IPO 公司分析（近期新股列表 / 单只详情 / --report 报告）")
     p_ipo.add_argument("keyword", nargs="?", default="", help="新股代码或名称（缺省显示列表）")
     p_ipo.add_argument("--limit", type=int, default=30, help="列表条数（默认 30）")
+    p_ipo.add_argument("--report", action="store_true",
+                       help="生成 IPO 分析报告（HTML + Obsidian Markdown）")
     p_export = sub.add_parser("export", help="导出复盘报告（Obsidian Markdown）")
     p_export.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     p_export.add_argument("--obsidian", action="store_true",
@@ -1156,7 +1182,7 @@ def main() -> None:
     elif args.command == "financial":
         run_financial(args.code, args.periods)
     elif args.command == "ipo":
-        run_ipo(args.keyword, args.limit)
+        run_ipo(args.keyword, args.limit, report=args.report, config_path=args.config)
     elif args.command == "export":
         run_review(args.date, args.config)
         console.print("[dim]提示：Obsidian 导出由 config.obsidian.vault 控制，"
