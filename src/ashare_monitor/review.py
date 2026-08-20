@@ -203,8 +203,13 @@ def build_html(
     index_charts: list[dict] | None = None,
     indicator_rows: list[dict] | None = None,
     news_rows: list[dict] | None = None,
+    financial_rows: list[dict] | None = None,
+    ipo_rows: list[dict] | None = None,
 ) -> str:
-    """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。"""
+    """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。
+
+    章节按存在顺序编号（大盘指数 → 技术指标 → 当日表现 → 预警 → 财报 → 公告研报 → IPO → K线）。
+    """
     chart_cards = []
     chart_inits = []
     for c in (index_charts or []) + charts:
@@ -214,18 +219,20 @@ def build_html(
             f'{json.dumps(c["dates"])}, {json.dumps(c["kdata"])}, {json.dumps(c["volumes"])});'
         )
 
-    index_section = ""
+    sections: list[str] = []
+
+    def add_section(title: str, body: str) -> None:
+        sections.append(f"<h2>{_cn_num(len(sections) + 1)}、{title}</h2>{body}")
+
     if index_quotes:
-        index_section = f"""
-<h2>一、大盘指数</h2>
+        add_section("大盘指数", f"""
 <div class="card">
 <table>
 <tr><th>代码</th><th>指数</th><th>点位</th><th>涨跌幅</th><th>振幅</th><th>成交额</th></tr>
 {_index_rows(index_quotes)}
 </table>
-</div>"""
+</div>""")
 
-    indicator_section = ""
     if indicator_rows:
         rows = []
         for r in indicator_rows:
@@ -239,24 +246,55 @@ def build_html(
                 f"<td>{r['rsi']}</td><td>{r['kdj']}</td><td>{r['boll']}</td>"
                 "</tr>"
             )
-        indicator_section = f"""
-<h2>{'二' if index_quotes else '一'}、技术指标状态</h2>
+        add_section("技术指标状态", f"""
 <div class="card">
 <table>
 <tr><th>市场</th><th>标的</th><th>MACD</th><th>RSI(14)</th><th>KDJ</th><th>BOLL</th></tr>
 {''.join(rows)}
 </table>
-</div>"""
+</div>""")
 
-    base = 2 if index_quotes else 1          # 指数占位后起始编号
-    if indicator_rows:
-        base += 1
-    stock_sec_no = _cn_num(base)
-    alert_sec_no = _cn_num(base + 1)
-    news_sec_no = _cn_num(base + 2)
-    kline_sec_no = _cn_num(base + 2 if not news_rows else base + 3)
+    add_section("自选股当日表现", f"""
+<div class="card">
+<table>
+<tr><th>代码</th><th>名称</th><th>收盘/最新</th><th>涨跌幅</th><th>振幅</th><th>成交量(手)</th><th>成交额</th></tr>
+{_quote_rows(quotes)}
+</table>
+</div>""")
 
-    news_section = ""
+    add_section(f"当日预警时间线（共 {len(records)} 条）", f"""
+<div class="card">
+<table>
+<tr><th>时间</th><th>标的</th><th>规则</th><th style="text-align:left">详情</th></tr>
+{_alert_rows(records)}
+</table>
+</div>""")
+
+    if financial_rows:
+        rows = []
+        for r in financial_rows:
+            def _f(v, nd=1):
+                return f"{v:.{nd}f}" if v is not None else "-"
+            rev = _pct_html(r["revenue_yoy"]) if r["revenue_yoy"] is not None else "-"
+            prof = _pct_html(r["profit_yoy"]) if r["profit_yoy"] is not None else "-"
+            rows.append(
+                "<tr>"
+                f"<td>{r['name']}({r['code']})</td>"
+                f"<td>{r['report_date']}</td>"
+                f"<td>{_f(r['revenue'])}</td><td>{rev}</td>"
+                f"<td>{_f(r['net_profit'])}</td><td>{prof}</td>"
+                f"<td>{_f(r['roe'])}%</td><td>{_f(r['gross_margin'])}%</td>"
+                f"<td>{_f(r['net_margin'])}%</td>"
+                "</tr>"
+            )
+        add_section("财报速览（最新报告期）", f"""
+<div class="card">
+<table>
+<tr><th>标的</th><th>报告期</th><th>营收(亿)</th><th>营收同比</th><th>净利(亿)</th><th>净利同比</th><th>ROE</th><th>毛利率</th><th>净利率</th></tr>
+{''.join(rows)}
+</table>
+</div>""")
+
     if news_rows:
         rows = []
         for r in news_rows:
@@ -271,14 +309,43 @@ def build_html(
                 f'<td><a href="{r["url"]}">原文</a></td>'
                 "</tr>"
             )
-        news_section = f"""
-<h2>{news_sec_no}、公告与研报</h2>
+        add_section("公告与研报", f"""
 <div class="card">
 <table>
 <tr><th>日期</th><th>标的</th><th>类型</th><th style="text-align:left">标题</th><th>原文</th></tr>
 {''.join(rows)}
 </table>
-</div>"""
+</div>""")
+
+    if ipo_rows:
+        rows = []
+        for r in ipo_rows:
+            stage_style = {"待申购": "#2980b9", "待定价": "#b7950b",
+                           "待上市": "#8e44ad", "已上市": "#27ae60"}.get(r["stage"], "")
+            stage_cell = (
+                f'<span class="tag" style="color:{stage_style}">{r["stage"]}</span>'
+                if stage_style else r["stage"]
+            )
+            price = f"{r['issue_price']:.2f}" if r["issue_price"] is not None else "-"
+            ipe = f"{r['industry_pe']:.1f}" if r["industry_pe"] is not None else "-"
+            funds = f"{r['raise_funds']:.2f}" if r["raise_funds"] is not None else "-"
+            rows.append(
+                "<tr>"
+                f"<td>{r['code']}</td><td>{r['name']}</td>"
+                f"<td>{r['market']}</td><td>{r['apply_date'] or '-'}</td>"
+                f"<td>{price}</td><td>{ipe}</td><td>{funds}</td>"
+                f"<td>{stage_cell}</td>"
+                "</tr>"
+            )
+        add_section("近期 IPO", f"""
+<div class="card">
+<table>
+<tr><th>代码</th><th>名称</th><th>交易所</th><th>申购日</th><th>发行价</th><th>行业PE</th><th>募资(亿)</th><th>状态</th></tr>
+{''.join(rows)}
+</table>
+</div>""")
+
+    add_section("近期 K 线走势", "".join(chart_cards))
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -292,27 +359,7 @@ def build_html(
 <div class="container">
 <h1>A 股收盘复盘报告</h1>
 <div class="meta">{date_str} · 生成于 {datetime.now():%Y-%m-%d %H:%M:%S} · 数据来源：新浪/腾讯/东方财富公开行情接口</div>
-{index_section}
-{indicator_section}
-<h2>{stock_sec_no}、自选股当日表现</h2>
-<div class="card">
-<table>
-<tr><th>代码</th><th>名称</th><th>收盘/最新</th><th>涨跌幅</th><th>振幅</th><th>成交量(手)</th><th>成交额</th></tr>
-{_quote_rows(quotes)}
-</table>
-</div>
-
-<h2>{alert_sec_no}、当日预警时间线（共 {len(records)} 条）</h2>
-<div class="card">
-<table>
-<tr><th>时间</th><th>标的</th><th>规则</th><th style="text-align:left">详情</th></tr>
-{_alert_rows(records)}
-</table>
-</div>
-{news_section}
-
-<h2>{kline_sec_no}、近期 K 线走势</h2>
-{''.join(chart_cards)}
+{chr(10).join(sections)}
 
 <div class="footer">{_DISCLAIMER}</div>
 </div>
@@ -441,6 +488,53 @@ def generate_review(
                     chart["title"] += "  |  " + "  |  ".join(extra)
                 charts.append(chart)
 
+    # 财报速览（仅 A 股自选；最新报告期，失败不阻塞）
+    financial_rows: list[dict] = []
+    for item in cfg.watchlist:
+        if str(item.get("market", "ashare")) != "ashare":
+            continue
+        code = str(item["code"])
+        name = str(item.get("name", code))
+        try:
+            from .fundamentals import fetch_financials
+
+            periods = fetch_financials(code, periods=1)
+            if periods:
+                p = periods[0]
+                financial_rows.append({
+                    "code": code, "name": name,
+                    "report_date": p.report_date,
+                    "revenue": round(p.revenue, 1) if p.revenue is not None else None,
+                    "net_profit": round(p.net_profit, 1) if p.net_profit is not None else None,
+                    "revenue_yoy": round(p.revenue_yoy, 1) if p.revenue_yoy is not None else None,
+                    "profit_yoy": round(p.profit_yoy, 1) if p.profit_yoy is not None else None,
+                    "roe": round(p.roe, 1) if p.roe is not None else None,
+                    "gross_margin": round(p.gross_margin, 1) if p.gross_margin is not None else None,
+                    "net_margin": round(p.net_margin, 1) if p.net_margin is not None else None,
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("复盘：%s 财报拉取失败: %s", code, exc)
+
+    # 近期 IPO（未来 30 天申购/上市 + 最近 7 天已上市，失败不阻塞）
+    ipo_rows: list[dict] = []
+    try:
+        from .ipo import fetch_ipo_list
+
+        for rec in fetch_ipo_list(limit=30):
+            stage = rec.stage()
+            if stage in ("待申购", "待上市"):
+                ipo_rows.append({
+                    "code": rec.code, "name": rec.name,
+                    "market": rec.market.replace("证券交易所", ""),
+                    "apply_date": rec.apply_date,
+                    "issue_price": rec.issue_price,
+                    "industry_pe": rec.industry_pe,
+                    "raise_funds": rec.raise_funds,
+                    "stage": stage,
+                })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("复盘：近期 IPO 拉取失败: %s", exc)
+
     # 公告与研报（仅 A 股；失败不阻塞报告生成）
     news_rows: list[dict] = []
     for item in cfg.watchlist:
@@ -479,6 +573,7 @@ def generate_review(
         date_str, quotes, records, charts,
         index_quotes=index_quotes, index_charts=index_charts,
         indicator_rows=indicator_rows, news_rows=news_rows,
+        financial_rows=financial_rows, ipo_rows=ipo_rows,
     )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -211,3 +211,39 @@ def test_build_html_news_section():
     html2 = build_html("2026-08-18", [make_quote()], [], [],
                        indicator_rows=ind_rows)
     assert "四、近期 K 线走势" in html2
+
+
+def test_build_html_financial_and_ipo_sections():
+    financial = [
+        {"code": "600519", "name": "贵州茅台", "report_date": "2026-06-30",
+         "revenue": 922.8, "net_profit": 445.2, "revenue_yoy": 1.3,
+         "profit_yoy": -1.9, "roe": 16.8, "gross_margin": 89.6, "net_margin": 48.2},
+    ]
+    ipo = [
+        {"code": "301689", "name": "电科思仪", "market": "深圳",
+         "apply_date": "2026-08-28", "issue_price": None,
+         "industry_pe": 61.9, "raise_funds": None, "stage": "待定价"},
+        {"code": "601123", "name": "马矿股份", "market": "上海",
+         "apply_date": "2026-08-21", "issue_price": 6.65,
+         "industry_pe": 36.1, "raise_funds": 8.21, "stage": "待申购"},
+    ]
+    html = build_html(
+        "2026-08-18", [make_quote()], [], [make_chart()],
+        financial_rows=financial, ipo_rows=ipo,
+    )
+    # 板块顺序：表现 → 预警 → 财报 → IPO → K线（无指数/指标/公告时）
+    assert "一、自选股当日表现" in html
+    assert "二、当日预警时间线" in html
+    assert "三、财报速览（最新报告期）" in html
+    assert "四、近期 IPO" in html
+    assert "五、近期 K 线走势" in html
+    # 财报内容
+    assert "922.8" in html and "445.2" in html and "16.8%" in html
+    assert "89.6%" in html and "48.2%" in html
+    # IPO 内容（含缺省发行价）
+    assert "电科思仪" in html and "马矿股份" in html
+    assert "待定价" in html and "待申购" in html
+    assert "6.65" in html and "36.1" in html
+    # 无财报/IPO 时不渲染
+    html2 = build_html("2026-08-18", [make_quote()], [], [])
+    assert "财报速览" not in html2 and "近期 IPO" not in html2
