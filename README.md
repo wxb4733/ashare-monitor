@@ -96,6 +96,7 @@ python -m ashare_monitor.main financial 600519 --periods 6
 python -m ashare_monitor.main ipo --limit 30
 python -m ashare_monitor.main ipo 马矿股份
 python -m ashare_monitor.main ipo --report   # 生成 IPO 分析报告（HTML + Obsidian）
+python -m ashare_monitor.main ipo --history 002594,01211   # 历史 IPO 发行分析（A股东财/港股公开资料）
 
 # 导出复盘到 Obsidian（Markdown，需配置 obsidian.vault）
 python -m ashare_monitor.main review        # 生成时自动导出

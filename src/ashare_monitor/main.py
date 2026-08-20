@@ -708,8 +708,9 @@ def run_scan(config_path: str | None) -> None:
 
 
 def run_ipo(keyword: str | None, limit: int,
-            report: bool = False, config_path: str | None = None) -> None:
-    """IPO 分析：无参数列出近期新股，带参数查看单只新股详情，--report 生成分析报告。"""
+            report: bool = False, config_path: str | None = None,
+            history_codes: str | None = None) -> None:
+    """IPO 分析：列表 / 单只详情 / --report 近期报告 / --history 历史 IPO 分析。"""
     from .ipo import analyze_ipo, fetch_ipo_list, find_ipo
 
     console.print(f"[cyan]正在获取近期新股数据（{limit} 条）…[/cyan]")
@@ -717,6 +718,48 @@ def run_ipo(keyword: str | None, limit: int,
         items = fetch_ipo_list(limit=limit)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]IPO 数据获取失败：{exc}[/red]")
+        return
+
+    if history_codes:
+        from pathlib import Path
+
+        from .ipo import build_ipo_history_report, fetch_ipo_history
+        from .storage import load_klines
+
+        codes = [c.strip() for c in history_codes.split(",") if c.strip()]
+        records = []
+        for code in codes:
+            market = "hk" if len(code) == 5 else "ashare"
+            try:
+                rec = fetch_ipo_history(code, market)
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]{code} 历史 IPO 查询失败：{exc}[/red]")
+                return
+            # 港股/最新价缺失时用本地 K 线补（较发行价涨幅按最新收盘算）
+            if rec.get("newest_price") is None:
+                rows = load_klines(code, market)
+                if rows:
+                    rec["newest_price"] = float(rows[-1]["close"])
+                    if rec.get("issue_price"):
+                        rec["newest_change"] = (
+                            float(rows[-1]["close"]) / rec["issue_price"] - 1
+                        ) * 100
+            records.append(rec)
+        html, md = build_ipo_history_report(records)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"ipo-history-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]历史 IPO 分析报告已生成: {out_path}[/green]")
+        cfg = load_config(config_path)
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            ipo_dir = Path(vault) / "IPO分析"
+            ipo_dir.mkdir(parents=True, exist_ok=True)
+            md_path = ipo_dir / f"ipo-history-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
         return
 
     if report:
@@ -1115,6 +1158,8 @@ def main() -> None:
     p_ipo.add_argument("--limit", type=int, default=30, help="列表条数（默认 30）")
     p_ipo.add_argument("--report", action="store_true",
                        help="生成 IPO 分析报告（HTML + Obsidian Markdown）")
+    p_ipo.add_argument("--history", metavar="CODES",
+                       help="历史 IPO 发行分析（逗号分隔代码，如 002594,01211）")
     p_export = sub.add_parser("export", help="导出复盘报告（Obsidian Markdown）")
     p_export.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     p_export.add_argument("--obsidian", action="store_true",
@@ -1182,7 +1227,8 @@ def main() -> None:
     elif args.command == "financial":
         run_financial(args.code, args.periods)
     elif args.command == "ipo":
-        run_ipo(args.keyword, args.limit, report=args.report, config_path=args.config)
+        run_ipo(args.keyword, args.limit, report=args.report,
+                config_path=args.config, history_codes=args.history)
     elif args.command == "export":
         run_review(args.date, args.config)
         console.print("[dim]提示：Obsidian 导出由 config.obsidian.vault 控制，"

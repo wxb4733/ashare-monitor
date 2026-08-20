@@ -388,3 +388,250 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 > {DISCLAIMER}
 """
     return html, md
+
+
+# ---------- 历史 IPO（已上市公司发行信息） ----------
+
+# 港股历史 IPO 公开资料（官网/公司公告整理；A 股走东财接口实时查询）
+_HK_HISTORIC_IPO = {
+    "01211": {
+        "code": "01211", "name": "比亚迪股份", "market": "香港联交所主板",
+        "listing_date": "2002-07-31", "apply_date": "",
+        "issue_price": 10.95, "issue_pe": 8.5, "industry_pe": None,
+        "raise_funds": 16.37, "plan_funds": None,
+        "issue_num": 14950.0,
+        "issue_num_note": "含超额配售 1,950 万股；不含为 13,000 万股",
+        "raise_note": "港元（含超额配售；不含为 14.24 亿）",
+        "pe_note": "按 2002 年净利润约 7 亿港元估算",
+        "main_business": "二次充电电池（镍镉/镍氢/锂离子，以手机电池为主）",
+        "underwriter": "",
+        "first_day_close": None, "first_day_change": None,
+        "first_day_high_chg": None, "first_day_open_premium": None,
+        "amplitude": None,
+        "note": "发行价 10.95 港元，为当时 54 支 H 股中最高发行价；"
+                "上市市值约 57 亿港元；每手 100 股",
+        "source": "比亚迪官网投资者关系 / 2002 年招股与公告资料整理",
+    },
+}
+
+
+def _parse_ipo_history_item(it: dict) -> dict:
+    """解析东财历史 IPO 记录为统一字段。"""
+    issue_price = _to_float(it.get("ISSUE_PRICE"))
+    first_change = _to_float(it.get("LD_CLOSE_CHANGE"))
+    return {
+        "code": str(it.get("SECURITY_CODE", "")),
+        "name": str(it.get("SECURITY_NAME_ABBR") or ""),
+        "market": str(it.get("TRADE_MARKET") or ""),
+        "listing_date": str(it.get("LISTING_DATE") or "")[:10],
+        "apply_date": str(it.get("APPLY_DATE") or "")[:10],
+        "issue_price": issue_price,
+        "issue_pe": _to_float(it.get("AFTER_ISSUE_PE")),
+        "industry_pe": _to_float(it.get("INDUSTRY_PE_NEW") or it.get("INDUSTRY_PE")),
+        "raise_funds": _to_float(it.get("TOTAL_RAISE_FUNDS")),
+        "plan_funds": _to_float(it.get("PREDICT_RAISE_FUNDS")),
+        "issue_num": _to_float(it.get("TOTAL_ISSUE_NUM")),
+        "issue_num_note": "",
+        "raise_note": "",
+        "pe_note": "",
+        "main_business": str(it.get("MAIN_BUSINESS") or ""),
+        "underwriter": str(it.get("UNDERWRITER_ORG") or ""),
+        "first_day_close": _to_float(it.get("CLOSE_PRICE")),
+        "first_day_change": first_change,
+        "first_day_high_chg": _to_float(it.get("LD_HIGH_CHANG")),
+        "first_day_open_premium": _to_float(it.get("LD_OPEN_PREMIUM")),
+        "amplitude": _to_float(it.get("AMPLITUDE")),
+        "newest_price": _to_float(it.get("TNEW_PRICE")),
+        "newest_change": _to_float(it.get("TCHANGE_RATE")),
+        "note": "",
+        "source": "东方财富数据中心（RPTA_APP_IPOAPPLY）",
+    }
+
+
+def fetch_ipo_history(code: str, market: str | None = None) -> dict:
+    """查询单只已上市公司的历史 IPO 发行信息。
+
+    A 股走东财接口（按代码过滤），港股走内置公开资料表。
+    :return: 统一字段 dict（见 _parse_ipo_history_item / _HK_HISTORIC_IPO）
+    :raises RuntimeError: 无数据
+    """
+    market = market or ("hk" if len(code) == 5 else "ashare")
+    if market == "hk":
+        rec = _HK_HISTORIC_IPO.get(code)
+        if not rec:
+            raise RuntimeError(f"港股 {code} 暂无内置 IPO 资料（可扩展 _HK_HISTORIC_IPO）")
+        return dict(rec)
+    resp = requests.get(
+        _IPO_API,
+        params={
+            "reportName": "RPTA_APP_IPOAPPLY",
+            "columns": "ALL",
+            "pageSize": 5, "pageNumber": 1,
+            "filter": f'(SECURITY_CODE="{code}")',
+            "sortColumns": "APPLY_DATE", "sortTypes": -1,
+            "source": "WEB", "client": "WEB",
+        },
+        headers=_HEADERS, timeout=12,
+    )
+    resp.raise_for_status()
+    data = (resp.json().get("result") or {}).get("data") or []
+    if not data:
+        raise RuntimeError(f"未查到 {code} 的历史 IPO 记录")
+    return _parse_ipo_history_item(data[0])
+
+
+def build_ipo_history_report(
+    records: list[dict],
+    as_of: str | None = None,
+) -> tuple[str, str]:
+    """生成历史 IPO 发行分析报告（HTML, Markdown）。
+
+    :param records: fetch_ipo_history 结果列表（可含多市场，如 A 股 + 港股）
+    """
+    as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+
+    def _fmt(v, nd: int = 2, suffix: str = "") -> str:
+        return f"{v:.{nd}f}{suffix}" if v is not None else "-"
+
+    cards_html: list[str] = []
+    md_blocks: list[str] = []
+    for r in records:
+        # ---- 发行概览 ----
+        rows = [
+            ("上市日", r.get("listing_date") or "-"),
+            ("交易所", r.get("market") or "-"),
+            ("发行价", f"{_fmt(r.get('issue_price'))} 元" if r.get("issue_price") is not None
+                       else _fmt(r.get("issue_price"))),
+            ("发行量", _fmt(r.get("issue_num"), 0, " 万股") + (
+                f"（{r['issue_num_note']}）" if r.get("issue_num_note") else ""
+            )),
+            ("募资", _fmt(r.get("raise_funds")) + " 亿" + (
+                f"（{r['raise_note']}）" if r.get("raise_note") else ""
+            )),
+        ]
+        if r.get("plan_funds") is not None:
+            ratio = r["raise_funds"] / r["plan_funds"] * 100 if r.get("raise_funds") else 0
+            rows.append(("计划募资", f"{_fmt(r['plan_funds'])} 亿（完成 {ratio:.0f}%"
+                                     f"{'，缩募' if ratio < 95 else ''}）"))
+        rows += [
+            ("发行 PE", _fmt(r.get("issue_pe"), 1) + (
+                f"（{r['pe_note']}）" if r.get("pe_note") else ""
+            )),
+        ]
+        if r.get("industry_pe") is not None:
+            rows.append(("行业 PE", _fmt(r.get("industry_pe"), 1)))
+        rows += [
+            ("保荐机构", r.get("underwriter") or "-"),
+            ("主营", r.get("main_business") or "-"),
+        ]
+        if r.get("note"):
+            rows.append(("备注", r["note"]))
+
+        tr = "".join(
+            f"<tr><td style=\"color:#86909c;width:90px\">{k}</td>"
+            f"<td style=\"text-align:left\">{v}</td></tr>"
+            for k, v in rows
+        )
+
+        # ---- 首日表现 / 上市以来 ----
+        first_lines = []
+        if r.get("first_day_change") is not None:
+            first_lines.append(
+                f"首日收盘 {_fmt(r['first_day_close'])} 元，较发行价 "
+                f"<b class=\"{'up' if r['first_day_change'] > 0 else 'down'}\">"
+                f"{r['first_day_change']:+.2f}%</b>"
+            )
+            if r.get("first_day_high_chg") is not None:
+                first_lines.append(f"盘中最高 +{r['first_day_high_chg']:.1f}%")
+            if r.get("first_day_open_premium") is not None:
+                first_lines.append(f"开盘溢价 +{r['first_day_open_premium']:.1f}%")
+            if r.get("amplitude") is not None:
+                first_lines.append(f"振幅 {r['amplitude']:.1f}%")
+        else:
+            first_lines.append("上市首日不复权明细缺失（复权数据失真），以发行信息为准")
+        latest = []
+        if r.get("newest_price") is not None:
+            chg = r.get("newest_change")
+            latest.append(
+                f"最新价 {_fmt(r['newest_price'])} 元，较发行价 "
+                f"<b class=\"{'up' if (chg or 0) > 0 else 'down'}\">{chg:+.1f}%</b>"
+                if chg is not None else f"最新价 {_fmt(r['newest_price'])} 元"
+            )
+        if latest:
+            first_lines.append("，".join(latest))
+
+        # ---- 规则化点评 ----
+        points = []
+        if r.get("issue_pe") is not None and r.get("industry_pe"):
+            ratio_pe = r["issue_pe"] / r["industry_pe"]
+            if ratio_pe <= 0.9:
+                points.append(f"发行 PE 低于行业 PE（{ratio_pe:.2f} 倍），定价相对克制")
+            elif ratio_pe >= 1.2:
+                points.append(f"发行 PE 高于行业 PE（{ratio_pe:.2f} 倍），定价偏积极")
+            else:
+                points.append(f"发行 PE 与行业基本持平（{ratio_pe:.2f} 倍）")
+        if r.get("raise_funds") is not None and r.get("plan_funds"):
+            ratio = r["raise_funds"] / r["plan_funds"] * 100
+            if ratio <= 95:
+                points.append(f"实际募资较计划缩募 {100 - ratio:.0f}%（认购热度一般）")
+            elif ratio >= 105:
+                points.append(f"实际募资超计划 {ratio - 100:.0f}%（认购踊跃）")
+        if r.get("first_day_change") is not None:
+            points.append(
+                "上市首日收涨，打新收益可观" if r["first_day_change"] > 0
+                else "上市首日收跌，注意破发风险"
+            )
+        points.append(f"数据来源：{r.get('source', '-')}")
+        lis = "".join(f"<li>{p}</li>" for p in points)
+
+        cards_html.append(f"""
+<div class="card">
+<h2 style="margin-top:0">{r['name']}({r['code']}) · IPO 发行分析</h2>
+<table>{tr}</table>
+<div style="margin-top:12px;font-size:13px;color:#4e5969">{'; '.join(first_lines)}</div>
+<ul class="analysis" style="margin-top:8px">{lis}</ul>
+</div>""")
+
+        # ---- Markdown ----
+        md_blocks.append(f"""## {r['name']}({r['code']}) · IPO 发行分析
+
+| 项目 | 内容 |
+| --- | --- |
+""" + "\n".join(f"| {k} | {v} |" for k, v in rows) + f"""
+
+- {'；'.join(first_lines)}
+- {'；'.join(points)}
+""")
+
+    title = "BYD A股/港股 IPO 发行分析" if len(records) > 1 else (
+        f"{records[0]['name']}({records[0]['code']}) IPO 发行分析"
+    )
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{title} {as_of}</title>
+<style>{_IPO_CSS}</style>
+</head>
+<body>
+<div class="container">
+<h1>{title}</h1>
+<div class="meta">{as_of} · 生成于 {datetime.now():%Y-%m-%d %H:%M:%S} · 数据来源：东财数据中心 / 公司公开资料</div>
+{''.join(cards_html)}
+<div class="footer">{DISCLAIMER}</div>
+</div>
+</body>
+</html>"""
+
+    md = f"""---
+title: {title} {as_of}
+date: {as_of}
+tags: [IPO, A股, 港股, 比亚迪]
+generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
+---
+# {title} {as_of}
+
+{chr(10).join(md_blocks)}
+> {DISCLAIMER}
+"""
+    return html, md

@@ -204,3 +204,71 @@ def test_build_ipo_report_no_focus():
     assert "已上市" in html
     assert "重点新股分析" not in md
     assert "破发提示" not in md
+
+
+# ---------- 历史 IPO ----------
+
+def test_parse_ipo_history_item():
+    from ashare_monitor.ipo import _parse_ipo_history_item
+
+    item = {
+        "SECURITY_CODE": "002594", "SECURITY_NAME_ABBR": "比亚迪",
+        "TRADE_MARKET": "深圳证券交易所", "LISTING_DATE": "2011-06-30 00:00:00",
+        "APPLY_DATE": "2011-06-21 00:00:00", "ISSUE_PRICE": 18.0,
+        "AFTER_ISSUE_PE": 20.47, "INDUSTRY_PE_NEW": 22.79,
+        "TOTAL_RAISE_FUNDS": 14.22, "PREDICT_RAISE_FUNDS": 21.924,
+        "TOTAL_ISSUE_NUM": 7900, "MAIN_BUSINESS": "新能源汽车与电池",
+        "UNDERWRITER_ORG": "瑞银证券", "CLOSE_PRICE": 25.45,
+        "LD_CLOSE_CHANGE": 41.39, "LD_HIGH_CHANG": 45.5,
+        "LD_OPEN_PREMIUM": 22.22, "AMPLITUDE": 23.28,
+        "TNEW_PRICE": 90.4, "TCHANGE_RATE": 402.22,
+    }
+    r = _parse_ipo_history_item(item)
+    assert r["code"] == "002594" and r["listing_date"] == "2011-06-30"
+    assert r["issue_price"] == 18.0 and r["issue_pe"] == 20.47
+    assert r["first_day_change"] == 41.39 and r["first_day_close"] == 25.45
+    assert r["newest_price"] == 90.4 and r["newest_change"] == 402.22
+
+
+def test_build_ipo_history_report():
+    from ashare_monitor.ipo import build_ipo_history_report
+
+    a = {
+        "code": "002594", "name": "比亚迪", "market": "深圳证券交易所",
+        "listing_date": "2011-06-30", "apply_date": "2011-06-21",
+        "issue_price": 18.0, "issue_pe": 20.47, "industry_pe": 22.79,
+        "raise_funds": 14.22, "plan_funds": 21.924, "issue_num": 7900.0,
+        "issue_num_note": "", "raise_note": "", "pe_note": "",
+        "main_business": "新能源汽车", "underwriter": "瑞银证券",
+        "first_day_close": 25.45, "first_day_change": 41.39,
+        "first_day_high_chg": 45.5, "first_day_open_premium": 22.22,
+        "amplitude": 23.28, "newest_price": 90.4, "newest_change": 402.22,
+        "note": "", "source": "东财",
+    }
+    hk = {
+        "code": "01211", "name": "比亚迪股份", "market": "香港联交所主板",
+        "listing_date": "2002-07-31", "apply_date": "",
+        "issue_price": 10.95, "issue_pe": 8.5, "industry_pe": None,
+        "raise_funds": 16.37, "plan_funds": None, "issue_num": 14950.0,
+        "issue_num_note": "含超额配售", "raise_note": "亿港元", "pe_note": "按2002净利估算",
+        "main_business": "二次充电电池", "underwriter": "",
+        "first_day_close": None, "first_day_change": None,
+        "first_day_high_chg": None, "first_day_open_premium": None,
+        "amplitude": None, "newest_price": 89.4, "newest_change": 716.44,
+        "note": "当时H股最高发行价", "source": "公司公告",
+    }
+    html, md = build_ipo_history_report([a, hk], as_of="2026-08-20")
+    assert "BYD A股/港股 IPO 发行分析" in html
+    assert "比亚迪(002594)" in html and "比亚迪股份(01211)" in html
+    assert "首日收盘 25.45" in html
+    assert "+41.39%" in html
+    assert "缩募" in html                       # 14.22/21.92 完成 65%
+    assert "发行 PE 低于行业 PE" in html          # 20.47/22.79 < 0.9
+    assert "当时H股最高发行价" in html
+    assert "上市首日不复权明细缺失" in html         # 港股诚实标注
+    assert "最新价 89.40" in html or "最新价 89.4" in html
+    assert "不构成投资建议" in html
+    # Markdown
+    assert md.startswith("---\ntitle: BYD A股/港股 IPO 发行分析")
+    assert "## 比亚迪(002594)" in md and "## 比亚迪股份(01211)" in md
+    assert "| 发行价 | 18.00 元 |" in md
