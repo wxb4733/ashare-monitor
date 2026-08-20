@@ -59,29 +59,47 @@ def fetch_history(
     days: int = 250,
     adjust: str = "qfq",
     market: str = "ashare",
+    period: str = "daily",
 ) -> tuple[pd.DataFrame, str]:
-    """拉取个股日线历史。
+    """拉取标的的历史 K 线。
 
     :param code: 证券代码（A 股 6 位 / 港股 5 位 / 币安交易对）
-    :param days: 返回最近 N 根日 K
+    :param days: 返回最近 N 根 K 线
     :param adjust: 复权方式 qfq/hfq/空字符串（仅 A 股/港股有效）
     :param market: ashare / hk / crypto
+    :param period: daily / weekly / monthly
     :return: (DataFrame, 股票名称)
     """
     if market == "crypto":
-        return _fetch_history_binance(code, days), code.upper()
+        return _fetch_history_binance(code, days, period), code.upper()
     if market == "hk":
-        df = _fetch_history_tencent_hk(code, days, adjust)
+        df = _fetch_history_tencent_hk(code, days, adjust, period)
         return df.tail(days).reset_index(drop=True), _lookup_hk_name(code)
     try:
-        return _fetch_history_akshare(code, days, adjust)
+        return _fetch_history_akshare(code, days, adjust, period)
     except Exception as exc:  # noqa: BLE001 - 单源失败自动降级
         logger.warning("akshare 历史数据拉取失败，降级腾讯 K 线: %s", exc)
-        df = _fetch_history_tencent(code, days, adjust)
+        df = _fetch_history_tencent(code, days, adjust, period)
         return df.tail(days).reset_index(drop=True), _lookup_name(code)
 
 
-def _fetch_history_tencent_hk(code: str, days: int, adjust: str) -> pd.DataFrame:
+# 周期 → 腾讯接口 period 参数 / akshare period / 币安 interval / 年化周期数
+_PERIOD_MAP = {
+    "daily": {"tencent": "day", "akshare": "daily", "binance": "1d", "per_year": 250},
+    "weekly": {"tencent": "week", "akshare": "weekly", "binance": "1w", "per_year": 52},
+    "monthly": {"tencent": "month", "akshare": "monthly", "binance": "1M", "per_year": 12},
+}
+
+
+def periods_per_year_for(period: str, market: str = "ashare") -> int:
+    """年化周期数：日线 250（crypto 365）、周线 52、月线 12。"""
+    if period == "daily" and market == "crypto":
+        return 365
+    return _PERIOD_MAP.get(period, _PERIOD_MAP["daily"])["per_year"]
+
+
+def _fetch_history_tencent_hk(code: str, days: int, adjust: str,
+                              period: str = "daily") -> pd.DataFrame:
     """腾讯港股 K 线接口（思路借鉴 easyquotation.daykline，MIT License）。
 
     GET https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get?param=hk00700,day,,,320,qfq
@@ -90,22 +108,24 @@ def _fetch_history_tencent_hk(code: str, days: int, adjust: str) -> pd.DataFrame
 
     symbol = f"hk{code[-5:]}"
     n = min(days + 10, 800)
+    tencent_period = _PERIOD_MAP.get(period, _PERIOD_MAP["daily"])["tencent"]
     url = (
         "https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get"
-        f"?param={symbol},day,,,{n},{adjust}"
+        f"?param={symbol},{tencent_period},,,{n},{adjust}"
     )
     resp = requests.get(url, timeout=10, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     })
     resp.raise_for_status()
-    return _parse_tencent_kline(resp.json(), symbol, code)
+    return _parse_tencent_kline(resp.json(), symbol, code, period)
 
 
-def _fetch_history_binance(code: str, days: int) -> pd.DataFrame:
-    """币安日 K 线（klines）。"""
+def _fetch_history_binance(code: str, days: int, period: str = "daily") -> pd.DataFrame:
+    """币安 K 线（klines）。"""
     from .providers.binance import fetch_klines
 
-    rows = fetch_klines(code, days)
+    interval = _PERIOD_MAP.get(period, _PERIOD_MAP["daily"])["binance"]
+    rows = fetch_klines(code, days, interval=interval)
     if not rows:
         raise RuntimeError(f"币安未返回 {code} 的 K 线数据")
     df = pd.DataFrame(
@@ -141,16 +161,17 @@ def _lookup_hk_name(code: str) -> str:
 
 
 def _fetch_history_akshare(
-    code: str, days: int, adjust: str
+    code: str, days: int, adjust: str, period: str = "daily"
 ) -> tuple[pd.DataFrame, str]:
     import akshare as ak
 
     end = datetime.now()
-    # 按交易日约为自然日 0.7 倍估算，多取余量
-    start = end - timedelta(days=int(days / 0.7) + 10)
+    # 按交易日约为自然日 0.7 倍估算，多取余量（周线/月线取整倍数更宽裕）
+    scale = {"daily": 0.7, "weekly": 5, "monthly": 22}.get(period, 0.7)
+    start = end - timedelta(days=int(days / scale) + 20)
     df: pd.DataFrame = ak.stock_zh_a_hist(
         symbol=code[-6:],
-        period="daily",
+        period=_PERIOD_MAP.get(period, _PERIOD_MAP["daily"])["akshare"],
         start_date=start.strftime("%Y%m%d"),
         end_date=end.strftime("%Y%m%d"),
         adjust=adjust,
@@ -166,8 +187,9 @@ def _fetch_history_akshare(
     return df.tail(days).reset_index(drop=True), name
 
 
-def _fetch_history_tencent(code: str, days: int, adjust: str) -> pd.DataFrame:
-    """腾讯日 K 线接口（思路借鉴 easyquotation.daykline，MIT License）。
+def _fetch_history_tencent(code: str, days: int, adjust: str,
+                           period: str = "daily") -> pd.DataFrame:
+    """腾讯 K 线接口（思路借鉴 easyquotation.daykline，MIT License）。
 
     GET https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh600519,day,,,320,qfq
     返回 qfqday/hfqday/day 键下的 [日期, 开, 收, 高, 低, 成交量(手)] 列表。
@@ -178,25 +200,28 @@ def _fetch_history_tencent(code: str, days: int, adjust: str) -> pd.DataFrame:
 
     symbol = get_market_prefix(code) + code[-6:]
     n = min(days + 10, 800)  # 接口单次上限约 800 根
+    tencent_period = _PERIOD_MAP.get(period, _PERIOD_MAP["daily"])["tencent"]
     url = (
         "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-        f"?param={symbol},day,,,{n},{adjust}"
+        f"?param={symbol},{tencent_period},,,{n},{adjust}"
     )
     resp = requests.get(url, timeout=10, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     })
     resp.raise_for_status()
-    return _parse_tencent_kline(resp.json(), symbol, code)
+    return _parse_tencent_kline(resp.json(), symbol, code, period)
 
 
-def _parse_tencent_kline(payload: dict, symbol: str, code: str) -> pd.DataFrame:
+def _parse_tencent_kline(payload: dict, symbol: str, code: str,
+                         period: str = "daily") -> pd.DataFrame:
     """解析腾讯 K 线 JSON 为 akshare 风格 DataFrame（独立出来便于测试）。"""
     node = payload.get("data", {}).get(symbol)
     if not node:
         raise RuntimeError(f"腾讯 K 线接口未返回 {code} 数据")
-    rows = next((v for k, v in node.items() if k.endswith("day") and v), None)
+    suffix = _PERIOD_MAP.get(period, _PERIOD_MAP["daily"])["tencent"]
+    rows = next((v for k, v in node.items() if k.endswith(suffix) and v), None)
     if not rows:
-        raise RuntimeError(f"腾讯 K 线接口 {code} 无日 K 数据")
+        raise RuntimeError(f"腾讯 K 线接口 {code} 无{suffix} K 数据")
 
     df = pd.DataFrame(
         [(r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
@@ -294,13 +319,14 @@ def compute_metrics(df: pd.DataFrame, code: str = "", name: str = "",
 
 
 def analyze(code: str, days: int = 250, adjust: str = "qfq",
-            market: str = "ashare") -> HistoryReport:
+            market: str = "ashare", period: str = "daily") -> HistoryReport:
     """拉取历史数据并计算指标（网络 + 计算的组合入口）。
 
-    加密货币按 365 天年化，股票按 250 个交易日年化。
+    加密货币按 365 天年化，股票按 250 个交易日年化；周线 52、月线 12。
     """
-    df, name = fetch_history(code, days=days, adjust=adjust, market=market)
-    periods = 365 if market == "crypto" else TRADING_DAYS_PER_YEAR
+    df, name = fetch_history(code, days=days, adjust=adjust, market=market,
+                             period=period)
+    periods = periods_per_year_for(period, market)
     return compute_metrics(df, code=code, name=name, periods_per_year=periods)
 
 

@@ -129,6 +129,43 @@ def test_parse_tencent_kline():
     assert r.latest_close == 1287.32
 
 
+def test_parse_tencent_kline_weekly():
+    """周线 K 线解析（qfqweek 键）。"""
+    payload = {
+        "code": 0,
+        "data": {
+            "sh600519": {
+                "qfqweek": [
+                    ["2026-08-07", "1290.0", "1293.09", "1300.0", "1285.0", "250000"],
+                    ["2026-08-14", "1291.0", "1287.32", "1295.0", "1280.0", "310000"],
+                ]
+            }
+        },
+    }
+    df = _parse_tencent_kline(payload, "sh600519", "600519", period="weekly")
+    assert len(df) == 2
+    assert list(df["收盘"]) == [1293.09, 1287.32]
+    assert df["涨跌幅"].iloc[1] == pytest.approx((1287.32 / 1293.09 - 1) * 100)
+
+
+def test_periods_per_year_for():
+    from ashare_monitor.analysis import periods_per_year_for
+
+    assert periods_per_year_for("daily", "ashare") == 250
+    assert periods_per_year_for("daily", "crypto") == 365
+    assert periods_per_year_for("weekly", "ashare") == 52
+    assert periods_per_year_for("monthly", "crypto") == 12
+    assert periods_per_year_for("unknown", "ashare") == 250   # 未知周期回退日线
+
+
+def test_parse_tencent_kline_monthly_empty_raises():
+    payload = {"code": 0, "data": {"sh600519": {"qfqday": [["x", "1", "2", "3", "4", "5"]]}}}
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError):
+        _parse_tencent_kline(payload, "sh600519", "600519", period="monthly")
+
+
 def test_parse_tencent_kline_empty_raises():
     import pytest as _pytest
 

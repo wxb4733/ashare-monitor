@@ -83,11 +83,14 @@ class BinanceProvider(QuoteProvider):
         )
 
 
-def fetch_klines(symbol: str, days: int) -> list[list]:
-    """拉取日 K 线，返回原始 klines 列表。"""
+def fetch_klines(symbol: str, days: int, interval: str = "1d") -> list[list]:
+    """拉取 K 线，返回原始 klines 列表。
+
+    :param interval: 1d（日）/ 1w（周）/ 1M（月）
+    """
     resp = _get("/api/v3/klines", {
         "symbol": _normalize_symbol(symbol),
-        "interval": "1d",
+        "interval": interval,
         "limit": min(days, 1000),
     })
     return resp.json()

@@ -366,14 +366,16 @@ def render_indicators(ir) -> None:
     console.print(table)
 
 
-def run_indicator(code: str, market: str, days: int, config_path: str | None) -> None:
-    """查看指定标的的技术指标（MACD/RSI/KDJ/BOLL）。"""
+def run_indicator(code: str, market: str, days: int, config_path: str | None,
+                  period: str = "daily") -> None:
+    """查看指定标的的技术指标（MACD/RSI/KDJ/BOLL，支持日/周/月线）。"""
     from .analysis import fetch_history
     from .indicators import compute_indicators
     from .quotes import fetch_spot_quotes
 
     cfg = load_config(config_path)
-    console.print(f"[cyan]正在获取 {code}（{market}）历史数据与技术指标…[/cyan]")
+    period_label = {"daily": "日线", "weekly": "周线", "monthly": "月线"}.get(period, period)
+    console.print(f"[cyan]正在获取 {code}（{market}）{period_label}历史数据与技术指标…[/cyan]")
     try:
         quotes, _source = fetch_spot_quotes(
             [code], sources=cfg.quotes.sources if market == "ashare" else None,
@@ -381,12 +383,14 @@ def run_indicator(code: str, market: str, days: int, config_path: str | None) ->
         )
         price = quotes[0].price if quotes else None
         adjust = "qfq" if market != "crypto" else ""
-        df, name = fetch_history(code, days=days, adjust=adjust, market=market)
+        df, name = fetch_history(code, days=days, adjust=adjust, market=market,
+                                 period=period)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]指标获取失败：{exc}[/red]")
         return
     ir = compute_indicators(df, price=price)
-    console.print(f"[bold cyan]{name or code}({code}) 技术指标  {datetime.now():%Y-%m-%d %H:%M:%S}[/bold cyan]")
+    console.print(f"[bold cyan]{name or code}({code}) 技术指标（{period_label}）  "
+                  f"{datetime.now():%Y-%m-%d %H:%M:%S}[/bold cyan]")
     if price:
         console.print(f"现价 [bold]{price:.2f}[/bold] | 数据源 {_source}")
     render_indicators(ir)
@@ -394,13 +398,17 @@ def run_indicator(code: str, market: str, days: int, config_path: str | None) ->
     print_disclaimer()
 
 
-def run_analyze(code: str, days: int, adjust: str, market: str) -> None:
+def run_analyze(code: str, days: int, adjust: str, market: str,
+                period: str = "daily") -> None:
     from .analysis import analyze
     from .signals import generate_signals, make_verdict
 
-    console.print(f"[cyan]正在拉取 {code}（{market}）历史数据（近 {days} 个周期）…[/cyan]")
+    period_label = {"daily": "日线", "weekly": "周线", "monthly": "月线"}.get(period, period)
+    console.print(
+        f"[cyan]正在拉取 {code}（{market}）{period_label}历史数据（近 {days} 根）…[/cyan]"
+    )
     try:
-        report = analyze(code, days=days, adjust=adjust, market=market)
+        report = analyze(code, days=days, adjust=adjust, market=market, period=period)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]分析失败：{exc}[/red]")
         return
@@ -792,9 +800,12 @@ def main() -> None:
     p_analyze.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
     p_analyze.add_argument("--market", default="ashare",
                            choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
-    p_analyze.add_argument("--days", type=int, default=250, help="回看交易日数（默认 250）")
+    p_analyze.add_argument("--days", type=int, default=250, help="回看K线数（默认 250）")
     p_analyze.add_argument("--adjust", default="qfq",
                            choices=["qfq", "hfq", ""], help="复权方式（默认 qfq 前复权）")
+    p_analyze.add_argument("--period", default="daily",
+                           choices=["daily", "weekly", "monthly"],
+                           help="K 线周期：日线/周线/月线（默认 daily）")
     p_advice = sub.add_parser("advice", help="规则化交易信号（结合实时行情）")
     p_advice.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
     p_advice.add_argument("--market", default="ashare",
@@ -804,7 +815,10 @@ def main() -> None:
     p_ind.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
     p_ind.add_argument("--market", default="ashare",
                        choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
-    p_ind.add_argument("--days", type=int, default=120, help="回看交易日数（默认 120）")
+    p_ind.add_argument("--days", type=int, default=120, help="回看K线数（默认 120）")
+    p_ind.add_argument("--period", default="daily",
+                       choices=["daily", "weekly", "monthly"],
+                       help="K 线周期：日线/周线/月线（默认 daily）")
     p_news = sub.add_parser("news", help="公告与研报（仅 A 股，自动入库）")
     p_news.add_argument("code", nargs="?", default="", help="6 位证券代码，如 600519")
     p_news.add_argument("--days", type=int, default=90, help="研报回看天数（默认 90）")
@@ -837,11 +851,11 @@ def main() -> None:
     if args.command == "once":
         run_once(args.config)
     elif args.command == "analyze":
-        run_analyze(args.code, args.days, args.adjust, args.market)
+        run_analyze(args.code, args.days, args.adjust, args.market, args.period)
     elif args.command == "advice":
         run_advice(args.code, args.market, args.days, args.config)
     elif args.command == "indicator":
-        run_indicator(args.code, args.market, args.days, args.config)
+        run_indicator(args.code, args.market, args.days, args.config, args.period)
     elif args.command == "news":
         if args.watchlist:
             run_news("", "ashare", args.days, args.config, watchlist=True)

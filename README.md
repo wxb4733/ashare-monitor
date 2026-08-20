@@ -43,8 +43,10 @@ python -m ashare_monitor.main once
 # 持续监控
 python -m ashare_monitor.main monitor
 
-# 历史数据分析（近 120 个交易日，前复权）
+# 历史数据分析（日/周/月线，前复权）
 python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
+python -m ashare_monitor.main analyze 002594 --period weekly --days 60   # 周线看中期趋势
+python -m ashare_monitor.main analyze 002594 --period monthly --days 60  # 月线看大级别
 
 # 港股 / 加密货币分析
 python -m ashare_monitor.main analyze 00700 --market hk --days 60
@@ -54,8 +56,9 @@ python -m ashare_monitor.main analyze BTCUSDT --market crypto --days 60
 python -m ashare_monitor.main advice 600519 --days 120
 python -m ashare_monitor.main advice BTCUSDT --market crypto --days 60
 
-# 技术指标监控（MACD/RSI/KDJ/BOLL）
+# 技术指标监控（MACD/RSI/KDJ/BOLL，支持日/周/月线）
 python -m ashare_monitor.main indicator 600519 --days 120
+python -m ashare_monitor.main indicator 002594 --period weekly --days 120  # 周线 MACD 金叉/死叉（中期信号）
 python -m ashare_monitor.main indicator BTCUSDT --market crypto --days 60
 
 # 生成复盘报告（默认今天，可指定日期）
@@ -229,12 +232,15 @@ python -m ashare_monitor.main news --watchlist --days 30  # 批量采集全部 A
 
 ## 历史数据分析（analyze）
 
-拉取个股日线历史（优先东财 akshare，失败自动降级腾讯 K 线），输出：
+拉取个股历史 K 线（优先东财 akshare，失败自动降级腾讯 K 线），支持**日 / 周 / 月线**多周期
+（`--period daily|weekly|monthly`，年化波动率按周期数自动换算：日线 250/365、周线 52、月线 12），输出：
 
 - **概览**：最新收盘、区间涨跌幅、上涨/下跌天数与胜率
-- **波动指标**：年化波动率、近 20 日波动率、最大回撤、平均日振幅
+- **波动指标**：年化波动率、近 20 周期波动率、最大回撤、平均振幅
 - **趋势**：MA5/10/20/60 与收盘价相对位置
-- **量能**：近 5 日 / 20 日均量与量比
+- **量能**：近 5 / 20 周期均量与量比
+
+`indicator` 同样支持 `--period`（周线 MACD 金叉/死叉是中期趋势信号，月线看大级别）。
 
 分析能力已接入监控流程：监控启动时输出自选股波动基线表；预警触发时自动附带
 该股一行波动画像（近 N 日涨跌 / 年化波动 / 最大回撤 / 日均振幅 / MA20 位置 / 量比），
