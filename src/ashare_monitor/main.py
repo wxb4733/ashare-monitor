@@ -827,9 +827,10 @@ def main() -> None:
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
-    p_report = sub.add_parser("report", help="生成周/月复盘汇总报告")
+    p_report = sub.add_parser("report", help="生成周/月/年复盘汇总报告")
     p_report.add_argument("--weekly", action="store_true", help="周报（默认）")
     p_report.add_argument("--monthly", action="store_true", help="月报")
+    p_report.add_argument("--yearly", action="store_true", help="年报（近 365 天）")
     p_report.add_argument("--date", help="周期结束日期 YYYY-MM-DD，默认今天")
 
     args = parser.parse_args()
@@ -864,7 +865,7 @@ def main() -> None:
     elif args.command == "scan":
         run_scan(args.config)
     elif args.command == "report":
-        period = "monthly" if args.monthly else "weekly"
+        period = "yearly" if args.yearly else ("monthly" if args.monthly else "weekly")
         run_report(period, args.date, args.config)
     else:
         run_monitor(args.config)

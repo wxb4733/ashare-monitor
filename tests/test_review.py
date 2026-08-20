@@ -336,3 +336,68 @@ def test_export_obsidian(tmp_path, monkeypatch):
     cfg2 = type("Cfg", (), {"obsidian": ObsidianConfig(vault="", reports_dir="x")})()
     assert export_obsidian(cfg2, "2026-08-20", [], [], index_quotes=[], indicator_rows=[],
                            news_rows=[], financial_rows=[], ipo_rows=[], html_path=html) is None
+
+
+# ---------- 周期报告 Markdown 导出 ----------
+
+def test_build_period_markdown():
+    from ashare_monitor.review import build_period_markdown
+
+    md = build_period_markdown(
+        "weekly", "周报", "2026-08-14", "2026-08-20",
+        alerts=[{"date": "2026-08-18", "time": "10:30", "code": "600519",
+                 "name": "贵州茅台", "rule": "big_order", "message": "大单挂单触发"}],
+        rule_counts=[{"rule": "big_order", "count": 1}],
+        daily_counts=[{"date": "2026-08-18", "count": 1}],
+        code_counts=[{"code": "600519", "name": "贵州茅台", "count": 1}],
+        stock_rows=[{"market": "ashare", "name": "贵州茅台", "code": "600519",
+                     "first": 1300.0, "last": 1296.15, "return_pct": -0.30}],
+        reviews=[{"date": "2026-08-18", "alert_count": 1, "generated_at": "2026-08-18 15:05:00"}],
+        html_path="output/report-weekly-2026-08-20.html",
+    )
+    # frontmatter 与标题
+    assert md.startswith("---\ntitle: A股周报复盘汇总 2026-08-20")
+    assert "tags: [复盘, A股, 周报]" in md
+    assert "# A股周报复盘汇总" in md
+    # 各板块
+    for h in ("## 区间行情表现", "## 预警统计", "### 每日预警数",
+              "### 预警排行（按标的）", "## 每日复盘记录", "## 预警明细", "## 图表"):
+        assert h in md, h
+    # 内容
+    assert "贵州茅台(600519)" in md
+    assert "-0.30%" in md
+    assert "2026-08-18 10:30" in md
+    assert "不构成任何投资建议" in md
+    assert "report-weekly-2026-08-20.html" in md
+
+
+def test_build_period_markdown_empty():
+    from ashare_monitor.review import build_period_markdown
+
+    md = build_period_markdown("monthly", "月报", "2026-07-21", "2026-08-20",
+                               [], [], [], [], [], [])
+    assert "区间内无预警" in md
+    assert "区间内暂无复盘记录" in md
+    assert "## 区间行情表现" not in md      # 无行情数据
+    assert "## 预警统计" in md
+
+
+def test_export_period_obsidian(tmp_path):
+    from ashare_monitor.config import ObsidianConfig
+    from ashare_monitor.review import export_period_obsidian
+
+    vault = tmp_path / "vault"
+    cfg = type("Cfg", (), {"obsidian": ObsidianConfig(vault=str(vault))})()
+    html = tmp_path / "report-weekly-2026-08-20.html"
+    out = export_period_obsidian(
+        cfg, "weekly", "周报", "2026-08-14", "2026-08-20",
+        [], [], [], [], [], [], html_path=html,
+    )
+    assert out is not None and out.exists()
+    assert out.name == "report-weekly-2026-08-20.md"
+    assert out.parent.name == "汇总报告"
+    assert "title: A股周报复盘汇总" in out.read_text(encoding="utf-8")
+    # vault 留空不导出
+    cfg2 = type("Cfg", (), {"obsidian": ObsidianConfig(vault="")})()
+    assert export_period_obsidian(
+        cfg2, "weekly", "周报", "", "", [], [], [], [], [], [], html_path=html) is None

@@ -81,6 +81,7 @@ python -m ashare_monitor.main export        # 等效命令
 # 周/月复盘汇总报告（基于 SQLite 积累的数据）
 python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
+python -m ashare_monitor.main report --yearly   # 年报（近 365 天）
 ```
 
 安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor ipo` / `ashare-monitor review` / `ashare-monitor export` / `ashare-monitor scan` / `ashare-monitor report`。
@@ -92,8 +93,9 @@ python -m ashare_monitor.main report --monthly
 
 ```bash
 python -m ashare_monitor.main obsidian init   # 初始化库结构（.obsidian 配置 + 模板 + 首页）
-python -m ashare_monitor.main obsidian index  # 重建首页复盘索引（wikilink）
+python -m ashare_monitor.main obsidian index  # 重建首页索引（日复盘 + 周/月/年报 wikilink）
 python -m ashare_monitor.main review          # 生成复盘并自动导出到 obsidian-vault/A股复盘/
+python -m ashare_monitor.main report --weekly|--monthly|--yearly  # 周期报告自动导出到 汇总报告/
 ```
 
 ```yaml
@@ -107,9 +109,10 @@ obsidian:
 ```
 obsidian-vault/
 ├── .obsidian/          # 应用配置（新文件默认入复盘目录、启用模板）
-├── README.md           # 知识库首页（自动维护复盘索引）
+├── README.md           # 知识库首页（自动维护复盘 + 汇总报告索引）
 ├── 模板/复盘模板.md     # 复盘笔记模板
-└── A股复盘/            # 每日复盘 Markdown（本地数据，git 忽略）
+├── A股复盘/            # 每日复盘 Markdown（本地数据，git 忽略）
+└── 汇总报告/           # 周报 / 月报 / 年报 Markdown（本地数据，git 忽略）
 ```
 
 导出的 Markdown 包含 frontmatter（date/tags，可检索与双链）、

@@ -13,6 +13,12 @@
 - [[A股复盘/review-2026-08-20|复盘 2026-08-20]]
 <!-- INDEX_END -->
 
+
+<!-- REPORT_INDEX_START -->
+- [[汇总报告/report-monthly-2026-08-20|月报 2026-08-20]]
+- [[汇总报告/report-weekly-2026-08-20|周报 2026-08-20]]
+- [[汇总报告/report-yearly-2026-08-20|年报 2026-08-20]]
+<!-- REPORT_INDEX_END -->
 ## 说明
 
 - 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘

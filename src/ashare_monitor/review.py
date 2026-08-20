@@ -764,8 +764,8 @@ def build_push_summary(
 
 # ---------- 周 / 月复盘汇总 ----------
 
-_PERIOD_DAYS = {"weekly": 7, "monthly": 30}
-_PERIOD_LABEL = {"weekly": "周报", "monthly": "月报"}
+_PERIOD_DAYS = {"weekly": 7, "monthly": 30, "yearly": 365}
+_PERIOD_LABEL = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
 
 
 def _period_range(period: str, end_date: str | None) -> tuple[str, str]:
@@ -827,7 +827,151 @@ def generate_period_report(
     out_path = out_dir / f"report-{period}-{end}.html"
     out_path.write_text(html, encoding="utf-8")
     logger.info("%s汇总报告已生成: %s", label, out_path)
+
+    # 导出 Markdown 到 Obsidian 独立库（配置了 vault 才执行）
+    obsidian_out = export_period_obsidian(
+        cfg, period, label, start, end,
+        alerts, rule_counts, daily_counts, code_counts, stock_rows, reviews,
+        html_path=out_path,
+    )
+    if obsidian_out:
+        logger.info("Obsidian %s Markdown 已导出: %s", label, obsidian_out)
+
     return out_path
+
+
+def export_period_obsidian(
+    cfg: Config,
+    period: str,
+    label: str,
+    start: str,
+    end: str,
+    alerts: list[dict],
+    rule_counts: list[dict],
+    daily_counts: list[dict],
+    code_counts: list[dict],
+    stock_rows: list[dict],
+    reviews: list[dict],
+    html_path: Path,
+) -> Path | None:
+    """把周/月/年报导出为 Markdown 存入 Obsidian vault（未配置则返回 None）。"""
+    vault = getattr(cfg.obsidian, "vault", "").strip()
+    if not vault:
+        return None
+    md = build_period_markdown(
+        period, label, start, end, alerts, rule_counts, daily_counts,
+        code_counts, stock_rows, reviews, html_path=html_path,
+    )
+    out_dir = Path(vault) / "汇总报告"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"report-{period}-{end}.md"
+    out.write_text(md, encoding="utf-8")
+    return out
+
+
+def build_period_markdown(
+    period: str,
+    label: str,
+    start: str,
+    end: str,
+    alerts: list[dict],
+    rule_counts: list[dict],
+    daily_counts: list[dict],
+    code_counts: list[dict],
+    stock_rows: list[dict],
+    reviews: list[dict],
+    html_path: Path | None = None,
+) -> str:
+    """把周期汇总数据渲染为 Obsidian Markdown（纯函数，便于测试）。"""
+    lines = [
+        "---",
+        f"title: A股{label}复盘汇总 {end}",
+        f"date: {end}",
+        f"tags: [复盘, A股, {label}]",
+        f"period: {start} ~ {end}",
+        f"generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}",
+        "---",
+        "",
+        f"# A股{label}复盘汇总",
+        "",
+        f"**区间：{start} ~ {end}** · 预警 {len(alerts)} 条 · 复盘 {len(reviews)} 篇",
+        "",
+    ]
+
+    def _md_table(headers: list[str], rows: list[list[str]]) -> str:
+        sep = "| " + " | ".join(["---"] * len(headers)) + " |"
+        out = ["| " + " | ".join(headers) + " |", sep]
+        out += ["| " + " | ".join(r) + " |" for r in rows]
+        return "\n".join(out)
+
+    # 区间行情表现
+    if stock_rows:
+        lines.append("## 区间行情表现")
+        lines.append("")
+        lines.append(_md_table(
+            ["市场", "标的", "期初", "期末", "区间涨跌"],
+            [[r["market"], f"{r['name']}({r['code']})", f"{r['first']:.2f}",
+              f"{r['last']:.2f}", f"{r['return_pct']:+.2f}%"]
+             for r in sorted(stock_rows, key=lambda x: x["return_pct"], reverse=True)],
+        ))
+        lines.append("")
+
+    # 预警统计
+    lines.append("## 预警统计")
+    lines.append("")
+    lines.append(_md_table(
+        ["规则", "次数"],
+        [[RULE_NAMES.get(r["rule"], r["rule"]), str(r["count"])] for r in rule_counts],
+    ))
+    lines.append("")
+    if daily_counts:
+        lines.append("### 每日预警数")
+        lines.append("")
+        lines.append(_md_table(
+            ["日期", "预警数"],
+            [[r["date"], str(r["count"])] for r in daily_counts],
+        ))
+        lines.append("")
+    if code_counts:
+        lines.append("### 预警排行（按标的）")
+        lines.append("")
+        lines.append(_md_table(
+            ["标的", "预警数"],
+            [[f"{r['name'] or r['code']}({r['code']})", str(r["count"])] for r in code_counts],
+        ))
+        lines.append("")
+
+    # 每日复盘记录
+    lines.append("## 每日复盘记录")
+    lines.append("")
+    if reviews:
+        for r in reviews:
+            lines.append(f"- {r['date']}：预警 {r['alert_count']} 条 · {r['generated_at']}")
+    else:
+        lines.append("区间内暂无复盘记录")
+    lines.append("")
+
+    # 预警明细
+    lines.append(f"## 预警明细（共 {len(alerts)} 条）")
+    lines.append("")
+    if alerts:
+        for r in alerts:
+            lines.append(
+                f"- {r['date']} {r['time']} **{r['name'] or r['code']}({r['code']})** "
+                f"`{RULE_NAMES.get(r['rule'], r['rule'])}` — {r['message']}"
+            )
+    else:
+        lines.append("区间内无预警")
+    lines.append("")
+
+    lines.append("## 图表")
+    lines.append("")
+    lines.append("预警统计图表（ECharts）请查看 HTML 报告："
+                 + (f"[report-{period}-{end}.html]({html_path})" if html_path
+                    else f"`output/report-{period}-{end}.html`"))
+    lines.append("")
+    lines.append(f"> {_DISCLAIMER}")
+    return "\n".join(lines)
 
 
 _PERIOD_JS = """

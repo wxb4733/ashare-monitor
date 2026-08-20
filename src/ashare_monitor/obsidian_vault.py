@@ -47,6 +47,7 @@ _HOME_MD = """# A 股监控知识库
 ## 目录
 
 - `A股复盘/`：每日复盘报告（Markdown，自动导出）
+- `汇总报告/`：周报 / 月报 / 年报（Markdown，自动导出）
 - `模板/`：复盘笔记模板
 
 ## 复盘索引
@@ -54,10 +55,17 @@ _HOME_MD = """# A 股监控知识库
 <!-- INDEX_START -->
 <!-- INDEX_END -->
 
+## 汇总报告索引
+
+<!-- REPORT_INDEX_START -->
+<!-- REPORT_INDEX_END -->
+
 ## 说明
 
 - 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘
+- 周 / 月 / 年报：`python -m ashare_monitor.main report --weekly|--monthly|--yearly`
 - 复盘包含：大盘指数、技术指标、当日表现、预警、财报速览、公告与研报、近期 IPO
+- 汇总报告包含：区间行情表现、预警统计、每日复盘记录、预警明细
 - K 线图（ECharts）以链接指向 HTML 报告
 - 数据仅供学习与技术研究，不构成投资建议
 """
@@ -122,7 +130,7 @@ def init_vault(vault_path: str | Path, reports_dir: str = "A股复盘") -> Path:
 
 
 def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -> Path:
-    """重建首页 README 的复盘索引（<!-- INDEX_START --> 与 <!-- INDEX_END --> 之间）。"""
+    """重建首页 README 的复盘索引与汇总报告索引。"""
     root = Path(vault_path)
     home = root / "README.md"
     if not home.exists():
@@ -139,17 +147,48 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
             f"- [[{reports_dir}/{r.stem}|{r.stem.replace('review-', '复盘 ')}]]"
             for r in reports[-30:]  # 最近 30 篇
         )
-
     new_index = f"<!-- INDEX_START -->\n{links}\n<!-- INDEX_END -->"
-    text = home.read_text(encoding="utf-8")
-    if "<!-- INDEX_START -->" in text:
+
+    # 汇总报告索引（周/月/年报）
+    summaries = sorted(
+        (root / "汇总报告").glob("report-*.md"),
+        key=lambda p: p.name,
+    )
+    if not summaries:
+        sum_links = "（暂无汇总报告，运行 `report --weekly|--monthly|--yearly` 生成）"
+    else:
         import re
 
-        text = re.sub(r"<!-- INDEX_START -->.*?<!-- INDEX_END -->",
-                      new_index, text, flags=re.S)
-    else:
-        text = text.replace("<!-- INDEX_END -->",
-                            new_index + "\n<!-- INDEX_END -->")
+        _PERIOD_CN = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
+        sum_links = "\n".join(
+            f"- [[汇总报告/{s.stem}|"
+            f"{_PERIOD_CN.get(s.name.split('-')[1], s.name.split('-')[1])} "
+            f"{re.search(r'\d{4}-\d{2}-\d{2}', s.name).group(0)}]]"
+            for s in summaries[-12:]
+        )
+    new_summary_index = f"<!-- REPORT_INDEX_START -->\n{sum_links}\n<!-- REPORT_INDEX_END -->"
+
+    text = home.read_text(encoding="utf-8")
+
+    def _replace(text: str, marker: str, new: str) -> str:
+        start_marker = marker
+        end_marker = marker.replace("_START", "_END")
+        if start_marker in text:
+            import re
+
+            return re.sub(rf"{start_marker}.*?{end_marker}",
+                          new, text, flags=re.S)
+        if end_marker in text:  # 有结束占位但缺开始占位
+            return text.replace(end_marker, new + "\n" + end_marker)
+        # 完全缺失：插入到 "## 说明" 之前
+        title = new.splitlines()[0].replace(start_marker, "").strip()
+        section = f"{title}\n{new}\n"
+        if "## 说明" in text:
+            return text.replace("## 说明", section + "## 说明", 1)
+        return text + "\n" + section
+
+    text = _replace(text, "<!-- INDEX_START -->", new_index)
+    text = _replace(text, "<!-- REPORT_INDEX_START -->", new_summary_index)
     home.write_text(text, encoding="utf-8")
     logger.info("知识库索引已更新: %s", home)
     return home
