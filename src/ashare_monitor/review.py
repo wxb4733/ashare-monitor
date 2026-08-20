@@ -372,6 +372,21 @@ def build_html(
 
 # ---------- 报告生成 ----------
 
+def _financial_row(code: str, name: str, r: dict) -> dict:
+    """从财报记录构造速览行（本地库 load_financials 格式）。"""
+    return {
+        "code": code, "name": name,
+        "report_date": r.get("report_date", ""),
+        "revenue": round(r["revenue"], 1) if r.get("revenue") is not None else None,
+        "net_profit": round(r["net_profit"], 1) if r.get("net_profit") is not None else None,
+        "revenue_yoy": round(r["revenue_yoy"], 1) if r.get("revenue_yoy") is not None else None,
+        "profit_yoy": round(r["profit_yoy"], 1) if r.get("profit_yoy") is not None else None,
+        "roe": round(r["roe"], 1) if r.get("roe") is not None else None,
+        "gross_margin": round(r["gross_margin"], 1) if r.get("gross_margin") is not None else None,
+        "net_margin": round(r["net_margin"], 1) if r.get("net_margin") is not None else None,
+    }
+
+
 def _fetch_kline_chart(symbol: str, days: int, adjust: str,
                        title_prefix: str = "", market: str = "ashare") -> dict | None:
     """拉取单个标的的 K 线图数据，失败返回 None。
@@ -488,7 +503,7 @@ def generate_review(
                     chart["title"] += "  |  " + "  |  ".join(extra)
                 charts.append(chart)
 
-    # 财报速览（仅 A 股自选；最新报告期，失败不阻塞）
+    # 财报速览（仅 A 股自选；读库优先取最新报告期，库空回退联网，失败不阻塞）
     financial_rows: list[dict] = []
     for item in cfg.watchlist:
         if str(item.get("market", "ashare")) != "ashare":
@@ -496,6 +511,12 @@ def generate_review(
         code = str(item["code"])
         name = str(item.get("name", code))
         try:
+            from .storage import load_financials
+
+            rows = load_financials(code)
+            if rows:  # 库内有历史财报（backfill --financial 回填）
+                financial_rows.append(_financial_row(code, name, rows[0]))
+                continue
             from .fundamentals import fetch_financials
 
             periods = fetch_financials(code, periods=1)
@@ -705,7 +726,12 @@ def backfill_reviews(
     :return: 生成的 HTML 文件路径列表
     """
     from .storage import DB_PATH as DEFAULT_DB
-    from .storage import load_announcements, load_klines, load_research_reports
+    from .storage import (
+        load_announcements,
+        load_financials,
+        load_klines,
+        load_research_reports,
+    )
 
     db_path = db_path or DEFAULT_DB
 
@@ -740,19 +766,25 @@ def backfill_reviews(
             f"{all_days[0]} ~ {all_days[-1]}）"
         )
 
-    # 3. 财报速览只拉一次（最新报告期，全部日期共享；失败不阻塞）
-    financial_rows: list[dict] = []
+    # 3. 财报：读本地库全量（backfill --financial 回填），逐日取"报告期≤当日"最近一期；
+    #    库空时回退联网拉最新一期（共享兜底，失败不阻塞）
+    fin_cache: dict[str, dict] = {}  # code -> {"name":.., "rows":[..]}
+    fallback_financial: list[dict] = []
     for item in cfg.watchlist:
         if str(item.get("market", "ashare")) != "ashare":
             continue
         code, name = str(item["code"]), str(item.get("name", item["code"]))
         try:
+            rows = load_financials(code, db_path=db_path)
+            if rows:
+                fin_cache[code] = {"name": name, "rows": rows}  # 已按报告期倒序
+                continue
             from .fundamentals import fetch_financials
 
             periods = fetch_financials(code, periods=1)
             if periods:
                 p = periods[0]
-                financial_rows.append({
+                fallback_financial.append({
                     "code": code, "name": name,
                     "report_date": p.report_date,
                     "revenue": round(p.revenue, 1) if p.revenue is not None else None,
@@ -764,7 +796,18 @@ def backfill_reviews(
                     "net_margin": round(p.net_margin, 1) if p.net_margin is not None else None,
                 })
         except Exception as exc:  # noqa: BLE001
-            logger.warning("回填复盘：%s 财报拉取失败: %s", code, exc)
+            logger.warning("回填复盘：%s 财报读取失败: %s", code, exc)
+
+    def _financials_for(day: str) -> list[dict]:
+        """当日财报速览：报告期 ≤ 该交易日的最近一期（库优先）+ 兜底。"""
+        rows_out = []
+        for code, entry in fin_cache.items():
+            latest = next(
+                (r for r in entry["rows"] if r["report_date"] <= day), None
+            )
+            if latest:
+                rows_out.append(_financial_row(code, entry["name"], latest))
+        return rows_out or fallback_financial
 
     # 4. 公告研报本地缓存（按日期过滤；仅 A 股）
     news_cache: list[dict] = []
@@ -820,15 +863,16 @@ def backfill_reviews(
         html = build_html(
             day, quotes, records, charts,
             indicator_rows=indicator_rows, news_rows=news_rows,
-            financial_rows=financial_rows,
+            financial_rows=_financials_for(day),
         )
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"review-{day}.html"
         out_path.write_text(html, encoding="utf-8")
+        day_financial = _financials_for(day)
         export_obsidian(
             cfg, day, quotes, records, [], indicator_rows,
-            news_rows, financial_rows, [], html_path=out_path,
+            news_rows, day_financial, [], html_path=out_path,
         )
         out_files.append(out_path)
         logger.info("回填复盘 [%d/%d] %s: %s", i, total, day, out_path)

@@ -519,3 +519,57 @@ def test_backfill_reviews_no_data(tmp_path):
     })()
     with pytest.raises(RuntimeError, match="backfill --kline"):
         backfill_reviews("2026-08-01", "2026-08-18", cfg, db_path=db)
+
+
+def test_backfill_reviews_financials_by_date(tmp_path, monkeypatch):
+    """历史复盘财报速览按交易日取「报告期≤当日」的最近一期。"""
+    from ashare_monitor.review import backfill_reviews
+    from ashare_monitor.storage import _connect, record_klines
+
+    db = str(tmp_path / "fin.db")
+    # 两段行情：2026-01 与 2026-08（跨两个报告期）
+    rows = []
+    price = 10.0
+    for d in ["2026-01-05", "2026-01-06", "2026-01-07"]:
+        rows.append({"date": d, "open": price, "close": price * 1.01,
+                     "high": price * 1.02, "low": price * 0.99, "volume": 1000.0})
+        price *= 1.01
+    for d in ["2026-08-11", "2026-08-12"]:
+        rows.append({"date": d, "open": price, "close": price * 1.01,
+                     "high": price * 1.02, "low": price * 0.99, "volume": 1000.0})
+        price *= 1.01
+    record_klines(
+        [(r["date"], r["open"], r["close"], r["high"], r["low"], r["volume"])
+         for r in rows], "ashare", "002594", db_path=db,
+    )
+    # 两期财报：2025 年报与 2026 一季报
+    conn = _connect(db)
+    for rd, rev in [("2025-12-31", 7000.0), ("2026-03-31", 1500.0)]:
+        conn.execute(
+            "INSERT INTO financials (code, name, report_date, revenue, net_profit, "
+            "revenue_yoy, profit_yoy, roe, gross_margin, net_margin, eps, ocf_per_share) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("002594", "比亚迪", rd, rev, 400.0, 10.0, 5.0, 20.0, 25.0, 12.0, 5.0, 8.0),
+        )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        "ashare_monitor.fundamentals.fetch_financials",
+        lambda code, periods=6: [],
+    )
+
+    cfg = type("Cfg", (), {
+        "watchlist": [{"code": "002594", "name": "比亚迪", "market": "ashare"}],
+        "review": type("R", (), {"kline_days": 60})(),
+        "obsidian": type("O", (), {"vault": "", "reports_dir": "A股复盘"})(),
+    })()
+    files = backfill_reviews("2026-01-05", "2026-08-12", cfg,
+                             output_dir=str(tmp_path / "out"), db_path=db)
+    htmls = {f.name: f.read_text(encoding="utf-8") for f in files}
+    # 2026-01 的复盘 → 2025 年报（7000）
+    assert "7000.0" in htmls["review-2026-01-05.html"]
+    assert "2025-12-31" in htmls["review-2026-01-05.html"]
+    # 2026-08 的复盘 → 2026 一季报（1500）
+    assert "1500.0" in htmls["review-2026-08-11.html"]
+    assert "2026-03-31" in htmls["review-2026-08-11.html"]
+    assert "7000.0" not in htmls["review-2026-08-11.html"]
