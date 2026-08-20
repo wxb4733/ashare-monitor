@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import pytest
+
 from ashare_monitor.alerts import Alert
 from ashare_monitor.main import _is_after_close
 from ashare_monitor.quotes import Quote
@@ -401,3 +403,119 @@ def test_export_period_obsidian(tmp_path):
     cfg2 = type("Cfg", (), {"obsidian": ObsidianConfig(vault="")})()
     assert export_period_obsidian(
         cfg2, "weekly", "周报", "", "", [], [], [], [], [], [], html_path=html) is None
+
+
+# ---------- 历史复盘回填 ----------
+
+def make_local_klines() -> list[dict]:
+    """6 个交易日的本地 K 线（价格线性上涨）。"""
+    dates = ["2026-08-10", "2026-08-11", "2026-08-12",
+             "2026-08-13", "2026-08-14", "2026-08-17"]
+    rows = []
+    price = 10.0
+    for d in dates:
+        rows.append({
+            "date": d, "open": price, "close": price * 1.02,
+            "high": price * 1.03, "low": price * 0.99, "volume": 10000.0,
+        })
+        price *= 1.02
+    return rows
+
+
+def test_quote_from_kline():
+    from ashare_monitor.review import _quote_from_kline
+
+    rows = make_local_klines()
+    q = _quote_from_kline("ashare", "002594", "比亚迪", rows[2], rows[1]["close"])
+    assert q.code == "002594" and q.name == "比亚迪"
+    assert q.price == pytest.approx(rows[2]["close"])
+    # 涨跌幅 = 当日收盘 / 前收 - 1
+    expected = (rows[2]["close"] / rows[1]["close"] - 1) * 100
+    assert q.change_pct == pytest.approx(expected)
+    assert q.prev_close == pytest.approx(rows[1]["close"])
+    assert q.turnover is None   # 历史模式无成交额
+
+
+def test_chart_from_local_rows():
+    from ashare_monitor.review import _chart_from_local_rows
+
+    rows = make_local_klines()
+    chart = _chart_from_local_rows("002594", "比亚迪", "ashare", rows, 60, 5)
+    assert chart["dates"] == [r["date"] for r in rows]
+    assert len(chart["kdata"]) == 6 and len(chart["volumes"]) == 6
+    # kdata 顺序 [开, 收, 低, 高]（round 两位）
+    assert chart["kdata"][-1][:2] == [
+        round(rows[-1]["open"], 2), round(rows[-1]["close"], 2)
+    ]
+    assert chart["kdata"][-1][2] == round(rows[-1]["low"], 2)
+    assert chart["kdata"][-1][3] == round(rows[-1]["high"], 2)
+    # 指标已计算
+    assert chart["indicator"] is not None
+    assert chart["indicator"]["code"] == "002594"
+    assert chart["indicator"]["market"] == "ashare"
+    assert "macd" in chart["indicator"] and "rsi" in chart["indicator"]
+
+
+def test_backfill_reviews(tmp_path, monkeypatch):
+    from ashare_monitor.review import backfill_reviews
+    from ashare_monitor.storage import record_klines
+
+    db = str(tmp_path / "test.db")
+    rows = make_local_klines()
+    record_klines(
+        [(r["date"], r["open"], r["close"], r["high"], r["low"], r["volume"])
+         for r in rows], "ashare", "002594", db_path=db,
+    )
+    record_klines(
+        [(r["date"], r["open"], r["close"], r["high"], r["low"], r["volume"])
+         for r in rows], "hk", "01211", db_path=db,
+    )
+    # 财报拉取替换为空，避免联网
+    monkeypatch.setattr(
+        "ashare_monitor.fundamentals.fetch_financials",
+        lambda code, periods=6: [],
+    )
+
+    watchlist = [
+        {"code": "002594", "name": "比亚迪", "market": "ashare"},
+        {"code": "01211", "name": "比亚迪股份", "market": "hk"},
+    ]
+    cfg = type("Cfg", (), {
+        "watchlist": watchlist,
+        "review": type("R", (), {"kline_days": 60})(),
+        "obsidian": type("O", (), {"vault": "", "reports_dir": "A股复盘"})(),
+    })()
+
+    out_dir = tmp_path / "out"
+    files = backfill_reviews("2026-08-11", "2026-08-17", cfg,
+                             output_dir=str(out_dir), db_path=db)
+    # 8-11 ~ 8-17 共 5 个交易日（8-15/16 周末不在 K 线里）
+    assert len(files) == 5
+    names = {f.name for f in files}
+    assert names == {
+        "review-2026-08-11.html", "review-2026-08-12.html",
+        "review-2026-08-13.html", "review-2026-08-14.html",
+        "review-2026-08-17.html",
+    }
+    html = files[0].read_text(encoding="utf-8")
+    assert "自选股当日表现" in html
+    assert "比亚迪(002594)" in html and "比亚迪股份(01211)" in html
+    assert "技术指标状态" in html
+    assert "大盘指数" not in html        # 历史模式省略指数
+    assert "当日无预警记录" in html or "当日预警时间线" in html
+    assert "不构成任何投资建议" in html
+    # 行情来自本地 K 线：首日涨跌幅 = 1.02/1.0 - 1
+    assert "+2.00%" in html
+
+
+def test_backfill_reviews_no_data(tmp_path):
+    from ashare_monitor.review import backfill_reviews
+
+    db = str(tmp_path / "empty.db")
+    cfg = type("Cfg", (), {
+        "watchlist": [{"code": "002594", "name": "比亚迪"}],
+        "review": type("R", (), {"kline_days": 60})(),
+        "obsidian": type("O", (), {"vault": "", "reports_dir": "A股复盘"})(),
+    })()
+    with pytest.raises(RuntimeError, match="backfill --kline"):
+        backfill_reviews("2026-08-01", "2026-08-18", cfg, db_path=db)

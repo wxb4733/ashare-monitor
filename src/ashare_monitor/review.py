@@ -151,7 +151,7 @@ def _quote_rows(quotes: list[Quote]) -> str:
             f"<td>{_pct_html(q.change_pct)}</td>"
             f"<td>{f'{amp:.2f}%' if amp is not None else '-'}</td>"
             f"<td>{q.volume:,.0f}</td>"
-            f"<td>{q.turnover / 1e8:.2f}亿</td>"
+            f"<td>{f'{q.turnover / 1e8:.2f}亿' if q.turnover is not None else '-'}</td>"
             "</tr>"
         )
     return "\n".join(rows)
@@ -188,7 +188,7 @@ def _index_rows(quotes: list[Quote]) -> str:
             f"<td>{q.price:,.2f}</td>"
             f"<td>{_pct_html(q.change_pct)}</td>"
             f"<td>{f'{amp:.2f}%' if amp is not None else '-'}</td>"
-            f"<td>{q.turnover / 1e8:,.0f}亿</td>"
+            f"<td>{f'{q.turnover / 1e8:,.0f}亿' if q.turnover is not None else '-'}</td>"
             "</tr>"
         )
     return "\n".join(rows)
@@ -622,6 +622,220 @@ def export_obsidian(
     return out
 
 
+# ---------- 历史复盘回填 ----------
+
+def _quote_from_kline(market: str, code: str, name: str,
+                      row: dict, prev_close: float) -> Quote:
+    """用历史 K 线单根构造当日行情（回填历史复盘用，离线）。"""
+    close = float(row["close"])
+    prev = float(prev_close) if prev_close else close
+    change = close - prev
+    change_pct = change / prev * 100 if prev else 0.0
+    return Quote(
+        code=code, name=name, price=close, change_pct=round(change_pct, 2),
+        change=round(change, 4), volume=float(row["volume"]), turnover=None,
+        high=float(row["high"]), low=float(row["low"]),
+        open=float(row["open"]), prev_close=prev,
+        timestamp=datetime.strptime(row["date"], "%Y-%m-%d"),
+    )
+
+
+def _chart_from_local_rows(code: str, name: str, market: str,
+                           rows: list[dict], kline_days: int,
+                           end_idx: int) -> dict:
+    """从本地 K 线构造图表数据（回填历史复盘用，离线；含指标状态）。"""
+    start = max(0, end_idx - kline_days + 1)
+    window = rows[start:end_idx + 1]
+    indicator = None
+    try:
+        import pandas as pd
+
+        from .indicators import compute_indicators
+
+        df = pd.DataFrame({
+            "日期": [r["date"] for r in window],
+            "开盘": [r["open"] for r in window],
+            "收盘": [r["close"] for r in window],
+            "最高": [r["high"] for r in window],
+            "最低": [r["low"] for r in window],
+            "成交量": [r["volume"] for r in window],
+        })
+        ir = compute_indicators(df)
+        indicator = {
+            "code": code, "name": name, "market": market,
+            "summary": ir.summary_line(),
+            "macd": ir.macd.trend + (
+                f"({ir.macd.days_since_cross}日前)"
+                if ir.macd.days_since_cross is not None else ""
+            ),
+            "rsi": f"{ir.rsi.value:.0f}",
+            "kdj": ir.kdj.trend,
+            "boll": ir.boll.position,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("回填复盘：%s 指标计算失败: %s", code, exc)
+    return {
+        "id": f"chart-{code[-6:]}-stk",
+        "title": f"{name or code}({code[-6:]})  近{kline_days}日",
+        "dates": [r["date"] for r in window],
+        "kdata": [
+            [round(float(r["open"]), 2), round(float(r["close"]), 2),
+             round(float(r["low"]), 2), round(float(r["high"]), 2)]
+            for r in window
+        ],
+        "volumes": [int(float(r["volume"])) for r in window],
+        "indicator": indicator,
+    }
+
+
+def backfill_reviews(
+    start_date: str,
+    end_date: str,
+    cfg: Config,
+    output_dir: str = OUTPUT_DIR,
+    alerts_dir: str = ALERTS_DIR,
+    db_path: str | Path | None = None,
+) -> list[Path]:
+    """回填历史复盘报告：用本地 klines 表为区间内每个交易日生成 HTML + Obsidian MD。
+
+    历史日期无法获得实时行情快照、指数行情与 IPO 日历，这些板块自动省略；
+    行情表格 / K 线图 / 技术指标全部来自本地回填数据（需先 backfill --kline）。
+    财报速览联网拉取一次（最新报告期，失败则省略）；公告研报从本地库按日期过滤。
+
+    :return: 生成的 HTML 文件路径列表
+    """
+    from .storage import DB_PATH as DEFAULT_DB
+    from .storage import load_announcements, load_klines, load_research_reports
+
+    db_path = db_path or DEFAULT_DB
+
+    # 1. 收集自选标的的本地 K 线
+    watch_items: list[dict] = []
+    for item in cfg.watchlist:
+        market = str(item.get("market", "ashare"))
+        code = str(item["code"])
+        name = str(item.get("name", code))
+        if market == "crypto":
+            logger.warning("回填复盘：crypto 暂不支持，跳过 %s", code)
+            continue
+        rows = load_klines(code, market, db_path=db_path)
+        if len(rows) < 2:
+            logger.warning(
+                "回填复盘：%s(%s) 本地 K 线不足（%d 根），跳过；请先 backfill --kline",
+                code, market, len(rows),
+            )
+            continue
+        watch_items.append({"market": market, "code": code, "name": name, "rows": rows})
+    if not watch_items:
+        raise RuntimeError("没有可回填的标的（本地 K 线不足），请先运行 backfill --kline")
+
+    # 2. 交易日并集，取区间
+    all_days = sorted({r["date"] for w in watch_items for r in w["rows"]})
+    start_idx = next((i for i, d in enumerate(all_days) if d >= start_date), len(all_days))
+    end_idx = next((i for i, d in enumerate(all_days) if d > end_date), len(all_days))
+    days = all_days[start_idx:end_idx]
+    if not days:
+        raise RuntimeError(
+            f"区间 {start_date} ~ {end_date} 内无交易日（本地 K 线范围 "
+            f"{all_days[0]} ~ {all_days[-1]}）"
+        )
+
+    # 3. 财报速览只拉一次（最新报告期，全部日期共享；失败不阻塞）
+    financial_rows: list[dict] = []
+    for item in cfg.watchlist:
+        if str(item.get("market", "ashare")) != "ashare":
+            continue
+        code, name = str(item["code"]), str(item.get("name", item["code"]))
+        try:
+            from .fundamentals import fetch_financials
+
+            periods = fetch_financials(code, periods=1)
+            if periods:
+                p = periods[0]
+                financial_rows.append({
+                    "code": code, "name": name,
+                    "report_date": p.report_date,
+                    "revenue": round(p.revenue, 1) if p.revenue is not None else None,
+                    "net_profit": round(p.net_profit, 1) if p.net_profit is not None else None,
+                    "revenue_yoy": round(p.revenue_yoy, 1) if p.revenue_yoy is not None else None,
+                    "profit_yoy": round(p.profit_yoy, 1) if p.profit_yoy is not None else None,
+                    "roe": round(p.roe, 1) if p.roe is not None else None,
+                    "gross_margin": round(p.gross_margin, 1) if p.gross_margin is not None else None,
+                    "net_margin": round(p.net_margin, 1) if p.net_margin is not None else None,
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("回填复盘：%s 财报拉取失败: %s", code, exc)
+
+    # 4. 公告研报本地缓存（按日期过滤；仅 A 股）
+    news_cache: list[dict] = []
+    for w in watch_items:
+        if w["market"] != "ashare":
+            continue
+        for a in load_announcements(w["code"], limit=1000, db_path=db_path):
+            news_cache.append({
+                "kind": "ann", "code": w["code"], "name": w["name"],
+                "date": a["date"], "title": a["title"], "url": a["url"],
+            })
+        for r in load_research_reports(w["code"], limit=1000, db_path=db_path):
+            news_cache.append({
+                "kind": "report", "code": w["code"], "name": w["name"],
+                "date": r["date"], "title": r["title"],
+                "url": r["url"], "org": r["org"],
+            })
+
+    # 5. 逐交易日生成
+    kline_days = cfg.review.kline_days
+    prepared = [
+        {**w, "date_idx": {r["date"]: i for i, r in enumerate(w["rows"])}}
+        for w in watch_items
+    ]
+    out_files: list[Path] = []
+    total = len(days)
+    for i, day in enumerate(days, 1):
+        quotes: list[Quote] = []
+        charts: list[dict] = []
+        indicator_rows: list[dict] = []
+        for w in prepared:
+            di = w["date_idx"].get(day)
+            if di is None:
+                continue
+            rows = w["rows"]
+            prev = rows[di - 1]["close"] if di > 0 else rows[di]["close"]
+            quotes.append(_quote_from_kline(
+                w["market"], w["code"], w["name"], rows[di], prev,
+            ))
+            chart = _chart_from_local_rows(
+                w["code"], w["name"], w["market"], rows, kline_days, di,
+            )
+            if chart.get("indicator"):
+                indicator_rows.append(chart["indicator"])
+            charts.append(chart)
+
+        news_rows = [it for it in news_cache if it["date"] <= day]
+        news_rows.sort(key=lambda r: r["date"], reverse=True)
+        news_rows = news_rows[:20]
+
+        records = load_alerts(day, alerts_dir)
+
+        html = build_html(
+            day, quotes, records, charts,
+            indicator_rows=indicator_rows, news_rows=news_rows,
+            financial_rows=financial_rows,
+        )
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"review-{day}.html"
+        out_path.write_text(html, encoding="utf-8")
+        export_obsidian(
+            cfg, day, quotes, records, [], indicator_rows,
+            news_rows, financial_rows, [], html_path=out_path,
+        )
+        out_files.append(out_path)
+        logger.info("回填复盘 [%d/%d] %s: %s", i, total, day, out_path)
+
+    return out_files
+
+
 def build_review_markdown(
     date_str: str,
     quotes: list[Quote],
@@ -666,7 +880,8 @@ def build_review_markdown(
         lines.append(_md_table(
             ["指数", "点位", "涨跌幅", "振幅", "成交额"],
             [[q.name, _fmt(q.price, nd=2), f"{q.change_pct:+.2f}%",
-              _fmt(q.amplitude, "%", 1), _fmt(q.turnover / 1e8, "亿", 1)]
+              _fmt(q.amplitude, "%", 1),
+              _fmt(q.turnover / 1e8, "亿", 1) if q.turnover is not None else "-"]
              for q in index_quotes],
         ))
         lines.append("")
@@ -688,7 +903,8 @@ def build_review_markdown(
     lines.append(_md_table(
         ["代码", "名称", "收盘/最新", "涨跌幅", "振幅", "成交额"],
         [[q.code, q.name, _fmt(q.price), f"{q.change_pct:+.2f}%",
-          _fmt(q.amplitude, "%", 1), _fmt(q.turnover / 1e8, "亿", 1)]
+          _fmt(q.amplitude, "%", 1),
+          _fmt(q.turnover / 1e8, "亿", 1) if q.turnover is not None else "-"]
          for q in quotes],
     ))
     lines.append("")

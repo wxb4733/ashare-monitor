@@ -6,7 +6,7 @@ import argparse
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from rich.console import Console
 from rich.table import Table
@@ -614,7 +614,29 @@ def run_financial(code: str, periods: int) -> None:
     print_disclaimer()
 
 
-def run_review(date: str | None, config_path: str | None) -> None:
+def run_review(date: str | None, config_path: str | None,
+               backfill_start: str | None = None,
+               backfill_end: str | None = None) -> None:
+    if backfill_start:
+        from .review import backfill_reviews
+
+        cfg = load_config(config_path)
+        setup_logging(cfg.logging)
+        end = backfill_end or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        console.print(f"[cyan]正在回填 {backfill_start} ~ {end} 历史复盘报告"
+                      f"（数据来源：本地 klines 库）…[/cyan]")
+        try:
+            files = backfill_reviews(backfill_start, end, cfg)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]历史复盘回填失败：{exc}[/red]")
+            return
+        console.print(f"[green]回填完成：共 {len(files)} 份复盘报告[/green]")
+        for f in files[-6:]:
+            console.print(f"  [dim]{f}[/dim]")
+        if len(files) > 6:
+            console.print(f"  [dim]…共 {len(files)} 份，以上为最后 6 份[/dim]")
+        return
+
     from .review import generate_review
 
     cfg = load_config(config_path)
@@ -1102,8 +1124,11 @@ def main() -> None:
                       help="多标的定投对比，逗号分隔（如 002594,01211）")
     p_bt.add_argument("--chart", action="store_true",
                       help="生成单笔回测 K 线可视化 HTML（含买卖点标注）")
-    p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
+    p_review = sub.add_parser("review", help="生成复盘报告（默认今天；--backfill 回填历史）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
+    p_review.add_argument("--backfill", metavar="START",
+                          help="回填历史复盘：起始日期 YYYY-MM-DD（用本地 klines 库，需先 backfill --kline）")
+    p_review.add_argument("--end", help="回填结束日期 YYYY-MM-DD，默认昨天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
     p_report = sub.add_parser("report", help="生成周/月/年复盘汇总报告")
     p_report.add_argument("--weekly", action="store_true", help="周报（默认）")
@@ -1149,7 +1174,8 @@ def main() -> None:
                      dca=args.dca, months=args.months, detail=args.detail,
                      compare=args.compare, chart=args.chart)
     elif args.command == "review":
-        run_review(args.date, args.config)
+        run_review(args.date, args.config,
+                   backfill_start=args.backfill, backfill_end=args.end)
     elif args.command == "scan":
         run_scan(args.config)
     elif args.command == "report":

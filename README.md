@@ -64,6 +64,9 @@ python -m ashare_monitor.main indicator BTCUSDT --market crypto --days 60
 # 生成复盘报告（默认今天，可指定日期）
 python -m ashare_monitor.main review [--date 2026-08-18]
 
+# 回填历史复盘（用本地 klines 库离线生成，需先 backfill --kline）
+python -m ashare_monitor.main review --backfill 2025-08-20 [--end 2026-08-19]
+
 # 全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）
 python -m ashare_monitor.main scan
 
