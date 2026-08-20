@@ -70,12 +70,35 @@ python -m ashare_monitor.main news 600519 --days 90
 # 财报分析（仅 A 股，近 6 个报告期）
 python -m ashare_monitor.main financial 600519 --periods 6
 
+# IPO 公司分析（近期新股列表 / 单只详情）
+python -m ashare_monitor.main ipo --limit 30
+python -m ashare_monitor.main ipo 马矿股份
+
 # 周/月复盘汇总报告（基于 SQLite 积累的数据）
 python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor ipo` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## IPO 公司分析（ipo）
+
+`ipo` 命令分析新股（东财新股申购/上市报表 `RPTA_APP_IPOAPPLY` 直连）：
+
+- **`ipo`（无参数）**：近期新股列表（代码/名称/交易所/申购日/发行价/行业 PE/募资/阶段状态），含北交所（920 开头）
+- **`ipo <代码或名称>`**：单只新股详情 + 规则化分析
+  - 发行阶段判定（待定价/待申购/待上市/已上市）
+  - 发行 PE vs 行业 PE 对比（估值偏贵/便宜/持平，PE 字段缺失时自动跳过）
+  - 募资完成度（超募/缩募提示）
+  - 已上市新股：现价 vs 发行价（**破发提示**）
+
+```bash
+python -m ashare_monitor.main ipo --limit 30   # 近期新股
+python -m ashare_monitor.main ipo 马矿股份      # 单只分析
+```
+
+已知限制：东财该报表多数新股的发行市盈率字段为空，PE 对比仅在字段可用时输出。
+输出附完整免责声明（IPO 分析为投资参考信息，不构成投资建议）。
 
 ## 财报分析（financial）
 

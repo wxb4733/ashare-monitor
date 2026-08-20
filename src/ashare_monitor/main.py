@@ -629,6 +629,7 @@ def run_review(date: str | None, config_path: str | None) -> None:
 
 def render_scan(result) -> None:
     """以表格打印全市场异动榜单（A 股习惯：涨红跌绿）。"""
+
     def board(title: str, rows: list[dict], fmt: str) -> None:
         if not rows:
             return
@@ -674,6 +675,75 @@ def run_scan(config_path: str | None) -> None:
         console.print(f"[red]扫描失败：{exc}[/red]")
         return
     render_scan(result)
+
+
+def run_ipo(keyword: str | None, limit: int) -> None:
+    """IPO 分析：无参数列出近期新股，带参数查看单只新股详情。"""
+    from .ipo import analyze_ipo, fetch_ipo_list, find_ipo
+
+    console.print(f"[cyan]正在获取近期新股数据（{limit} 条）…[/cyan]")
+    try:
+        items = fetch_ipo_list(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]IPO 数据获取失败：{exc}[/red]")
+        return
+
+    if not keyword:
+        table = Table(title="近期新股（按申购日倒序）")
+        table.add_column("代码", justify="left")
+        table.add_column("名称", justify="left")
+        table.add_column("交易所", justify="left")
+        table.add_column("申购日", justify="left")
+        table.add_column("发行价", justify="right")
+        table.add_column("行业PE", justify="right")
+        table.add_column("募资(亿)", justify="right")
+        table.add_column("状态", justify="center")
+        for r in items:
+            stage_style = {"待申购": "cyan", "待定价": "yellow",
+                           "待上市": "magenta", "已上市": "green"}.get(r.stage(), "")
+            table.add_row(
+                r.code, r.name, r.market.replace("证券交易所", ""),
+                r.apply_date or "-",
+                f"{r.issue_price:.2f}" if r.issue_price is not None else "-",
+                f"{r.industry_pe:.1f}" if r.industry_pe is not None else "-",
+                f"{r.raise_funds:.2f}" if r.raise_funds is not None else "-",
+                f"[{stage_style}]{r.stage()}[/{stage_style}]" if stage_style else r.stage(),
+            )
+        console.print(table)
+        print_disclaimer()
+        return
+
+    rec = find_ipo(items, keyword)
+    if rec is None:
+        console.print(f"[red]未找到 {keyword}（试试新股列表里的名称或代码）[/red]")
+        return
+
+    console.print(f"[bold cyan]{rec.name}({rec.code}) IPO 分析[/bold cyan]")
+    detail = Table()
+    detail.add_column("项目", justify="left")
+    detail.add_column("内容", justify="left")
+    for label, value in (
+        ("交易所", rec.market),
+        ("行业", rec.industry),
+        ("申购日", rec.apply_date or "-"),
+        ("上市日", rec.listing_date or "-"),
+        ("发行价", f"{rec.issue_price:.2f} 元" if rec.issue_price is not None else "待公布"),
+        ("发行PE", f"{rec.issue_pe:.1f}" if rec.issue_pe is not None else "-"),
+        ("行业PE", f"{rec.industry_pe:.1f}" if rec.industry_pe is not None else "-"),
+        ("发行量", f"{rec.issue_num:,.0f} 万股" if rec.issue_num is not None else "-"),
+        ("募资", f"{rec.raise_funds:.2f} 亿（计划 {rec.plan_funds:.0f} 亿）"
+         if rec.raise_funds is not None and rec.plan_funds else
+         (f"{rec.raise_funds:.2f} 亿" if rec.raise_funds is not None else "-")),
+        ("最新价", f"{rec.newest_price:.2f} 元" if rec.newest_price is not None else "未上市"),
+        ("保荐机构", rec.underwriter or "-"),
+    ):
+        detail.add_row(label, value)
+    console.print(detail)
+
+    console.print("[bold cyan]IPO 分析[/bold cyan]")
+    for line in analyze_ipo(rec):
+        console.print(f"  • {line}")
+    print_disclaimer()
 
 
 def run_report(period: str, date: str | None, config_path: str | None) -> None:
@@ -722,6 +792,9 @@ def main() -> None:
     p_fin = sub.add_parser("financial", help="财报分析（仅 A 股，东财业绩报表）")
     p_fin.add_argument("code", help="6 位证券代码，如 600519")
     p_fin.add_argument("--periods", type=int, default=6, help="回看报告期数（默认 6）")
+    p_ipo = sub.add_parser("ipo", help="IPO 公司分析（近期新股列表 / 单只详情）")
+    p_ipo.add_argument("keyword", nargs="?", default="", help="新股代码或名称（缺省显示列表）")
+    p_ipo.add_argument("--limit", type=int, default=30, help="列表条数（默认 30）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -749,6 +822,8 @@ def main() -> None:
                      local_only=args.local)
     elif args.command == "financial":
         run_financial(args.code, args.periods)
+    elif args.command == "ipo":
+        run_ipo(args.keyword, args.limit)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
