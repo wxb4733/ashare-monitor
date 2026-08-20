@@ -87,8 +87,9 @@ _VAULT_GITIGNORE = """# Obsidian 本地状态（不入库）
 .obsidian/workspace-mobile.json
 .obsidian/cache
 
-# 复盘数据（本地积累，不入库）
+# 复盘与汇总数据（本地积累，不入库）
 A股复盘/
+汇总报告/
 附件/
 """
 
