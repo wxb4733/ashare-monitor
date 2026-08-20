@@ -71,6 +71,38 @@ CREATE TABLE IF NOT EXISTS research_reports (
     created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_report_code ON research_reports(code, date);
+
+CREATE TABLE IF NOT EXISTS klines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    market TEXT NOT NULL,
+    code TEXT NOT NULL,
+    date TEXT NOT NULL,
+    open REAL,
+    close REAL,
+    high REAL,
+    low REAL,
+    volume REAL,
+    UNIQUE(market, code, date)
+);
+CREATE INDEX IF NOT EXISTS idx_klines_code ON klines(market, code, date);
+
+CREATE TABLE IF NOT EXISTS financials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL,
+    name TEXT,
+    report_date TEXT NOT NULL,
+    revenue REAL,
+    net_profit REAL,
+    revenue_yoy REAL,
+    profit_yoy REAL,
+    roe REAL,
+    gross_margin REAL,
+    net_margin REAL,
+    eps REAL,
+    ocf_per_share REAL,
+    UNIQUE(code, report_date)
+);
+CREATE INDEX IF NOT EXISTS idx_financials_code ON financials(code, report_date);
 """
 
 
@@ -392,5 +424,127 @@ def count_news_by_code(db_path: str | Path = DB_PATH) -> list[dict]:
             "ORDER BY (anns + reps) DESC",
         ).fetchall()
         return [{"code": r[0], "anns": r[1], "reports": r[2]} for r in rows]
+    finally:
+        conn.close()
+
+
+# ---------- K 线（历史行情） ----------
+
+def record_klines(
+    rows: list[tuple],
+    market: str,
+    code: str,
+    db_path: str | Path = DB_PATH,
+) -> int:
+    """批量入库日 K（(date, open, close, high, low, volume)），重复自动跳过。
+
+    :return: 新增条数
+    """
+    if not rows:
+        return 0
+    conn = _connect(db_path)
+    try:
+        new = 0
+        for date, o, c, h, l, v in rows:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO klines (market, code, date, open, close, high, low, volume) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (market, code, date, o, c, h, l, v),
+            )
+            new += cur.rowcount
+        conn.commit()
+        return new
+    finally:
+        conn.close()
+
+
+def load_klines(
+    code: str,
+    market: str = "ashare",
+    db_path: str | Path = DB_PATH,
+) -> list[dict]:
+    """查询某标的全部入库日 K（按日期升序）。"""
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT date, open, close, high, low, volume FROM klines "
+            "WHERE market=? AND code=? ORDER BY date",
+            (market, code[-6:]),
+        ).fetchall()
+        return [
+            {"date": r[0], "open": r[1], "close": r[2], "high": r[3],
+             "low": r[4], "volume": r[5]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def count_klines(code: str, market: str = "ashare", db_path: str | Path = DB_PATH) -> int:
+    conn = _connect(db_path)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM klines WHERE market=? AND code=?",
+            (market, code[-6:]),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+# ---------- 财报（全量） ----------
+
+def record_financials(
+    items: list,
+    code: str,
+    name: str = "",
+    db_path: str | Path = DB_PATH,
+) -> tuple[int, int]:
+    """入库财报（code+report_date 唯一去重）。
+
+    :param items: FinancialPeriod 列表
+    :return: (新增条数, 已存在条数)
+    """
+    if not items:
+        return 0, 0
+    conn = _connect(db_path)
+    try:
+        new = 0
+        for p in items:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO financials "
+                "(code, name, report_date, revenue, net_profit, revenue_yoy, "
+                "profit_yoy, roe, gross_margin, net_margin, eps, ocf_per_share) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (code, name or "", p.report_date, p.revenue, p.net_profit,
+                 p.revenue_yoy, p.profit_yoy, p.roe, p.gross_margin,
+                 p.net_margin, p.eps, p.ocf_per_share),
+            )
+            new += cur.rowcount
+        conn.commit()
+        total = conn.execute(
+            "SELECT COUNT(*) FROM financials WHERE code=?", (code,)
+        ).fetchone()[0]
+        return new, max(total - new, 0)
+    finally:
+        conn.close()
+
+
+def load_financials(code: str, db_path: str | Path = DB_PATH) -> list[dict]:
+    """查询某标的全部入库财报（按报告期倒序）。"""
+    conn = _connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT report_date, revenue, net_profit, revenue_yoy, profit_yoy, "
+            "roe, gross_margin, net_margin, eps, ocf_per_share "
+            "FROM financials WHERE code=? ORDER BY report_date DESC",
+            (code[-6:],),
+        ).fetchall()
+        return [
+            {"report_date": r[0], "revenue": r[1], "net_profit": r[2],
+             "revenue_yoy": r[3], "profit_yoy": r[4], "roe": r[5],
+             "gross_margin": r[6], "net_margin": r[7], "eps": r[8],
+             "ocf_per_share": r[9]}
+            for r in rows
+        ]
     finally:
         conn.close()

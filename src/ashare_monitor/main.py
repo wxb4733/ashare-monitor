@@ -775,6 +775,68 @@ def run_obsidian(action: str, vault: str | None, config_path: str | None) -> Non
         console.print(f"[red]Obsidian 操作失败：{exc}[/red]")
 
 
+def run_backfill(code: str, market: str | None, config_path: str | None,
+                 kline: bool, news: bool, financial: bool) -> None:
+    """回填标的自上市以来的全量历史数据（行情/公告/研报/财报）。"""
+    from .backfill import backfill_all
+
+    market = market or ("hk" if len(code) == 5 else "ashare")
+    if not (kline or news or financial):
+        kline = news = financial = True   # 默认全量回填
+    console.print(f"[cyan]正在回填 {code}（{market}）上市以来数据…[/cyan]")
+    result = backfill_all(code, market, with_kline=kline, with_news=news,
+                          with_financial=financial)
+    for dim, info in result.items():
+        if "error" in info:
+            console.print(f"[red]{dim} 回填失败：{info['error']}[/red]")
+        elif dim == "news":
+            console.print(f"[green]{dim}：公告新增 {info['announcements']} / "
+                          f"研报新增 {info['reports']}[/green]")
+        else:
+            console.print(f"[green]{dim}：新增 {info['new']} 条（库内共 {info['total']}）[/green]")
+    console.print("[dim]提示：回填数据存于 data/ashare_monitor.db，"
+                  "可用 history 命令查看上市以来分析[/dim]")
+
+
+def run_history(code: str, market: str | None, config_path: str | None) -> None:
+    """查看标的"自上市以来"统计（需先 backfill 入库）。"""
+    from .backfill import analyze_history
+    from .storage import count_klines, load_klines
+
+    market = market or ("hk" if len(code) == 5 else "ashare")
+    rows = load_klines(code, market)
+    if len(rows) < 2:
+        console.print(f"[yellow]{code}（{market}）暂无入库 K 线，"
+                      f"请先运行: backfill {code} --market {market}[/yellow]")
+        return
+    try:
+        h = analyze_history(rows)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]分析失败：{exc}[/red]")
+        return
+
+    console.print(f"[bold cyan]{code}（{market}）自上市以来  "
+                  f"{datetime.now():%Y-%m-%d}[/bold cyan]")
+    table = Table()
+    table.add_column("指标", justify="left")
+    table.add_column("数值", justify="right")
+    table.add_row("上市首日", f"{h['first_date']}（收盘 {h['first_close']:.2f}）")
+    table.add_row("交易天数", f"{h['bars']} 天（约 {h['years']} 年）")
+    table.add_row("最新收盘", f"{h['latest_close']:.2f}（{h['last_date']}）")
+    total = h.get("total_return_pct")
+    table.add_row("上市以来涨幅", f"{total:+.2f}%" if total is not None else "-（前复权早期价格失真）")
+    ann = h.get("annualized_pct")
+    table.add_row("年化收益", f"{ann:+.2f}%" if ann is not None else "-")
+    table.add_row("历史最高", f"{h['all_time_high']:.2f}（{h['all_time_high_date']}）")
+    table.add_row("历史最低", f"{h['all_time_low']:.2f}（{h['all_time_low_date']}）")
+    table.add_row("历史区间位置", f"{h['position_pct']:.1f}%（0=最低 100=最高）")
+    table.add_row("距历史高点", f"{h['drawdown_pct']:+.2f}%")
+    table.add_row("近一年涨跌", f"{h['year_return_pct']:+.2f}%（高 {h['year_high']:.2f}"
+                                f" / 低 {h['year_low']:.2f}）")
+    console.print(table)
+    print_disclaimer()
+
+
 def run_report(period: str, date: str | None, config_path: str | None) -> None:
     from .review import generate_period_report
 
@@ -838,6 +900,17 @@ def main() -> None:
     p_ob.add_argument("action", choices=["init", "index"],
                       help="init=初始化库结构；index=重建首页索引")
     p_ob.add_argument("--vault", help="vault 路径（默认取 config.obsidian.vault）")
+    p_backfill = sub.add_parser("backfill", help="回填上市以来全量数据（行情/公告/研报/财报）")
+    p_backfill.add_argument("code", help="证券代码，如 002594 / 01211")
+    p_backfill.add_argument("--market", choices=["ashare", "hk"],
+                            help="市场（缺省按代码位数推断）")
+    p_backfill.add_argument("--kline", action="store_true", help="仅回填日 K")
+    p_backfill.add_argument("--news", action="store_true", help="仅回填公告/研报")
+    p_backfill.add_argument("--financial", action="store_true", help="仅回填财报")
+    p_history = sub.add_parser("history", help="上市以来统计（需先 backfill）")
+    p_history.add_argument("code", help="证券代码，如 002594 / 01211")
+    p_history.add_argument("--market", choices=["ashare", "hk"],
+                           help="市场（缺省按代码位数推断）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -874,6 +947,11 @@ def main() -> None:
                       "review 生成时自动执行[/dim]")
     elif args.command == "obsidian":
         run_obsidian(args.action, args.vault, args.config)
+    elif args.command == "backfill":
+        run_backfill(args.code, args.market, args.config,
+                     args.kline, args.news, args.financial)
+    elif args.command == "history":
+        run_history(args.code, args.market, args.config)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
