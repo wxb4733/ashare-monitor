@@ -837,6 +837,60 @@ def run_history(code: str, market: str | None, config_path: str | None) -> None:
     print_disclaimer()
 
 
+def run_backtest(code: str, market: str | None, buy_date: str | None,
+                 amount: float, holds: str, config_path: str | None) -> None:
+    """回测：买入日 + 金额 + 持有交易日数 → 收益率。"""
+    from .backtest import backtest
+
+    market = market or ("hk" if len(code) == 5 else "ashare")
+    try:
+        hold_list = [int(h.strip()) for h in holds.split(",") if h.strip()]
+    except ValueError:
+        console.print("[red]--hold-days 需为逗号分隔的整数，如 60,120,250[/red]")
+        return
+    console.print(f"[cyan]回测 {code}（{market}）：{buy_date or '默认'} 买入 "
+                  f"{amount:,.0f} 元，持有 {hold_list} 个交易日[/cyan]")
+    try:
+        results = backtest(code, market, buy_date=buy_date, amount=amount,
+                           hold_days=hold_list)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]回测失败：{exc}[/red]")
+        return
+
+    table = Table(title=f"{code} 持有期回测")
+    table.add_column("持有(交易日)", justify="right")
+    table.add_column("买入日", justify="left")
+    table.add_column("买入价", justify="right")
+    table.add_column("卖出日", justify="left")
+    table.add_column("卖出价", justify="right")
+    table.add_column("金额(买→卖)", justify="right")
+    table.add_column("收益率", justify="right")
+    table.add_column("年化", justify="right")
+    table.add_column("持有期高低", justify="right")
+    for r in results:
+        if r["status"] != "ok":
+            table.add_row(str(r["hold_days"]), r["buy_date"], "-", "-", "-",
+                          "-", "-", "-",
+                          r["status"] + (f"（可持 {r.get('available')} 天）" if "available" in r else ""))
+            continue
+        style = "red" if r["return_pct"] > 0 else ("green" if r["return_pct"] < 0 else "")
+        ret_cell = (
+            f"[{style}]{r['return_pct']:+.2f}%[/{style}]"
+            if style else f"{r['return_pct']:+.2f}%"
+        )
+        table.add_row(
+            str(r["hold_days"]), r["buy_date"], f"{r['buy_price']:.2f}",
+            r["sell_date"], f"{r['sell_price']:.2f}",
+            f"{r['buy_amount']:,.0f}→{r['sell_amount']:,.0f}",
+            ret_cell, f"{r['annualized_pct']:+.1f}%",
+            f"{r['high']:.2f} / {r['low']:.2f}",
+        )
+    console.print(table)
+    console.print("[dim]注：按整手成交（A股100/手，港股按每手），未计佣金与税费；"
+                  "回测为历史价格模拟，不构成投资建议[/dim]")
+    print_disclaimer()
+
+
 def run_report(period: str, date: str | None, config_path: str | None) -> None:
     from .review import generate_period_report
 
@@ -911,6 +965,14 @@ def main() -> None:
     p_history.add_argument("code", help="证券代码，如 002594 / 01211")
     p_history.add_argument("--market", choices=["ashare", "hk"],
                            help="市场（缺省按代码位数推断）")
+    p_bt = sub.add_parser("backtest", help="持有期回测（买入日/金额/持有交易日数）")
+    p_bt.add_argument("code", help="证券代码，如 002594 / 01211 / BTCUSDT")
+    p_bt.add_argument("--market", choices=["ashare", "hk", "crypto"],
+                      help="市场（缺省按代码位数推断）")
+    p_bt.add_argument("--buy-date", default="", help="买入日期 YYYY-MM-DD（默认最近交易日）")
+    p_bt.add_argument("--amount", type=float, default=100000.0, help="买入金额（元，默认 100000）")
+    p_bt.add_argument("--hold-days", default="60,120,250",
+                      help="持有交易日数，逗号分隔多档（默认 60,120,250）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -952,6 +1014,9 @@ def main() -> None:
                      args.kline, args.news, args.financial)
     elif args.command == "history":
         run_history(args.code, args.market, args.config)
+    elif args.command == "backtest":
+        run_backtest(args.code, args.market, args.buy_date or None,
+                     args.amount, args.hold_days, args.config)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":

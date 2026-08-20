@@ -70,6 +70,13 @@ python -m ashare_monitor.main scan
 # 公告与研报（仅 A 股，带原文链接与机构预测）
 python -m ashare_monitor.main news 600519 --days 90
 
+# 上市以来全量数据回填 + 历史统计（行情/公告/研报/财报）
+python -m ashare_monitor.main backfill 002594           # 回填全部维度（可增量重跑）
+python -m ashare_monitor.main history 002594            # 上市以来统计（区间位置/最高最低）
+
+# 持有期回测：某日买入 X 元，持有 N 个交易日卖出
+python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100000 --hold-days 60,120,250
+
 # 财报分析（仅 A 股，近 6 个报告期）
 python -m ashare_monitor.main financial 600519 --periods 6
 
@@ -230,8 +237,30 @@ python -m ashare_monitor.main news --watchlist --days 30  # 批量采集全部 A
 若配置了 `ASHARE_MONITOR_WEBHOOK`，报告生成后会自动推送一条复盘摘要到 webhook。
 指数列表与 K 线天数在 `review.indexes` / `review.kline_days` 配置。
 
-## 历史数据分析（analyze）
+## 数据回填与上市以来统计（backfill / history）
 
+```bash
+python -m ashare_monitor.main backfill 002594        # 回填全部维度（日K全量/公告/研报/财报）
+python -m ashare_monitor.main backfill 002594 --kline # 仅日 K（akshare 优先，腾讯 K 线分段降级）
+python -m ashare_monitor.main history 002594          # 上市以来统计
+```
+
+- 日 K 入库 `klines` 表（market+code+date 唯一，可增量重跑去重）
+- `history` 输出：上市首日/交易天数/上市以来涨幅（年化）/历史最高最低及日期/当前价历史区间位置/距高点回撤/近一年
+- 公告/研报/财报分别入库 `announcements` / `research_reports` / `financials` 表
+
+## 持有期回测（backtest）
+
+```bash
+python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100000 --hold-days 60,120,250
+```
+
+按"某日买入 X 元 → 持有 N 个交易日 → 卖出"模拟，输出：买入/卖出价与日期、实际成交股数
+（按整手：A 股 100 股、港股按每手）、买卖金额、**收益率**、年化、持有期最高/最低价。
+支持逗号分隔多档持有期对比；数据优先用已回填的全量 K 线（离线快速）。
+注：未计佣金与税费，回测为历史价格模拟，不构成投资建议。
+
+## 历史数据分析（analyze）
 拉取个股历史 K 线（优先东财 akshare，失败自动降级腾讯 K 线），支持**日 / 周 / 月线**多周期
 （`--period daily|weekly|monthly`，年化波动率按周期数自动换算：日线 250/365、周线 52、月线 12），输出：
 
