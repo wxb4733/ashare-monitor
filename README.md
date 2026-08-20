@@ -67,12 +67,28 @@ python -m ashare_monitor.main scan
 # 公告与研报（仅 A 股，带原文链接与机构预测）
 python -m ashare_monitor.main news 600519 --days 90
 
+# 财报分析（仅 A 股，近 6 个报告期）
+python -m ashare_monitor.main financial 600519 --periods 6
+
 # 周/月复盘汇总报告（基于 SQLite 积累的数据）
 python -m ashare_monitor.main report --weekly
 python -m ashare_monitor.main report --monthly
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor review` / `ashare-monitor scan` / `ashare-monitor report`。
+
+## 财报分析（financial）
+
+`financial` 命令查看被监控标的的财务业绩（**仅 A 股**，东财业绩报表接口 → akshare 兜底）：
+
+- **多期趋势表**：最近 N 个报告期的营收/净利（亿元）及同比、ROE、毛利率（涨红跌绿）
+- **财报速览**：增速环比变化（改善/放缓）、近 3 期增长连续性、ROE/毛利率/净利率水平、每股经营现金流是否覆盖净利润（盈利质量）
+
+```bash
+python -m ashare_monitor.main financial 600519 --periods 6
+```
+
+输出附完整免责声明（财报分析为投资参考信息，不构成投资建议）。
 
 ## 公告与研报（news）
 

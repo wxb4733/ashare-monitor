@@ -554,6 +554,58 @@ def run_news(code: str, market: str, days: int, config_path: str | None,
     _render_news_tables(code, anns, reports)
 
 
+def run_financial(code: str, periods: int) -> None:
+    """查看标的的财报分析（仅 A 股）。"""
+    from .fundamentals import fetch_financials, summarize
+
+    console.print(f"[cyan]正在获取 {code} 财报数据（近 {periods} 个报告期）…[/cyan]")
+    try:
+        items = fetch_financials(code, periods=periods)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]财报获取失败：{exc}[/red]")
+        return
+
+    console.print(f"[bold cyan]{code} 财务业绩（最近 {len(items)} 期）[/bold cyan]")
+    table = Table()
+    table.add_column("报告期", justify="left")
+    table.add_column("营收(亿)", justify="right")
+    table.add_column("营收同比", justify="right")
+    table.add_column("净利(亿)", justify="right")
+    table.add_column("净利同比", justify="right")
+    table.add_column("ROE", justify="right")
+    table.add_column("毛利率", justify="right")
+    for p in items:
+        def _fmt(v: float | None, suffix: str = "", nd: int = 2) -> str:
+            return f"{v:.{nd}f}{suffix}" if v is not None else "-"
+
+        rev_style = "red" if (p.revenue_yoy or 0) > 0 else (
+            "green" if (p.revenue_yoy or 0) < 0 else ""
+        )
+        prof_style = "red" if (p.profit_yoy or 0) > 0 else (
+            "green" if (p.profit_yoy or 0) < 0 else ""
+        )
+        rev_cell = (
+            f"[{rev_style}]{_fmt(p.revenue_yoy, '%')}[/{rev_style}]"
+            if rev_style else _fmt(p.revenue_yoy, "%")
+        )
+        prof_cell = (
+            f"[{prof_style}]{_fmt(p.profit_yoy, '%')}[/{prof_style}]"
+            if prof_style else _fmt(p.profit_yoy, "%")
+        )
+        table.add_row(
+            p.report_date,
+            _fmt(p.revenue), rev_cell,
+            _fmt(p.net_profit), prof_cell,
+            _fmt(p.roe, "%", 1), _fmt(p.gross_margin, "%", 1),
+        )
+    console.print(table)
+
+    console.print("[bold cyan]财报速览[/bold cyan]")
+    for line in summarize(items):
+        console.print(f"  • {line}")
+    print_disclaimer()
+
+
 def run_review(date: str | None, config_path: str | None) -> None:
     from .review import generate_review
 
@@ -667,6 +719,9 @@ def main() -> None:
     p_news.add_argument("--days", type=int, default=90, help="研报回看天数（默认 90）")
     p_news.add_argument("--local", action="store_true", help="仅读取数据库，不联网")
     p_news.add_argument("--watchlist", action="store_true", help="批量采集全部 A 股自选股入库")
+    p_fin = sub.add_parser("financial", help="财报分析（仅 A 股，东财业绩报表）")
+    p_fin.add_argument("code", help="6 位证券代码，如 600519")
+    p_fin.add_argument("--periods", type=int, default=6, help="回看报告期数（默认 6）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -692,6 +747,8 @@ def main() -> None:
         else:
             run_news(args.code, "ashare", args.days, args.config,
                      local_only=args.local)
+    elif args.command == "financial":
+        run_financial(args.code, args.periods)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
