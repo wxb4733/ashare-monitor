@@ -80,6 +80,12 @@ python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100
 # 定投回测：近 N 个月每月买入 X 元，持有 M 个交易日后卖出（收益分布统计）
 python -m ashare_monitor.main backtest 002594 --dca --months 60 --hold-days 250 --amount 10000 [--detail]
 
+# 多标的定投横向对比（同参数）
+python -m ashare_monitor.main backtest 002594 --compare 002594,01211 --hold-days 250 --amount 10000
+
+# 回测可视化：K 线图标注买卖点（HTML）
+python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --hold-days 250 --amount 100000 --chart
+
 # 财报分析（仅 A 股，近 6 个报告期）
 python -m ashare_monitor.main financial 600519 --periods 6
 
@@ -265,6 +271,11 @@ python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100
 
 **定投模式（`--dca`）**：每月首个交易日买入固定金额、持有 N 个交易日后卖出（逐笔独立不复利），
 统计交易笔数、平均/中位数收益率、胜率、最好/最差一笔、平均年化；`--detail` 看逐笔明细。
+
+**多标的对比（`--compare`）**：同参数跑多个标的的定投统计并列表对比（市场按代码位数自动推断）。
+
+**可视化（`--chart`）**：单笔回测生成 HTML——K 线图（ECharts，涨红跌绿）+ 买卖点标注 +
+区间收益大字，成交量高亮持有区间；输出到 `output/backtest-{code}-{date}-{hold}.html`。
 
 ## 历史数据分析（analyze）
 拉取个股历史 K 线（优先东财 akshare，失败自动降级腾讯 K 线），支持**日 / 周 / 月线**多周期

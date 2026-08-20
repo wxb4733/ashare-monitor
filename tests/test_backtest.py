@@ -135,3 +135,77 @@ def test_dca_insufficient_data():
 
     with _pytest.raises(RuntimeError):
         dca_backtest("600001", "ashare", months=60, hold_days=250, rows=rows)
+
+
+# ---------- 多标的对比与可视化 ----------
+
+def test_dca_compare():
+    from ashare_monitor.backtest import dca_compare
+
+    # 温和涨幅（每月 +5%），保证港股整手 500 股全程买得起
+    def make_slow_rows():
+        rows = []
+        price = 10.0
+        for m in range(30):
+            for d in range(20):
+                rows.append({
+                    "date": f"{2024 + m // 12}-{m % 12 + 1:02d}-{d + 1:02d}",
+                    "open": price * 0.99, "close": price,
+                    "high": price * 1.02, "low": price * 0.98, "volume": 10000.0,
+                })
+            price *= 1.05
+        return rows
+
+    results = dca_compare(
+        ["600001", "01211"],
+        amount=10000, months=12, hold_days=250,
+        rows_map={"600001": make_slow_rows(), "01211": make_slow_rows()},
+    )
+    assert len(results) == 2
+    a, h = results[0], results[1]
+    assert a["code"] == "600001" and a["market"] == "ashare"
+    assert h["code"] == "01211" and h["market"] == "hk"     # 5 位推断港股
+    assert a["trades"] == 12 and h["trades"] == 12
+    assert a["avg_return_pct"] > 0 and "error" not in a
+    assert "error" not in h
+
+
+def test_dca_compare_error_tolerated():
+    from ashare_monitor.backtest import dca_compare
+
+    results = dca_compare(["000001", "999999"], amount=10000, months=12,
+                          hold_days=250, rows_map={"000001": make_monthly_rows()})
+    assert any("error" in r for r in results)   # 无数据的标的不抛异常
+
+
+def test_backtest_chart_data():
+    from ashare_monitor.backtest import backtest_chart_data
+
+    rows = make_rows([10.0] * 5 + [12.0] * 25)
+    data = backtest_chart_data("600001", "ashare", buy_date="2024-01-03",
+                               hold_days=10, amount=10000, rows=rows)
+    assert data["buy"]["x"] == "2024-01-03"
+    assert data["buy"]["y"] == 10.0
+    assert data["sell"]["y"] == 12.0
+    assert data["return_pct"] == pytest.approx(20.0)
+    assert data["buy"]["x"] in data["dates"] and data["sell"]["x"] in data["dates"]
+    assert len(data["kdata"]) == len(data["dates"]) == len(data["volumes"])
+
+
+def test_build_backtest_html():
+    from ashare_monitor.backtest import build_backtest_html
+
+    data = {
+        "title": "600001 回测", "return_pct": 20.0,
+        "dates": ["2024-01-01", "2024-01-02", "2024-01-03"],
+        "kdata": [[10, 10.2, 9.9, 10.3], [10.2, 10.5, 10.1, 10.6], [10.5, 12, 10.4, 12.1]],
+        "volumes": [1000, 1200, 1100],
+        "buy": {"x": "2024-01-01", "y": 10.0},
+        "sell": {"x": "2024-01-03", "y": 12.0},
+    }
+    html = build_backtest_html(data)
+    assert "renderBt" in html
+    assert "candlestick" in html
+    assert "+20.00%" in html
+    assert "B 买" in html and "S 卖" in html
+    assert "不构成投资建议" in html

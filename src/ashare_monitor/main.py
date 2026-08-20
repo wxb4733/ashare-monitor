@@ -840,11 +840,76 @@ def run_history(code: str, market: str | None, config_path: str | None) -> None:
 def run_backtest(code: str, market: str | None, buy_date: str | None,
                  amount: float, holds: str, config_path: str | None,
                  dca: bool = False, months: int = 60,
-                 detail: bool = False) -> None:
-    """回测：单笔（买入日/金额/持有交易日数）或定投（每月买入持有统计）。"""
+                 detail: bool = False, compare: str = "",
+                 chart: bool = False) -> None:
+    """回测：单笔 / 定投 / 多标的对比 / 可视化。"""
     from .backtest import backtest, dca_backtest
 
     market = market or ("hk" if len(code) == 5 else "ashare")
+
+    if compare:
+        codes = [c.strip() for c in compare.split(",") if c.strip()]
+        if code not in codes:
+            codes.insert(0, code)
+        hold = int(holds.split(",")[0])
+        console.print(f"[cyan]定投对比 {codes}：每月买入 {amount:,.0f} 元，"
+                      f"持有 {hold} 交易日，近 {months} 月[/cyan]")
+        try:
+            from .backtest import dca_compare
+
+            results = dca_compare(codes, amount=amount, months=months, hold_days=hold)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]对比失败：{exc}[/red]")
+            return
+        table = Table(title=f"定投对比（持有 {hold} 交易日）")
+        table.add_column("标的", justify="left")
+        table.add_column("笔数", justify="right")
+        table.add_column("平均", justify="right")
+        table.add_column("中位", justify="right")
+        table.add_column("胜率", justify="right")
+        table.add_column("最好", justify="right")
+        table.add_column("最差", justify="right")
+        table.add_column("年化", justify="right")
+        for r in results:
+            if "error" in r:
+                table.add_row(f"{r['code']}({r['market']})", "-", "-", "-", "-",
+                              "-", "-", f"[red]{r['error'][:20]}[/red]")
+                continue
+            def cell(v: float, suffix: str = "%") -> str:
+                style = "red" if v > 0 else ("green" if v < 0 else "")
+                return f"[{style}]{v:+.2f}{suffix}[/{style}]" if style else f"{v:+.2f}{suffix}"
+            table.add_row(
+                f"{r['code']}({r['market']})", str(r["trades"]),
+                cell(r["avg_return_pct"]), cell(r["median_return_pct"]),
+                cell(r["win_rate_pct"]), cell(r["best_pct"]),
+                cell(r["worst_pct"]), cell(r["avg_annualized_pct"]),
+            )
+        console.print(table)
+        print_disclaimer()
+        return
+
+    if chart:
+        hold = int(holds.split(",")[0])
+        console.print(f"[cyan]生成回测可视化 {code}（{market}）："
+                      f"{buy_date or '默认'} 买入，持有 {hold} 交易日[/cyan]")
+        try:
+            from pathlib import Path as _Path
+
+            from .backtest import backtest_chart_data, build_backtest_html
+
+            data = backtest_chart_data(code, market, buy_date=buy_date,
+                                       hold_days=hold, amount=amount)
+            html = build_backtest_html(data)
+            out_dir = _Path("output")
+            out_dir.mkdir(exist_ok=True)
+            name = f"backtest-{code}-{data['buy']['x']}-{hold}.html"
+            out_path = out_dir / name
+            out_path.write_text(html, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]回测可视化失败：{exc}[/red]")
+            return
+        console.print(f"[green]回测可视化已生成: {out_path}[/green]")
+        return
 
     if dca:
         try:
@@ -1033,6 +1098,10 @@ def main() -> None:
                       help="定投模式：每月首个交易日买入固定金额，持有统计")
     p_bt.add_argument("--months", type=int, default=60, help="定投回看月数（默认 60）")
     p_bt.add_argument("--detail", action="store_true", help="定投模式显示逐笔明细")
+    p_bt.add_argument("--compare", default="",
+                      help="多标的定投对比，逗号分隔（如 002594,01211）")
+    p_bt.add_argument("--chart", action="store_true",
+                      help="生成单笔回测 K 线可视化 HTML（含买卖点标注）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
@@ -1077,7 +1146,8 @@ def main() -> None:
     elif args.command == "backtest":
         run_backtest(args.code, args.market, args.buy_date or None,
                      args.amount, args.hold_days, args.config,
-                     dca=args.dca, months=args.months, detail=args.detail)
+                     dca=args.dca, months=args.months, detail=args.detail,
+                     compare=args.compare, chart=args.chart)
     elif args.command == "review":
         run_review(args.date, args.config)
     elif args.command == "scan":
