@@ -7,6 +7,11 @@ watchlist:
     name: "平安银行"
   - code: "300750"   # 宁德时代
     name: "宁德时代"
+  - code: "002594"   # 比亚迪（A 股，深交所）
+    name: "比亚迪"
+  - code: "01211"    # 比亚迪股份（港股）
+    name: "比亚迪股份"
+    market: hk
   # 港股示例（5 位代码，market: hk）：
   # - code: "00700"    # 腾讯控股
   #   name: "腾讯控股"
