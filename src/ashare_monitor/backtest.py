@@ -386,3 +386,112 @@ renderBt("bt-chart", {_json.dumps(js_opts, ensure_ascii=False)});
 </script>
 </body>
 </html>"""
+
+
+def build_compare_report(
+    results: list[dict],
+    amount: float = 10000.0,
+    hold_days: int = 250,
+    months: int = 60,
+    as_of: str | None = None,
+) -> tuple[str, str]:
+    """生成多标的定投对比报告（HTML, Markdown）。results 为 dca_compare 输出。"""
+    from datetime import datetime as _dt
+
+    as_of = as_of or _dt.now().strftime("%Y-%m-%d")
+
+    def _fmt(v, suffix: str = "", nd: int = 1) -> str:
+        return f"{v:.{nd}f}{suffix}" if v is not None else "-"
+
+    def _cls(ret: float | None) -> str:
+        if ret is None:
+            return ""
+        return "up" if ret > 0 else ("down" if ret < 0 else "")
+
+    tr = []
+    md_rows = [
+        "| 标的 | 市场 | 笔数 | 区间 | 平均收益 | 中位数 | 胜率 | 最好 | 最差 | 平均年化 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for r in results:
+        if "error" in r:
+            tr.append(
+                "<tr><td>{}</td><td>{}</td><td colspan=\"8\" "
+                "style=\"text-align:left;color:#e02e24\">{}</td></tr>".format(
+                    r["code"], r["market"], r["error"],
+                )
+            )
+            md_rows.append(f"| {r['code']} | {r['market']} | - | - | - | - | - | - | - | - |（{r['error']}）|")
+            continue
+        style = ("red" if (r["win_rate_pct"] or 0) >= 60 else
+                 ("green" if (r["win_rate_pct"] or 0) <= 40 else ""))
+        win = f"{r['win_rate_pct']:.0f}%"
+        win_cell = f'<span class="{style}">{win}</span>' if style else win
+        tr.append(
+            "<tr>"
+            f"<td>{r['code']}</td><td>{r['market']}</td><td>{r['trades']}</td>"
+            f"<td>{r['period']}</td>"
+            f'<td class="{_cls(r["avg_return_pct"])}">{_fmt(r["avg_return_pct"], "%")}</td>'
+            f'<td>{_fmt(r["median_return_pct"], "%")}</td>'
+            f"<td>{win_cell}</td>"
+            f'<td class="up">{_fmt(r["best_pct"], "%")}</td>'
+            f'<td class="down">{_fmt(r["worst_pct"], "%")}</td>'
+            f'<td>{_fmt(r["avg_annualized_pct"], "%")}</td>'
+            "</tr>"
+        )
+        md_rows.append(
+            f"| {r['code']} | {r['market']} | {r['trades']} | {r['period']} | "
+            f"{_fmt(r['avg_return_pct'], '%')} | {_fmt(r['median_return_pct'], '%')} | "
+            f"{r['win_rate_pct']:.0f}% | {_fmt(r['best_pct'], '%')} | "
+            f"{_fmt(r['worst_pct'], '%')} | {_fmt(r['avg_annualized_pct'], '%')} |"
+        )
+
+    css = """
+body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f7f8fa; color: #1f2329; margin: 0; }
+.container { max-width: 1080px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.meta { color: #86909c; font-size: 12px; margin-bottom: 16px; }
+.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #f0f0f0; }
+th { background: #fafafa; color: #666; font-weight: 600; }
+th:first-child, td:first-child { text-align: left; }
+.up { color: #e02e24; } .down { color: #00a870; }
+.footer { color: #86909c; font-size: 12px; text-align: center; padding: 16px 0 8px; }
+"""
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>多标的定投对比 {as_of}</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="container">
+<h1>多标的定投对比报告</h1>
+<div class="meta">{as_of} · 每月首个交易日买入 {amount:,.0f} 元，持有 {hold_days} 个交易日卖出 ·
+近 {months} 个月 · 数据来源：本地回填 K 线 · 涨红跌绿</div>
+<div class="card"><table>
+<tr><th>标的</th><th>市场</th><th>笔数</th><th>区间</th><th>平均收益</th><th>中位数</th><th>胜率</th><th>最好</th><th>最差</th><th>平均年化</th></tr>
+{''.join(tr)}
+</table></div>
+<div class="footer">历史价格模拟，未计佣金税费，不构成投资建议。</div>
+</div>
+</body>
+</html>"""
+
+    md = f"""---
+title: 多标的定投对比 {as_of}
+date: {as_of}
+tags: [回测, 定投, 对比]
+generated_at: {_dt.now():%Y-%m-%d %H:%M:%S}
+---
+# 多标的定投对比报告 {as_of}
+
+每月首个交易日买入 {amount:,.0f} 元，持有 {hold_days} 个交易日卖出，近 {months} 个月。
+
+{chr(10).join(md_rows)}
+
+> 历史价格模拟，未计佣金税费，不构成投资建议。
+"""
+    return html, md

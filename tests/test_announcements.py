@@ -85,3 +85,43 @@ def test_parse_research_reports():
 def test_parse_research_reports_empty():
     assert parse_research_reports({"data": []}) == []
     assert parse_research_reports({}) == []
+
+
+# ---------- 重大事项识别 ----------
+
+def test_is_major_keywords():
+    from ashare_monitor.announcements import is_major
+
+    majors = [
+        "2026年半年度业绩预告", "关于2025年度利润分配预案的公告",
+        "重大资产重组停牌公告", "2026年第一季度报告", "股东减持股份计划",
+        "关于收到立案告知书的公告", "回购公司股份方案", "可转换公司债券发行",
+    ]
+    normals = [
+        "关于日常关联交易的公告", "投资者关系活动记录表",
+        "关于使用闲置资金理财的公告", "公司章程修订说明",
+    ]
+    for t in majors:
+        assert is_major(t), t
+    for t in normals:
+        assert not is_major(t), t
+
+
+def test_build_html_major_announcement_first():
+    from ashare_monitor.review import build_html
+
+    news = [
+        {"kind": "ann", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-18", "title": "日常关联交易公告", "url": "https://x/1"},
+        {"kind": "ann", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-19", "title": "2026年半年度业绩预告", "url": "https://x/2"},
+        {"kind": "report", "code": "600519", "name": "贵州茅台",
+         "date": "2026-08-18", "title": "研报标题", "url": "https://x/3", "org": "山西证券"},
+    ]
+    html = build_html("2026-08-20", [], [], [], news_rows=news)
+    # 重大事项标红 + 置顶（业绩预告应出现在日常公告之前）
+    assert "★重大·公告" in html
+    assert "color:#e02e24;font-weight:600\">2026年半年度业绩预告" in html
+    assert html.index("2026年半年度业绩预告") < html.index("日常关联交易公告")
+    # 研报不受影响
+    assert "山西证券" in html

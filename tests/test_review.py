@@ -473,7 +473,7 @@ def test_backfill_reviews(tmp_path, monkeypatch):
     # 财报拉取替换为空，避免联网
     monkeypatch.setattr(
         "ashare_monitor.fundamentals.fetch_financials",
-        lambda code, periods=6: [],
+        lambda code, periods=6, market="ashare": [],
     )
 
     watchlist = [
@@ -555,7 +555,7 @@ def test_backfill_reviews_financials_by_date(tmp_path, monkeypatch):
     conn.close()
     monkeypatch.setattr(
         "ashare_monitor.fundamentals.fetch_financials",
-        lambda code, periods=6: [],
+        lambda code, periods=6, market="ashare": [],
     )
 
     cfg = type("Cfg", (), {

@@ -125,7 +125,10 @@ def parse_financials_hk(data: list[dict]) -> list[FinancialPeriod]:
 
 
 def _fetch_financials_hk_ak(code: str, periods: int) -> list[FinancialPeriod]:
-    import akshare as ak
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise RuntimeError(f"akshare 未安装（可选依赖）: {exc}")
 
     df = ak.stock_financial_hk_analysis_indicator_em(code, indicator="年度")
     if df is None or df.empty:
@@ -200,7 +203,10 @@ def parse_financials(data: list[dict]) -> list[FinancialPeriod]:
 
 
 def _fetch_financials_ak(code: str, periods: int) -> list[FinancialPeriod]:
-    import akshare as ak
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise RuntimeError(f"akshare 未安装（可选依赖）: {exc}")
 
     df = ak.stock_financial_abstract(symbol=code[-6:])
     if df is None or df.empty:

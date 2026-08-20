@@ -75,6 +75,10 @@ def fetch_history(
     if market == "hk":
         df = _fetch_history_tencent_hk(code, days, adjust, period)
         return df.tail(days).reset_index(drop=True), _lookup_hk_name(code)
+    # 指数代码（sh/sz/bj 前缀）直连腾讯，不依赖 akshare
+    if code[:2].lower() in ("sh", "sz", "bj", "zz"):
+        df = _fetch_history_tencent(code, days, adjust, period)
+        return df.tail(days).reset_index(drop=True), _lookup_name(code)
     try:
         return _fetch_history_akshare(code, days, adjust, period)
     except Exception as exc:  # noqa: BLE001 - 单源失败自动降级
@@ -163,7 +167,10 @@ def _lookup_hk_name(code: str) -> str:
 def _fetch_history_akshare(
     code: str, days: int, adjust: str, period: str = "daily"
 ) -> tuple[pd.DataFrame, str]:
-    import akshare as ak
+    try:
+        import akshare as ak
+    except ImportError as exc:  # akshare 为可选依赖，缺失走腾讯直连
+        raise RuntimeError(f"akshare 未安装（可选依赖），改用直连数据源: {exc}")
 
     end = datetime.now()
     # 按交易日约为自然日 0.7 倍估算，多取余量（周线/月线取整倍数更宽裕）

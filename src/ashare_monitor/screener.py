@@ -69,7 +69,10 @@ def fetch_market_snapshot() -> pd.DataFrame:
 
 
 def _fetch_eastmoney_snapshot() -> pd.DataFrame:
-    import akshare as ak
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise RuntimeError(f"akshare 未安装（可选依赖）: {exc}")
 
     df = ak.stock_zh_a_spot_em()
     df["代码"] = df["代码"].astype(str).str[-6:]

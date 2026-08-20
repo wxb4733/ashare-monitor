@@ -209,3 +209,22 @@ def test_build_backtest_html():
     assert "+20.00%" in html
     assert "B 买" in html and "S 卖" in html
     assert "不构成投资建议" in html
+
+
+def test_build_compare_report():
+    from ashare_monitor.backtest import build_compare_report
+
+    results = [
+        {"code": "002594", "market": "ashare", "trades": 60,
+         "period": "2021-08-20 ~ 2026-08-20", "avg_return_pct": 68.71,
+         "median_return_pct": 21.29, "win_rate_pct": 65.0,
+         "best_pct": 701.76, "worst_pct": -77.5, "avg_annualized_pct": 21.5},
+        {"code": "01211", "market": "hk", "error": "数据不足"},
+    ]
+    html, md = build_compare_report(results, as_of="2026-08-20")
+    assert "多标的定投对比报告" in html
+    assert "002594" in html and "68.7%" in html and "65%" in html
+    assert "数据不足" in html
+    assert "不构成投资建议" in html
+    assert md.startswith("---\ntitle: 多标的定投对比")
+    assert "| 002594 | ashare | 60 |" in md

@@ -140,18 +140,28 @@ def _pct_html(value: float) -> str:
     return f'<span class="{cls}">{value:+.2f}%</span>'
 
 
+def _is_hk_code(code: str) -> bool:
+    """按代码判断是否港股（5 位纯数字）。用于币种/单位标注。"""
+    return len(code) == 5 and code.isdigit()
+
+
 def _quote_rows(quotes: list[Quote]) -> str:
     rows = []
     for q in quotes:
         amp = q.amplitude
+        hk = _is_hk_code(q.code)
+        volume_unit = "股" if hk else "手"
+        turnover = "-" if q.turnover is None else (
+            f"{q.turnover / 1e8:.2f}亿港元" if hk else f"{q.turnover / 1e8:.2f}亿"
+        )
         rows.append(
             "<tr>"
             f"<td>{q.code}</td><td>{q.name}</td>"
             f"<td>{q.price:.2f}</td>"
             f"<td>{_pct_html(q.change_pct)}</td>"
             f"<td>{f'{amp:.2f}%' if amp is not None else '-'}</td>"
-            f"<td>{q.volume:,.0f}</td>"
-            f"<td>{f'{q.turnover / 1e8:.2f}亿' if q.turnover is not None else '-'}</td>"
+            f"<td>{q.volume:,.0f}{volume_unit}</td>"
+            f"<td>{turnover}</td>"
             "</tr>"
         )
     return "\n".join(rows)
@@ -257,7 +267,7 @@ def build_html(
     add_section("自选股当日表现", f"""
 <div class="card">
 <table>
-<tr><th>代码</th><th>名称</th><th>收盘/最新</th><th>涨跌幅</th><th>振幅</th><th>成交量(手)</th><th>成交额</th></tr>
+<tr><th>代码</th><th>名称</th><th>收盘/最新</th><th>涨跌幅</th><th>振幅</th><th>成交量</th><th>成交额</th></tr>
 {_quote_rows(quotes)}
 </table>
 </div>""")
@@ -277,9 +287,10 @@ def build_html(
                 return f"{v:.{nd}f}" if v is not None else "-"
             rev = _pct_html(r["revenue_yoy"]) if r["revenue_yoy"] is not None else "-"
             prof = _pct_html(r["profit_yoy"]) if r["profit_yoy"] is not None else "-"
+            currency = "（港元）" if _is_hk_code(str(r["code"])) else ""
             rows.append(
                 "<tr>"
-                f"<td>{r['name']}({r['code']})</td>"
+                f"<td>{r['name']}({r['code']}){currency}</td>"
                 f"<td>{r['report_date']}</td>"
                 f"<td>{_f(r['revenue'])}</td><td>{rev}</td>"
                 f"<td>{_f(r['net_profit'])}</td><td>{prof}</td>"
@@ -296,15 +307,32 @@ def build_html(
 </div>""")
 
     if news_rows:
+        from .announcements import is_major
+
+        # 重大事项置顶（其余按日期倒序）
+        ordered = sorted(
+            news_rows,
+            key=lambda r: (not (r["kind"] == "ann" and is_major(r["title"])), r["date"]),
+        )
         rows = []
-        for r in news_rows:
+        for r in ordered:
             kind = "公告" if r["kind"] == "ann" else "研报"
             src = r.get("org") or ""
+            major = r["kind"] == "ann" and is_major(r["title"])
+            kind_tag = (
+                f'<span class="tag" style="background:#fde8e8;color:#e02e24">'
+                f'★重大·{kind}</span>'
+                if major else f'<span class="tag">{kind}</span>'
+            )
+            title_html = (
+                f'<span style="color:#e02e24;font-weight:600">{r["title"]}</span>'
+                if major else r["title"]
+            )
             rows.append(
                 "<tr>"
                 f"<td>{r['date']}</td><td>{r['name']}({r['code']})</td>"
-                f'<td><span class="tag">{kind}</span></td>'
-                f"<td style=\"text-align:left\">{r['title']}"
+                f"<td>{kind_tag}</td>"
+                f"<td style=\"text-align:left\">{title_html}"
                 f"{f'<div class=\"profile\">{src}</div>' if src else ''}</td>"
                 f'<td><a href="{r["url"]}">原文</a></td>'
                 "</tr>"
@@ -972,7 +1000,9 @@ def build_review_markdown(
         lines.append("")
         lines.append(_md_table(
             ["标的", "报告期", "营收(亿)", "营收同比", "净利(亿)", "净利同比", "ROE", "毛利率"],
-            [[f"{r['name']}({r['code']})", r["report_date"],
+            [[f"{r['name']}({r['code']})"
+              + ("（港元）" if _is_hk_code(str(r["code"])) else ""),
+              r["report_date"],
               _fmt(r["revenue"]), f"{r['revenue_yoy']:+.1f}%" if r["revenue_yoy"] is not None else "-",
               _fmt(r["net_profit"]), f"{r['profit_yoy']:+.1f}%" if r["profit_yoy"] is not None else "-",
               _fmt(r["roe"], "%", 1), _fmt(r["gross_margin"], "%", 1)]
@@ -982,12 +1012,20 @@ def build_review_markdown(
 
     # 公告与研报
     if news_rows:
-        lines.append("## 公告与研报")
+        from .announcements import is_major
+
+        lines.append("## 公告与研报（★=重大事项）")
         lines.append("")
-        for r in news_rows:
+        ordered = sorted(
+            news_rows,
+            key=lambda r: (not (r["kind"] == "ann" and is_major(r["title"])), r["date"]),
+        )
+        for r in ordered:
             kind = "公告" if r["kind"] == "ann" else "研报"
             extra = f"（{r['org']}）" if r.get("org") else ""
-            lines.append(f"- [{kind}] {r['date']} **{r['title']}**{extra} — {r['url']}")
+            major = r["kind"] == "ann" and is_major(r["title"])
+            mark = "★" if major else ""
+            lines.append(f"- [{mark}{kind}] {r['date']} **{r['title']}**{extra} — {r['url']}")
         lines.append("")
 
     # 近期 IPO

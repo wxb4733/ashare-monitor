@@ -66,11 +66,18 @@ _HOME_MD = """# A 股监控知识库
 <!-- IPO_INDEX_START -->
 <!-- IPO_INDEX_END -->
 
+## 策略验证索引
+
+<!-- BACKTEST_INDEX_START -->
+<!-- BACKTEST_INDEX_END -->
+
 ## 说明
 
 - 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘
 - 周 / 月 / 年报：`python -m ashare_monitor.main report --weekly|--monthly|--yearly`
 - IPO 分析报告：`python -m ashare_monitor.main ipo --report`
+- 信号命中率验证：`python -m ashare_monitor.main verify 002594 --report`
+- 多标的定投对比：`python -m ashare_monitor.main backtest 002594 --compare 002594,01211 --chart`
 - 复盘包含：大盘指数、技术指标、当日表现、预警、财报速览、公告与研报、近期 IPO
 - 汇总报告包含：区间行情表现、预警统计、每日复盘记录、预警明细
 - K 线图（ECharts）以链接指向 HTML 报告
@@ -98,6 +105,7 @@ _VAULT_GITIGNORE = """# Obsidian 本地状态（不入库）
 A股复盘/
 汇总报告/
 IPO分析/
+策略验证/
 附件/
 """
 
@@ -192,6 +200,22 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
         )
     new_ipo_index = f"<!-- IPO_INDEX_START -->\n{ipo_links}\n<!-- IPO_INDEX_END -->"
 
+    # 策略验证报告索引（信号命中率 + 多标的对比）
+    bt_reports = sorted(
+        (root / "策略验证").glob("*.md"),
+        key=lambda p: p.name,
+    )
+    if not bt_reports:
+        bt_links = "（暂无策略验证报告，运行 `verify --report` / `backtest --compare --chart` 生成）"
+    else:
+        bt_links = "\n".join(
+            f"- [[策略验证/{r.stem}|"
+            f"{('命中率' if r.name.startswith('verify') else '定投对比')} "
+            f"{re.search(r'\d{4}-\d{2}-\d{2}', r.name).group(0)}]]"
+            for r in bt_reports[-12:]
+        )
+    new_bt_index = f"<!-- BACKTEST_INDEX_START -->\n{bt_links}\n<!-- BACKTEST_INDEX_END -->"
+
     text = home.read_text(encoding="utf-8")
 
     def _replace(text: str, marker: str, new: str) -> str:
@@ -214,6 +238,7 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
     text = _replace(text, "<!-- INDEX_START -->", new_index)
     text = _replace(text, "<!-- REPORT_INDEX_START -->", new_summary_index)
     text = _replace(text, "<!-- IPO_INDEX_START -->", new_ipo_index)
+    text = _replace(text, "<!-- BACKTEST_INDEX_START -->", new_bt_index)
     home.write_text(text, encoding="utf-8")
     logger.info("知识库索引已更新: %s", home)
     return home

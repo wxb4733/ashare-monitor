@@ -472,14 +472,19 @@ def _fetch_history_for(code: str, market: str, days: int):
 
 
 def _render_news_tables(code: str, anns: list[dict], reports: list[dict]) -> None:
-    """渲染公告/研报表。"""
-    console.print(f"[bold cyan]{code} 最新公告（{len(anns)} 条）[/bold cyan]")
+    """渲染公告/研报表（重大事项标红 ★）。"""
+    from .announcements import is_major
+
+    console.print(f"[bold cyan]{code} 最新公告（{len(anns)} 条，★=重大事项）[/bold cyan]")
     ann_table = Table()
     ann_table.add_column("日期", justify="left")
     ann_table.add_column("标题", justify="left", overflow="fold")
     ann_table.add_column("链接", justify="left", overflow="fold")
     for a in anns:
-        ann_table.add_row(a["date"], a["title"], a["url"])
+        title = a["title"]
+        if is_major(title):
+            title = f"[bold red]★ {title}[/bold red]"
+        ann_table.add_row(a["date"], title, a["url"])
     console.print(ann_table or "暂无公告")
 
     console.print(f"[bold cyan]{code} 近期研报（{len(reports)} 条）[/bold cyan]")
@@ -977,6 +982,28 @@ def run_backtest(code: str, market: str | None, buy_date: str | None,
             )
         console.print(table)
         print_disclaimer()
+        if chart:  # --report 复用 --chart 开关输出对比报告
+            from pathlib import Path
+
+            from .backtest import build_compare_report
+
+            html, md = build_compare_report(
+                results, amount=amount, hold_days=hold, months=months,
+            )
+            out_dir = Path("output")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            today = datetime.now().strftime("%Y-%m-%d")
+            out_path = out_dir / f"backtest-compare-{today}.html"
+            out_path.write_text(html, encoding="utf-8")
+            console.print(f"[green]定投对比报告已生成: {out_path}[/green]")
+            cfg = load_config(config_path)
+            vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+            if vault:
+                vdir = Path(vault) / "策略验证"
+                vdir.mkdir(parents=True, exist_ok=True)
+                md_path = vdir / f"backtest-compare-{today}.md"
+                md_path.write_text(md, encoding="utf-8")
+                console.print(f"[dim]Obsidian: {md_path}[/dim]")
         return
 
     if chart:
@@ -1103,6 +1130,68 @@ def run_backtest(code: str, market: str | None, buy_date: str | None,
     print_disclaimer()
 
 
+def run_verify(code: str, market: str, rule: str | None, days: int,
+               forward: int, config_path: str | None,
+               report: bool = False) -> None:
+    """信号命中率验证：基于回填 K 线回测价格规则的触发后表现。"""
+    from pathlib import Path
+
+    from .verify import RULES, build_verify_report, run_verify
+
+    market = market or ("hk" if len(code) == 5 else "ashare")
+    console.print(f"[cyan]正在验证 {code}（{market}）规则命中率"
+                  f"（近 {days} 日，触发后 {forward} 交易日）…[/cyan]")
+    try:
+        results = run_verify(code, market, rule, days, forward)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]命中率验证失败：{exc}[/red]")
+        return
+
+    table = Table(title=f"{code} 信号命中率（{forward} 交易日观察）")
+    table.add_column("规则", justify="left")
+    table.add_column("信号数", justify="right")
+    table.add_column("方向命中率", justify="right")
+    table.add_column("平均收益", justify="right")
+    table.add_column("中位数", justify="right")
+    table.add_column("最好", justify="right")
+    table.add_column("最差", justify="right")
+    for r in results:
+        style = ("red" if (r["win_rate"] or 0) >= 60 else
+                 ("green" if (r["win_rate"] or 0) <= 40 else ""))
+        win = f"{r['win_rate']:.1f}%" if r["win_rate"] is not None else "-"
+        win_cell = f"[{style}]{win}[/{style}]" if style else win
+        table.add_row(
+            r["label"], str(r["signals"]), win_cell,
+            f"{r['avg_return']:+.2f}%" if r["avg_return"] is not None else "-",
+            f"{r['median_return']:+.2f}%" if r["median_return"] is not None else "-",
+            f"{r['best']:+.2f}%" if r["best"] is not None else "-",
+            f"{r['worst']:+.2f}%" if r["worst"] is not None else "-",
+        )
+    console.print(table)
+    rule_hint = ", ".join(
+        "{}={}".format(k, v["label"]) for k, v in RULES.items()
+    )
+    console.print(f"[dim]可用规则: {rule_hint}[/dim]")
+    print_disclaimer()
+
+    if report:
+        html, md = build_verify_report(code, market, results)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"verify-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]命中率验证报告已生成: {out_path}[/green]")
+        cfg = load_config(config_path)
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "策略验证"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"verify-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_report(period: str, date: str | None, config_path: str | None) -> None:
     from .review import generate_period_report
 
@@ -1210,6 +1299,16 @@ def main() -> None:
     p_report.add_argument("--monthly", action="store_true", help="月报")
     p_report.add_argument("--yearly", action="store_true", help="年报（近 365 天）")
     p_report.add_argument("--date", help="周期结束日期 YYYY-MM-DD，默认今天")
+    p_verify = sub.add_parser("verify", help="信号命中率验证（基于回填 K 线回测）")
+    p_verify.add_argument("code", help="证券代码，如 002594 / 01211")
+    p_verify.add_argument("--market", choices=["ashare", "hk"],
+                          help="市场（缺省按代码位数推断）")
+    p_verify.add_argument("--rule", help="指定规则（缺省全部），如 up_break")
+    p_verify.add_argument("--days", type=int, default=500, help="回看交易日数（默认 500）")
+    p_verify.add_argument("--forward", type=int, default=5,
+                          help="触发后观察交易日数（默认 5）")
+    p_verify.add_argument("--report", action="store_true",
+                          help="生成命中率验证报告（HTML + Obsidian）")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -1257,6 +1356,9 @@ def main() -> None:
     elif args.command == "report":
         period = "yearly" if args.yearly else ("monthly" if args.monthly else "weekly")
         run_report(period, args.date, args.config)
+    elif args.command == "verify":
+        run_verify(args.code, args.market, args.rule, args.days,
+                   args.forward, args.config, report=args.report)
     else:
         run_monitor(args.config)
 

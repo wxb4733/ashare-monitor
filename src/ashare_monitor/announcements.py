@@ -86,7 +86,10 @@ def parse_announcements(data: dict) -> list[dict]:
 
 
 def _fetch_announcements_ak(code: str, limit: int) -> list[dict]:
-    import akshare as ak
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise RuntimeError(f"akshare 未安装（可选依赖）: {exc}")
 
     df = ak.stock_notice_report(symbol="全部", date=datetime.now().strftime("%Y%m%d"))
     if df is None or df.empty:
@@ -147,7 +150,10 @@ def parse_research_reports(data: dict) -> list[dict]:
 
 
 def _fetch_reports_ak(code: str, limit: int) -> list[dict]:
-    import akshare as ak
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise RuntimeError(f"akshare 未安装（可选依赖）: {exc}")
 
     df = ak.stock_research_report_em(symbol=code[-6:])
     if df is None or df.empty:
@@ -173,3 +179,30 @@ def _safe_float(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+# ---------- 重大事项识别 ----------
+
+# 高影响公告关键词（命中即视为重大事项，复盘/news 中标红置顶）
+MAJOR_KEYWORDS = (
+    # 业绩类
+    "业绩预告", "业绩快报", "业绩预增", "业绩预减", "业绩预亏", "扭亏",
+    "业绩说明会", "业绩交流",
+    # 分红与股本
+    "分红", "派息", "利润分配", "转增", "送股", "股本变动",
+    # 重组并购
+    "重组", "收购", "并购", "重大资产", "股权转让", "要约收购", "出售资产",
+    # 融资
+    "非公开发行", "定增", "配股", "可转债", "可转换", "发债", "中期票据",
+    # 治理与风险
+    "停牌", "复牌", "立案", "处罚", "违规", "警示函", "问询函", "监管函",
+    "减持", "增持", "回购", "股权激励", "重大合同", "中标", "更名",
+    "破产", "清算", "退市", "风险警示", "ST", "解禁", "诉讼", "仲裁",
+    # 定期报告
+    "年报", "半年报", "季度报告", "一季报", "三季报", "定期报告",
+)
+
+
+def is_major(title: str) -> bool:
+    """判断公告标题是否属于重大事项。"""
+    return any(kw in title for kw in MAJOR_KEYWORDS)
