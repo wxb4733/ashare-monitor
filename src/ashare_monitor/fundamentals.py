@@ -1,11 +1,11 @@
 """财报（财务业绩）分析模块。
 
 数据源（自动降级）：
-1. 东方财富业绩报表接口 datacenter-web.eastmoney.com（RPT_LICO_FN_CPD，直连）
-2. akshare 兜底（stock_financial_abstract）
+1. A 股：东方财富业绩报表接口 datacenter-web.eastmoney.com（RPT_LICO_FN_CPD，直连）→ akshare 兜底
+2. 港股：东方财富港股财务指标（RPT_HKF10_FN_MAININDICATOR，年度口径，单位港元）→ akshare 兜底
 
 输出最近 N 个报告期的主要财务指标与简单趋势评判。
-仅支持 A 股。解析函数与网络解耦，便于测试。
+解析函数与网络解耦，便于测试。
 
 声明：财报分析为投资参考信息，不构成投资建议（见 signals.DISCLAIMER）。
 """
@@ -28,6 +28,8 @@ _HEADERS = {
 }
 
 _FIN_API = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+# 港股财务指标（datacenter.eastmoney.com/securities 域）
+_FIN_API_HK = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 
 
 @dataclass
@@ -49,13 +51,103 @@ class FinancialPeriod:
         return None  # 占位，趋势由 summarize 在完整序列上判断
 
 
-def fetch_financials(code: str, periods: int = 6) -> list[FinancialPeriod]:
-    """拉取个股最近 N 个报告期财务指标（东财 → akshare 降级）。"""
+def fetch_financials(code: str, periods: int = 6, market: str = "ashare") -> list[FinancialPeriod]:
+    """拉取个股最近 N 个报告期财务指标。
+
+    :param market: ashare（东财业绩报表 → akshare 降级）/ hk（东财港股财务指标）
+    """
+    if market == "hk":
+        try:
+            return _fetch_financials_hk(code, periods)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("东财港股财报接口失败，降级 akshare: %s", exc)
+            return _fetch_financials_hk_ak(code, periods)
     try:
         return _fetch_financials_em(code, periods)
     except Exception as exc:  # noqa: BLE001
         logger.warning("东财财报接口失败，降级 akshare: %s", exc)
         return _fetch_financials_ak(code, periods)
+
+
+def _fetch_financials_hk(code: str, periods: int) -> list[FinancialPeriod]:
+    """东财港股财务指标（RPT_HKF10_FN_MAININDICATOR，年度口径）。
+
+    字段单位：营收/净利为港元原值（解析时转亿）、同比/比率/ROE 为 %、EPS 为元。
+    """
+    resp = requests.get(
+        _FIN_API_HK,
+        params={
+            "reportName": "RPT_HKF10_FN_MAININDICATOR",
+            "columns": "HKF10_FN_MAININDICATOR",
+            "quoteColumns": "",
+            "pageNumber": "1", "pageSize": str(max(periods, 1)),
+            "sortTypes": "-1", "sortColumns": "STD_REPORT_DATE",
+            "filter": f'(SECUCODE="{code}.HK")(DATE_TYPE_CODE="001")',
+            "source": "F10", "client": "PC",
+        },
+        headers=_HEADERS, timeout=12,
+    )
+    resp.raise_for_status()
+    data = (resp.json().get("result") or {}).get("data") or []
+    periods_list = parse_financials_hk(data)
+    if not periods_list:
+        raise RuntimeError(f"未获取到 {code} 的港股财报数据")
+    return periods_list
+
+
+def parse_financials_hk(data: list[dict]) -> list[FinancialPeriod]:
+    """解析东财港股财务指标 JSON 为 FinancialPeriod（倒序：最新在前）。
+
+    港股无归母净利口径（HOLDER_PROFIT 为股东应占溢利），净利率用接口字段，缺失时按 净利/营收 计算。
+    """
+    result = []
+    for it in data:
+        revenue = _to_float(it.get("OPERATE_INCOME"))
+        net_profit = _to_float(it.get("HOLDER_PROFIT"))
+        revenue_yi = revenue / 1e8 if revenue is not None else None
+        profit_yi = net_profit / 1e8 if net_profit is not None else None
+        net_margin = _to_float(it.get("NET_PROFIT_RATIO"))
+        if net_margin is None and net_profit is not None and revenue:
+            net_margin = round(net_profit / revenue * 100, 2)
+        result.append(FinancialPeriod(
+            report_date=str(it.get("REPORT_DATE", ""))[:10],
+            revenue=revenue_yi,               # 亿港元
+            net_profit=profit_yi,             # 亿港元
+            revenue_yoy=_to_float(it.get("OPERATE_INCOME_YOY")),
+            profit_yoy=_to_float(it.get("HOLDER_PROFIT_YOY")),
+            roe=_to_float(it.get("ROE_AVG")),
+            gross_margin=_to_float(it.get("GROSS_PROFIT_RATIO")),
+            net_margin=net_margin,
+            eps=_to_float(it.get("BASIC_EPS")),
+            ocf_per_share=_to_float(it.get("PER_NETCASH_OPERATE")),
+        ))
+    return result
+
+
+def _fetch_financials_hk_ak(code: str, periods: int) -> list[FinancialPeriod]:
+    import akshare as ak
+
+    df = ak.stock_financial_hk_analysis_indicator_em(code, indicator="年度")
+    if df is None or df.empty:
+        raise RuntimeError("akshare 港股财报为空")
+    items = []
+    for _, r in df.head(periods).iterrows():
+        revenue = _to_float(r.get("OPERATE_INCOME"))
+        net_profit = _to_float(r.get("HOLDER_PROFIT"))
+        net_margin = _to_float(r.get("NET_PROFIT_RATIO"))
+        items.append(FinancialPeriod(
+            report_date=str(r.get("REPORT_DATE", ""))[:10],
+            revenue=revenue / 1e8 if revenue is not None else None,
+            net_profit=net_profit / 1e8 if net_profit is not None else None,
+            revenue_yoy=_to_float(r.get("OPERATE_INCOME_YOY")),
+            profit_yoy=_to_float(r.get("HOLDER_PROFIT_YOY")),
+            roe=_to_float(r.get("ROE_AVG")),
+            gross_margin=_to_float(r.get("GROSS_PROFIT_RATIO")),
+            net_margin=net_margin,
+            eps=_to_float(r.get("BASIC_EPS")),
+            ocf_per_share=_to_float(r.get("PER_NETCASH_OPERATE")),
+        ))
+    return items
 
 
 def _fetch_financials_em(code: str, periods: int) -> list[FinancialPeriod]:

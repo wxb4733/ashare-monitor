@@ -108,3 +108,51 @@ def test_summarize_three_negative():
 
 def test_summarize_empty():
     assert summarize([]) == []
+
+
+# ---------- 港股财报 ----------
+
+def test_parse_financials_hk():
+    from ashare_monitor.fundamentals import parse_financials_hk
+
+    data = [{
+        "REPORT_DATE": "2025-12-31 00:00:00",
+        "OPERATE_INCOME": 803964958000,       # 港元原值 → 8039.65 亿
+        "OPERATE_INCOME_YOY": 3.456752,
+        "HOLDER_PROFIT": 32619022000,         # → 326.19 亿
+        "HOLDER_PROFIT_YOY": -18.967701,
+        "GROSS_PROFIT_RATIO": 17.744529,
+        "NET_PROFIT_RATIO": 4.199282,
+        "ROE_AVG": 15.117997,
+        "BASIC_EPS": 3.58,
+        "PER_NETCASH_OPERATE": 6.486154,
+    }]
+    ps = parse_financials_hk(data)
+    assert len(ps) == 1
+    p = ps[0]
+    assert p.report_date == "2025-12-31"
+    assert p.revenue == pytest.approx(8039.65)
+    assert p.net_profit == pytest.approx(326.19)
+    assert p.revenue_yoy == pytest.approx(3.456752)
+    assert p.profit_yoy == pytest.approx(-18.967701)
+    assert p.gross_margin == pytest.approx(17.744529)
+    assert p.roe == pytest.approx(15.117997)
+    assert p.eps == pytest.approx(3.58)
+    assert p.ocf_per_share == pytest.approx(6.486154)
+    # 净利率：有接口字段直接用，无则按 净利/营收 计算
+    assert p.net_margin == pytest.approx(4.199282)
+
+
+def test_parse_financials_hk_net_margin_computed():
+    from ashare_monitor.fundamentals import parse_financials_hk
+
+    data = [{
+        "REPORT_DATE": "2024-12-31 00:00:00",
+        "OPERATE_INCOME": 100000000000.0,     # 1000 亿
+        "HOLDER_PROFIT": 10000000000.0,       # 100 亿
+        # NET_PROFIT_RATIO 缺失 → 用 净利/营收 计算 = 10%
+    }]
+    p = parse_financials_hk(data)[0]
+    assert p.net_margin == pytest.approx(10.0)
+    assert p.revenue == pytest.approx(1000.0)
+    assert p.profit_yoy is None

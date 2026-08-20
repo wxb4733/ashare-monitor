@@ -181,38 +181,66 @@ def backfill_news(code: str, years: int = 30) -> dict:
     return {"announcements": ann_new, "reports": rep_new}
 
 
-def backfill_financial(code: str) -> tuple[int, int]:
+def backfill_financial(code: str, market: str = "ashare") -> tuple[int, int]:
     """回填财报全量页。
 
+    :param market: ashare（东财业绩报表分页）/ hk（东财港股财务指标，年度）
     :return: (本次新增条数, 库内总条数)
     """
-    from .fundamentals import _FIN_API, _HEADERS, parse_financials
+    from .fundamentals import (
+        _FIN_API,
+        _FIN_API_HK,
+        _HEADERS,
+        parse_financials,
+        parse_financials_hk,
+    )
     import requests
 
     code6 = code[-6:]
     new = 0
-    for page in range(1, 10):
+    if market == "hk":
         resp = requests.get(
-            _FIN_API,
+            _FIN_API_HK,
             params={
-                "reportName": "RPT_LICO_FN_CPD",
-                "columns": "ALL",
-                "filter": f'(SECURITY_CODE="{code6}")',
-                "pageSize": 100, "pageNumber": page,
-                "sortColumns": "REPORTDATE", "sortTypes": -1,
+                "reportName": "RPT_HKF10_FN_MAININDICATOR",
+                "columns": "HKF10_FN_MAININDICATOR",
+                "quoteColumns": "",
+                "pageNumber": "1", "pageSize": "20",
+                "sortTypes": "-1", "sortColumns": "STD_REPORT_DATE",
+                "filter": f'(SECUCODE="{code6}.HK")(DATE_TYPE_CODE="001")',
+                "source": "F10", "client": "PC",
             },
             headers=_HEADERS, timeout=15,
         )
         resp.raise_for_status()
-        items = parse_financials(
+        items = parse_financials_hk(
             (resp.json().get("result") or {}).get("data") or []
         )
-        if not items:
-            break
-        n, _ = record_financials(items, code)
-        new += n
-        if len(items) < 100:
-            break
+        if items:
+            new, _ = record_financials(items, code)
+    else:
+        for page in range(1, 10):
+            resp = requests.get(
+                _FIN_API,
+                params={
+                    "reportName": "RPT_LICO_FN_CPD",
+                    "columns": "ALL",
+                    "filter": f'(SECURITY_CODE="{code6}")',
+                    "pageSize": 100, "pageNumber": page,
+                    "sortColumns": "REPORTDATE", "sortTypes": -1,
+                },
+                headers=_HEADERS, timeout=15,
+            )
+            resp.raise_for_status()
+            items = parse_financials(
+                (resp.json().get("result") or {}).get("data") or []
+            )
+            if not items:
+                break
+            n, _ = record_financials(items, code)
+            new += n
+            if len(items) < 100:
+                break
 
     from .storage import load_financials
 
@@ -230,7 +258,7 @@ def backfill_all(code: str, market: str, with_kline: bool = True,
         except Exception as exc:  # noqa: BLE001
             logger.warning("K 线回填失败: %s", exc)
             result["kline"] = {"error": str(exc)}
-    if with_news:
+    if with_news and market == "ashare":
         try:
             result["news"] = backfill_news(code)
         except Exception as exc:  # noqa: BLE001
@@ -238,7 +266,7 @@ def backfill_all(code: str, market: str, with_kline: bool = True,
             result["news"] = {"error": str(exc)}
     if with_financial:
         try:
-            new, total = backfill_financial(code)
+            new, total = backfill_financial(code, market)
             result["financial"] = {"new": new, "total": total}
         except Exception as exc:  # noqa: BLE001
             logger.warning("财报回填失败: %s", exc)

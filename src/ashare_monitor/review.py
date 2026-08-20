@@ -503,10 +503,11 @@ def generate_review(
                     chart["title"] += "  |  " + "  |  ".join(extra)
                 charts.append(chart)
 
-    # 财报速览（仅 A 股自选；读库优先取最新报告期，库空回退联网，失败不阻塞）
+    # 财报速览（A 股 + 港股；读库优先取最新报告期，库空回退联网，失败不阻塞）
     financial_rows: list[dict] = []
     for item in cfg.watchlist:
-        if str(item.get("market", "ashare")) != "ashare":
+        market = str(item.get("market", "ashare"))
+        if market not in ("ashare", "hk"):
             continue
         code = str(item["code"])
         name = str(item.get("name", code))
@@ -519,7 +520,7 @@ def generate_review(
                 continue
             from .fundamentals import fetch_financials
 
-            periods = fetch_financials(code, periods=1)
+            periods = fetch_financials(code, periods=1, market=market)
             if periods:
                 p = periods[0]
                 financial_rows.append({
@@ -771,7 +772,8 @@ def backfill_reviews(
     fin_cache: dict[str, dict] = {}  # code -> {"name":.., "rows":[..]}
     fallback_financial: list[dict] = []
     for item in cfg.watchlist:
-        if str(item.get("market", "ashare")) != "ashare":
+        market = str(item.get("market", "ashare"))
+        if market not in ("ashare", "hk"):
             continue
         code, name = str(item["code"]), str(item.get("name", item["code"]))
         try:
@@ -781,7 +783,7 @@ def backfill_reviews(
                 continue
             from .fundamentals import fetch_financials
 
-            periods = fetch_financials(code, periods=1)
+            periods = fetch_financials(code, periods=1, market=market)
             if periods:
                 p = periods[0]
                 fallback_financial.append({

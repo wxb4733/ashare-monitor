@@ -90,8 +90,9 @@ python -m ashare_monitor.main backtest 002594 --compare 002594,01211 --hold-days
 # 回测可视化：K 线图标注买卖点（HTML）
 python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --hold-days 250 --amount 100000 --chart
 
-# 财报分析（仅 A 股，近 6 个报告期）
+# 财报分析（A 股人民币 / 港股港元口径，近 6 个报告期）
 python -m ashare_monitor.main financial 600519 --periods 6
+python -m ashare_monitor.main financial 01211 --market hk --periods 6
 
 # IPO 公司分析（近期新股列表 / 单只详情 / 分析报告）
 python -m ashare_monitor.main ipo --limit 30

@@ -562,18 +562,20 @@ def run_news(code: str, market: str, days: int, config_path: str | None,
     _render_news_tables(code, anns, reports)
 
 
-def run_financial(code: str, periods: int) -> None:
-    """查看标的的财报分析（仅 A 股）。"""
+def run_financial(code: str, periods: int, market: str = "ashare") -> None:
+    """查看标的的财报分析（A 股人民币 / 港股港元口径）。"""
     from .fundamentals import fetch_financials, summarize
 
-    console.print(f"[cyan]正在获取 {code} 财报数据（近 {periods} 个报告期）…[/cyan]")
+    currency = "港元" if market == "hk" else "人民币"
+    console.print(f"[cyan]正在获取 {code}（{market}）财报数据（近 {periods} 个报告期，"
+                  f"{currency}口径）…[/cyan]")
     try:
-        items = fetch_financials(code, periods=periods)
+        items = fetch_financials(code, periods=periods, market=market)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]财报获取失败：{exc}[/red]")
         return
 
-    console.print(f"[bold cyan]{code} 财务业绩（最近 {len(items)} 期）[/bold cyan]")
+    console.print(f"[bold cyan]{code} 财务业绩（最近 {len(items)} 期，{currency}）[/bold cyan]")
     table = Table()
     table.add_column("报告期", justify="left")
     table.add_column("营收(亿)", justify="right")
@@ -1150,9 +1152,11 @@ def main() -> None:
     p_news.add_argument("--days", type=int, default=90, help="研报回看天数（默认 90）")
     p_news.add_argument("--local", action="store_true", help="仅读取数据库，不联网")
     p_news.add_argument("--watchlist", action="store_true", help="批量采集全部 A 股自选股入库")
-    p_fin = sub.add_parser("financial", help="财报分析（仅 A 股，东财业绩报表）")
-    p_fin.add_argument("code", help="6 位证券代码，如 600519")
+    p_fin = sub.add_parser("financial", help="财报分析（A 股人民币 / 港股港元，东财接口）")
+    p_fin.add_argument("code", help="证券代码，如 600519 / 01211")
     p_fin.add_argument("--periods", type=int, default=6, help="回看报告期数（默认 6）")
+    p_fin.add_argument("--market", default="ashare", choices=["ashare", "hk"],
+                       help="市场（默认 ashare）")
     p_ipo = sub.add_parser("ipo", help="IPO 公司分析（近期新股列表 / 单只详情 / --report 报告）")
     p_ipo.add_argument("keyword", nargs="?", default="", help="新股代码或名称（缺省显示列表）")
     p_ipo.add_argument("--limit", type=int, default=30, help="列表条数（默认 30）")
@@ -1225,7 +1229,7 @@ def main() -> None:
             run_news(args.code, "ashare", args.days, args.config,
                      local_only=args.local)
     elif args.command == "financial":
-        run_financial(args.code, args.periods)
+        run_financial(args.code, args.periods, args.market)
     elif args.command == "ipo":
         run_ipo(args.keyword, args.limit, report=args.report,
                 config_path=args.config, history_codes=args.history)
