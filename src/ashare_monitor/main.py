@@ -1192,6 +1192,248 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_fundflow(code: str | None, config_path: str | None,
+                 report: bool = False, push: bool = False) -> None:
+    """资金面监控：个股主力资金流 + 沪深港通概要。"""
+    import os
+    from pathlib import Path
+
+    from .fundflow import (
+        build_fundflow_report,
+        fetch_fundflow,
+        fetch_fundflow_ak,
+        fetch_hsgt_summary,
+    )
+
+    cfg = load_config(config_path)
+    flows = []
+    for item in cfg.watchlist:
+        market = str(item.get("market", "ashare"))
+        if market == "crypto":
+            continue
+        c = str(item["code"])
+        if code and c != code:
+            continue
+        name = str(item.get("name", c))
+        try:
+            try:
+                flows.append(fetch_fundflow(c, market, name))
+            except Exception:  # noqa: BLE001 - push2 不稳时降级
+                flows.append(fetch_fundflow_ak(c, name))
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]{name}({c}) 资金流获取失败：{exc}[/yellow]")
+    console.print("[cyan]正在获取沪深港通概要…[/cyan]")
+    hsgt: list[dict] = []
+    try:
+        hsgt = fetch_hsgt_summary()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]沪深港通获取失败：{exc}[/yellow]")
+
+    if flows:
+        table = Table(title=f"个股主力资金流（{datetime.now():%Y-%m-%d}，亿元）")
+        table.add_column("标的", justify="left")
+        table.add_column("主力", justify="right")
+        table.add_column("超大单", justify="right")
+        table.add_column("大单", justify="right")
+        table.add_column("中单", justify="right")
+        table.add_column("小单", justify="right")
+        for f in flows:
+            def cell(v: float | None) -> str:
+                if v is None:
+                    return "-"
+                style = "red" if v > 0 else ("green" if v < 0 else "")
+                return f"[{style}]{v:+.2f}[/{style}]" if style else f"{v:+.2f}"
+            table.add_row(f"{f.name}({f.code})", cell(f.main_net),
+                          cell(f.xl_net), cell(f.l_net), cell(f.m_net), cell(f.s_net))
+        console.print(table)
+    else:
+        console.print("[yellow]无资金流数据[/yellow]")
+
+    if hsgt:
+        console.print(f"[bold cyan]沪深港通概要（{hsgt[0]['date']}）[/bold cyan]")
+        for r in hsgt:
+            net = f"{r['net_buy']:+.1f} 亿" if r["net_buy"] is not None else "已停披露"
+            console.print(
+                f"  {r['board']}({r['direction']}): {net} | "
+                f"{r['up']}↑ {r['down']}↓ | {r['index_chg']:+.2f}%"
+            )
+        console.print("[dim]北向净买入额度自 2024-08 起停止披露[/dim]")
+    print_disclaimer()
+
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"资金面 {datetime.now():%Y-%m-%d}"]
+            for f in flows:
+                if f.main_net is not None:
+                    lines.append(f"{f.name}({f.code}) 主力 {f.main_net:+.2f} 亿")
+            for r in hsgt:
+                if r["net_buy"] is not None:
+                    lines.append(f"{r['board']} {r['net_buy']:+.1f} 亿")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+
+    if report:
+        html, md = build_fundflow_report(flows, hsgt)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"fundflow-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]资金面报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "策略验证"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"fundflow-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
+def run_events(code: str | None, config_path: str | None, days: int = 30,
+               report: bool = False, push: bool = False) -> None:
+    """事件日历提醒：扫描自选股未来 N 天解禁/分红除权/业绩预告。"""
+    import os
+    from pathlib import Path
+
+    from .events import build_events_report, scan_events
+
+    cfg = load_config(config_path)
+    codes = [code] if code else None
+    console.print(f"[cyan]正在扫描未来 {days} 天事件日历…[/cyan]")
+    events = scan_events(cfg, codes=codes, days=days)
+    if not events:
+        console.print("[yellow]未来无事件[/yellow]")
+    else:
+        table = Table(title=f"事件日历（未来 {days} 天）")
+        table.add_column("日期", justify="left")
+        table.add_column("标的", justify="left")
+        table.add_column("类型", justify="left")
+        table.add_column("事件", justify="left", overflow="fold")
+        kind_style = {"解禁": "red", "分红除权": "cyan", "业绩预告": "yellow"}
+        for e in events:
+            style = kind_style.get(e.kind, "")
+            kind = f"[{style}]{e.kind}[/{style}]" if style else e.kind
+            table.add_row(e.date, f"{e.name}({e.code})", kind, e.detail)
+        console.print(table)
+    print_disclaimer()
+
+    if push and events:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"事件日历（未来 {days} 天）"]
+            for e in events:
+                lines.append(f"{e.date} {e.name}({e.code}) {e.kind}：{e.detail}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+        else:
+            console.print("[dim]未配置 ASHARE_MONITOR_WEBHOOK，跳过推送[/dim]")
+
+    if report:
+        html, md = build_events_report(events, days=days)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"events-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]事件日历报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "事件日历"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"events-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
+def run_position(config_path: str | None, report: bool = False,
+                 push: bool = False, live: bool = False) -> None:
+    """持仓管理与盈亏日报。"""
+    import os
+    from pathlib import Path
+
+    from .position import (
+        build_position_report,
+        currency_hint,
+        fill_prices,
+        load_positions,
+    )
+
+    cfg = load_config(config_path)
+    positions = load_positions(cfg)
+    if not positions:
+        console.print("[yellow]未配置持仓：请在 config.local.yaml 的 positions 中填写"
+                      "（code/market/cost/shares）[/yellow]")
+        return
+    positions, as_of = fill_prices(positions, live=live)
+    console.print(f"[cyan]持仓盈亏（{'实时' if live else f'收盘 {as_of}'}，"
+                  f"{currency_hint(positions)}）[/cyan]")
+    table = Table()
+    table.add_column("标的", justify="left")
+    table.add_column("成本价", justify="right")
+    table.add_column("现价", justify="right")
+    table.add_column("持仓(股)", justify="right")
+    table.add_column("市值", justify="right")
+    table.add_column("盈亏额", justify="right")
+    table.add_column("盈亏率", justify="right")
+    table.add_column("仓位", justify="right")
+    for p in positions:
+        def cell(v: float | None, sign: bool = False, suffix: str = "") -> str:
+            if v is None:
+                return "-"
+            style = "red" if v > 0 else ("green" if v < 0 else "")
+            text = f"{v:+.{2 if not suffix else 1}f}{suffix}" if sign else f"{v:.2f}{suffix}"
+            return f"[{style}]{text}[/{style}]" if style else text
+        total_mv = sum(x.market_value for x in positions if x.market_value)
+        weight = (p.market_value / total_mv * 100) if p.market_value and total_mv else None
+        table.add_row(
+            f"{p.name}({p.code})", cell(p.cost), cell(p.price),
+            f"{p.shares:,.0f}", cell(p.market_value),
+            cell(p.pnl, sign=True), cell(p.pnl_pct, sign=True, suffix="%"),
+            cell(weight, suffix="%"),
+        )
+    console.print(table)
+    print_disclaimer()
+
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"持仓盈亏 {as_of or datetime.now().strftime('%Y-%m-%d')}"]
+            for p in positions:
+                if p.pnl is None:
+                    continue
+                lines.append(
+                    f"{p.name}({p.code}) {p.price:.2f} | "
+                    f"盈亏 {p.pnl:+,.0f} ({p.pnl_pct:+.1f}%)"
+                )
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+        else:
+            console.print("[dim]未配置 ASHARE_MONITOR_WEBHOOK，跳过推送[/dim]")
+
+    if report:
+        html, md = build_position_report(positions, as_of=as_of, live=live)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"position-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]持仓报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "持仓"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"position-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_timing(code: str | None, config_path: str | None,
                report: bool = False, push: bool = False,
                forward: int = 5) -> None:
@@ -1389,6 +1631,29 @@ def main() -> None:
                           help="生成择时信号报告（HTML + Obsidian）")
     p_timing.add_argument("--push", action="store_true",
                           help="有信号时推送 webhook（需 ASHARE_MONITOR_WEBHOOK 环境变量）")
+    p_position = sub.add_parser("position", help="持仓管理与盈亏日报")
+    p_position.add_argument("--live", action="store_true",
+                            help="使用实时行情（缺省用本地收盘价）")
+    p_position.add_argument("--report", action="store_true",
+                            help="生成持仓报告（HTML + Obsidian）")
+    p_position.add_argument("--push", action="store_true",
+                            help="推送盈亏日报 webhook")
+    p_events = sub.add_parser("events", help="事件日历提醒（解禁/分红除权/业绩预告）")
+    p_events.add_argument("code", nargs="?", default="",
+                          help="指定标的代码（缺省扫描全部自选股）")
+    p_events.add_argument("--days", type=int, default=30,
+                          help="未来天数窗口（默认 30）")
+    p_events.add_argument("--report", action="store_true",
+                          help="生成事件日历报告（HTML + Obsidian）")
+    p_events.add_argument("--push", action="store_true",
+                          help="推送事件提醒 webhook")
+    p_fundflow = sub.add_parser("fundflow", help="资金面监控（个股主力资金流 + 沪深港通）")
+    p_fundflow.add_argument("code", nargs="?", default="",
+                            help="指定标的代码（缺省扫描全部自选股）")
+    p_fundflow.add_argument("--report", action="store_true",
+                            help="生成资金面报告（HTML + Obsidian）")
+    p_fundflow.add_argument("--push", action="store_true",
+                            help="推送资金面概要 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -1442,6 +1707,15 @@ def main() -> None:
     elif args.command == "timing":
         run_timing(args.code or None, args.config,
                    report=args.report, push=args.push, forward=args.forward)
+    elif args.command == "position":
+        run_position(args.config, report=args.report,
+                     push=args.push, live=args.live)
+    elif args.command == "events":
+        run_events(args.code or None, args.config, days=args.days,
+                   report=args.report, push=args.push)
+    elif args.command == "fundflow":
+        run_fundflow(args.code or None, args.config,
+                     report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

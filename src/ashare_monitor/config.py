@@ -93,6 +93,7 @@ class ObsidianConfig:
 @dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
+    positions: list[dict] = field(default_factory=list)  # 持仓：code/name/market/cost/shares
     alerts: AlertConfig = field(default_factory=AlertConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     quotes: QuoteConfig = field(default_factory=QuoteConfig)
@@ -125,6 +126,7 @@ def load_config(path: str | None = None) -> Config:
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
+        positions=raw.get("positions", []) or [],
         alerts=AlertConfig(
             change_pct_threshold=float(alerts_raw.get("change_pct_threshold", 3.0)),
             price_above={str(k): float(v) for k, v in (alerts_raw.get("price_above") or {}).items()},

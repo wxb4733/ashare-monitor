@@ -339,3 +339,15 @@ python -m ashare_monitor.main timing --push        # 有信号推送 webhook（�
 # 信号规则：强势回踩MA20 / 深度回调止跌 / MACD金叉 / RSI超卖回升 / 放量突破
 # 每个信号标注历史命中率（该规则在标的上近 5 年信号触发后 5 日收益为正比例）
 # 信号同时自动出现在当日复盘报告的「择时买入信号」板块
+
+# 持仓管理与盈亏日报（positions 配置在 config.local.yaml）
+python -m ashare_monitor.main position            # 收盘价盈亏
+python -m ashare_monitor.main position --live --report
+python -m ashare_monitor.main position --push     # 推送盈亏日报 webhook
+
+# 事件日历提醒（解禁/分红除权/业绩预告，未来 N 天）
+python -m ashare_monitor.main events --days 30 --report --push
+
+# 资金面监控（个股主力资金流 + 沪深港通概要）
+python -m ashare_monitor.main fundflow --report --push
+# 注意：北向净买入额度自 2024-08 起停止披露；个股资金流 push2 接口偶发不稳（本机运行较稳定）
