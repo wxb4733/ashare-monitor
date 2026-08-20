@@ -331,3 +331,11 @@ pytest
 ## 免责声明
 
 本项目仅供学习与技术研究，行情数据来源于公开接口，不构成任何投资建议。
+
+# 择时买入提醒（收盘后扫描自选股技术性买点信号）
+python -m ashare_monitor.main timing               # 扫描全部自选股
+python -m ashare_monitor.main timing 002594 --report
+python -m ashare_monitor.main timing --push        # 有信号推送 webhook（需 ASHARE_MONITOR_WEBHOOK）
+# 信号规则：强势回踩MA20 / 深度回调止跌 / MACD金叉 / RSI超卖回升 / 放量突破
+# 每个信号标注历史命中率（该规则在标的上近 5 年信号触发后 5 日收益为正比例）
+# 信号同时自动出现在当日复盘报告的「择时买入信号」板块

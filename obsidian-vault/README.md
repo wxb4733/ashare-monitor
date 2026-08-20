@@ -52,6 +52,11 @@
 <!-- IPO_INDEX_START -->
 - [[IPO分析/ipo-report-2026-08-20|IPO 分析 2026-08-20]]
 <!-- IPO_INDEX_END -->
+
+<!-- BACKTEST_INDEX_START -->
+- [[策略验证/backtest-compare-2026-08-20|定投对比 2026-08-20]]
+- [[策略验证/verify-002594-2026-08-20|命中率 2026-08-20]]
+<!-- BACKTEST_INDEX_END -->
 ## 说明
 
 - 每日收盘后运行 `python -m ashare_monitor.main review` 自动生成并导出复盘

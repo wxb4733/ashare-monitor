@@ -1192,6 +1192,77 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_timing(code: str | None, config_path: str | None,
+               report: bool = False, push: bool = False,
+               forward: int = 5) -> None:
+    """择时买入提醒：收盘后扫描自选股的技术性买点信号。"""
+    import os
+    from pathlib import Path
+
+    from .timing import RULES, build_timing_report, scan_watchlist
+
+    cfg = load_config(config_path)
+    codes = [code] if code else None
+    console.print(f"[cyan]正在扫描择时买入信号（观察 {forward} 交易日）…[/cyan]")
+    signals = scan_watchlist(cfg, codes=codes, forward=forward)
+    if not signals:
+        console.print("[yellow]今日未触发任何买入信号（可按 --report 生成空报告）[/yellow]")
+    else:
+        table = Table(title=f"择时买入信号（{datetime.now():%Y-%m-%d}）")
+        table.add_column("标的", justify="left")
+        table.add_column("信号", justify="left")
+        table.add_column("历史命中率", justify="right")
+        table.add_column("平均收益", justify="right")
+        table.add_column("样本数", justify="right")
+        for sg in signals:
+            style = ("red" if (sg.win_rate or 0) >= 55 else "")
+            win = f"{sg.win_rate:.0f}%" if sg.win_rate is not None else "-"
+            win_cell = f"[{style}]{win}[/{style}]" if style else win
+            avg = f"{sg.avg_return:+.2f}%" if sg.avg_return is not None else "-"
+            table.add_row(
+                f"{sg.name}({sg.code})", f"[bold cyan]{sg.label}[/bold cyan]",
+                win_cell, avg, str(sg.signals_count),
+            )
+        console.print(table)
+        for sg in signals:
+            console.print(f"[dim]  └─ {sg.message}[/dim]")
+    console.print(f"[dim]规则: {', '.join(v['label'] for v in RULES.values())}[/dim]")
+    print_disclaimer()
+
+    # Webhook 推送（有信号才推）
+    if push and signals:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"择时买入提醒 {datetime.now():%Y-%m-%d}"]
+            for sg in signals:
+                lines.append(
+                    f"{sg.name}({sg.code}) {sg.label} | 历史命中率 "
+                    f"{sg.win_rate:.0f}% / 平均 {sg.avg_return:+.2f}%"
+                )
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+        else:
+            console.print("[dim]未配置 ASHARE_MONITOR_WEBHOOK，跳过推送[/dim]")
+
+    if report:
+        html, md = build_timing_report(signals)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"timing-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]择时信号报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "策略验证"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"timing-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_report(period: str, date: str | None, config_path: str | None) -> None:
     from .review import generate_period_report
 
@@ -1309,6 +1380,15 @@ def main() -> None:
                           help="触发后观察交易日数（默认 5）")
     p_verify.add_argument("--report", action="store_true",
                           help="生成命中率验证报告（HTML + Obsidian）")
+    p_timing = sub.add_parser("timing", help="择时买入提醒（收盘后扫描买点信号）")
+    p_timing.add_argument("code", nargs="?", default="",
+                          help="指定标的代码（缺省扫描全部自选股）")
+    p_timing.add_argument("--forward", type=int, default=5,
+                          help="历史命中率观察交易日数（默认 5）")
+    p_timing.add_argument("--report", action="store_true",
+                          help="生成择时信号报告（HTML + Obsidian）")
+    p_timing.add_argument("--push", action="store_true",
+                          help="有信号时推送 webhook（需 ASHARE_MONITOR_WEBHOOK 环境变量）")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -1359,6 +1439,9 @@ def main() -> None:
     elif args.command == "verify":
         run_verify(args.code, args.market, args.rule, args.days,
                    args.forward, args.config, report=args.report)
+    elif args.command == "timing":
+        run_timing(args.code or None, args.config,
+                   report=args.report, push=args.push, forward=args.forward)
     else:
         run_monitor(args.config)
 

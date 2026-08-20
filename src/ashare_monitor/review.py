@@ -215,10 +215,11 @@ def build_html(
     news_rows: list[dict] | None = None,
     financial_rows: list[dict] | None = None,
     ipo_rows: list[dict] | None = None,
+    timing_signals: list[dict] | None = None,
 ) -> str:
     """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。
 
-    章节按存在顺序编号（大盘指数 → 技术指标 → 当日表现 → 预警 → 财报 → 公告研报 → IPO → K线）。
+    章节按存在顺序编号（大盘指数 → 技术指标 → 当日表现 → 预警 → 财报 → 公告研报 → IPO → 择时信号 → K线）。
     """
     chart_cards = []
     chart_inits = []
@@ -371,6 +372,30 @@ def build_html(
 <tr><th>代码</th><th>名称</th><th>交易所</th><th>申购日</th><th>发行价</th><th>行业PE</th><th>募资(亿)</th><th>状态</th></tr>
 {''.join(rows)}
 </table>
+</div>""")
+
+    if timing_signals:
+        rows = []
+        for sg in timing_signals:
+            win = f"{sg['win_rate']:.0f}%" if sg["win_rate"] is not None else "-"
+            avg = f"{sg['avg_return']:+.2f}%" if sg["avg_return"] is not None else "-"
+            style = "red" if (sg["win_rate"] or 0) >= 55 else ""
+            win_cell = f'<span class="{style}">{win}</span>' if style else win
+            rows.append(
+                "<tr>"
+                f"<td>{sg['name']}({sg['code']})</td>"
+                f'<td><span class="tag" style="background:#e8f3ff;color:#1677ff">{sg["label"]}</span></td>'
+                f'<td style="text-align:left">{sg["message"]}</td>'
+                f"<td>{win_cell}</td><td>{avg}</td><td>{sg['signals_count']}</td>"
+                "</tr>"
+            )
+        add_section("择时买入信号", f"""
+<div class="card">
+<table>
+<tr><th>标的</th><th>信号</th><th style="text-align:left">说明</th><th>历史命中率</th><th>平均收益</th><th>样本数</th></tr>
+{''.join(rows)}
+</table>
+<div style="margin-top:8px;font-size:12px;color:#86909c">历史命中率 = 该信号在标的上近 5 年全部历史信号触发后 5 个交易日收益为正的比例。信号为统计提示，不构成投资建议。</div>
 </div>""")
 
     add_section("近期 K 线走势", "".join(chart_cards))
@@ -619,11 +644,23 @@ def generate_review(
             logger.warning("复盘：%s 公告/研报拉取失败: %s", code, exc)
     news_rows.sort(key=lambda r: r["date"], reverse=True)
 
+    # 择时买入信号（读本地 K 线扫描，失败不阻塞；当日复盘用实时行情不适用历史扫描时跳过）
+    timing_signals: list[dict] = []
+    try:
+        from .timing import scan_watchlist
+
+        timing_signals = [
+            sg.to_dict() for sg in scan_watchlist(cfg)
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("复盘：择时信号扫描失败: %s", exc)
+
     html = build_html(
         date_str, quotes, records, charts,
         index_quotes=index_quotes, index_charts=index_charts,
         indicator_rows=indicator_rows, news_rows=news_rows,
         financial_rows=financial_rows, ipo_rows=ipo_rows,
+        timing_signals=timing_signals,
     )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
