@@ -378,3 +378,9 @@ python -m ashare_monitor.main hf 09988 --report     # 阿里（Qwen 组织）
 python -m ashare_monitor.main hf 002594 --org BYD-Auto  # 自定义组织
 # 数据源：HF API（默认 hf-mirror.com 国内镜像，可设 HF_ENDPOINT 覆盖）
 # 内置组织映射：00700→tencent 09988→Qwen 03690→bytedance-research 等；config 的 hf 段可覆盖
+
+# 诉讼监控（自选股重大诉讼披露）
+python -m ashare_monitor.main litigation --report --push
+# 数据源：巨潮资讯 p_sysapi1055（经 akshare）；入库 SQLite 去重（code+period）
+# 注意：仅覆盖达到重大诉讼披露标准的公司；未出现=近 N 天无重大诉讼（正常）
+# 专利数据：免费源不可用（Google Patents 被墙/CNIPA 需登录），需天眼查/智慧芽连接器

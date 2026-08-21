@@ -1264,6 +1264,79 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_litigation(code: str | None, config_path: str | None,
+                   days: int = 365, report: bool = False,
+                   push: bool = False) -> None:
+    """诉讼监控：自选股（或指定代码）的重大诉讼披露。"""
+    import os
+    from pathlib import Path
+
+    from .litigation import (
+        build_litigation_report,
+        load_saved_lawsuits,
+        save_lawsuits,
+        scan_watchlist_lawsuits,
+    )
+
+    cfg = load_config(config_path)
+    console.print(f"[cyan]正在拉取近 {days} 天全市场重大诉讼披露…[/cyan]")
+    try:
+        rows = scan_watchlist_lawsuits(cfg, days=days)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]诉讼数据获取失败：{exc}[/red]")
+        return
+    if code:
+        rows = [r for r in rows if r.code == code]
+    if not rows:
+        console.print(f"[yellow]近 {days} 天自选股无重大诉讼披露（未达披露标准 = 正常）[/yellow]")
+    else:
+        table = Table(title=f"自选股重大诉讼披露（近 {days} 天）")
+        table.add_column("代码", justify="left")
+        table.add_column("简称", justify="left")
+        table.add_column("统计区间", justify="left")
+        table.add_column("次数", justify="right")
+        table.add_column("金额", justify="right")
+        for r in rows:
+            amt = (f"{r.amount / 10000:.2f} 亿" if r.amount and r.amount >= 10000
+                   else (f"{r.amount:.0f} 万" if r.amount is not None else "-"))
+            table.add_row(r.code, r.name, r.period, str(r.count), amt)
+        console.print(table)
+    print_disclaimer()
+
+    # 入库去重
+    added = save_lawsuits(rows)
+    console.print(f"[dim]入库新增 {added} 条[/dim]")
+
+    if push and rows:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = ["诉讼监控（近 %d 天）" % days]
+            for r in rows:
+                amt = (f"{r.amount / 10000:.2f} 亿" if r.amount and r.amount >= 10000
+                       else (f"{r.amount:.0f} 万" if r.amount is not None else "-"))
+                lines.append(f"{r.name}({r.code}) {r.count} 次，{amt}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+
+    if report:
+        html, md = build_litigation_report(rows, days)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"litigation-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]诉讼监控报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "法律风险"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"litigation-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_hf(code: str, config_path: str | None, org_override: str | None,
            company_override: str | None, limit: int = 10,
            report: bool = False, push: bool = False) -> None:
@@ -2117,6 +2190,15 @@ def main() -> None:
                       help="生成 HF 监测报告（HTML + Obsidian）")
     p_hf.add_argument("--push", action="store_true",
                       help="推送 HF 摘要 webhook")
+    p_lit = sub.add_parser("litigation", help="诉讼监控（自选股重大诉讼披露）")
+    p_lit.add_argument("code", nargs="?", default="",
+                       help="指定代码（缺省扫描全部自选股）")
+    p_lit.add_argument("--days", type=int, default=365,
+                       help="回看天数（默认 365）")
+    p_lit.add_argument("--report", action="store_true",
+                       help="生成诉讼监控报告（HTML + Obsidian）")
+    p_lit.add_argument("--push", action="store_true",
+                       help="推送诉讼摘要 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2197,6 +2279,9 @@ def main() -> None:
         run_hf(args.code, args.config, args.org or None,
                args.company or None, limit=args.limit,
                report=args.report, push=args.push)
+    elif args.command == "litigation":
+        run_litigation(args.code or None, args.config, days=args.days,
+                       report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

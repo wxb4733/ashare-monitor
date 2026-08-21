@@ -114,6 +114,11 @@ def _connect(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def get_conn(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
+    """公开连接入口（供各功能模块扩展表使用）。"""
+    return _connect(db_path)
+
+
 # ---------- 预警 ----------
 
 def record_alerts(
