@@ -351,3 +351,8 @@ python -m ashare_monitor.main events --days 30 --report --push
 # 资金面监控（个股主力资金流 + 沪深港通概要）
 python -m ashare_monitor.main fundflow --report --push
 # 注意：北向净买入额度自 2024-08 起停止披露；个股资金流 push2 接口偶发不稳（本机运行较稳定）
+
+# 股东分析（十大股东 + 股东户数趋势）
+python -m ashare_monitor.main holders 002594 --report --push
+# 解读：户数半年减少>10% → 筹码集中（潜在看涨信号）；增加>10% → 分散（潜在承压）
+# 数据源：东方财富 F10（十大股东）/ RPT_HOLDERNUM_DET（户数历史）

@@ -1192,6 +1192,108 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_holders(code: str, config_path: str | None,
+                report: bool = False, push: bool = False) -> None:
+    """股东分析：十大股东 + 股东户数趋势。"""
+    import os
+    from pathlib import Path
+
+    from .holders import (
+        analyze_gdhs,
+        build_holders_report,
+        fetch_gdhs,
+        fetch_top10,
+    )
+
+    cfg = load_config(config_path)
+    if not code:
+        console.print("[red]请指定股票代码：holders 002594[/red]")
+        return
+    market = "hk" if len(code) == 5 and code.isdigit() else "ashare"
+    # 找名称
+    name = code
+    for item in cfg.watchlist:
+        if str(item["code"]) == code:
+            name = str(item.get("name", code))
+            break
+    console.print(f"[cyan]正在获取 {name}({code}) 股东数据…[/cyan]")
+    holders, report_date = [], ""
+    try:
+        holders, report_date = fetch_top10(code, market)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]十大股东获取失败：{exc}[/yellow]")
+    gdhs_rows = []
+    try:
+        if market == "ashare":
+            gdhs_rows = fetch_gdhs(code)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]股东户数获取失败：{exc}[/yellow]")
+
+    if not holders and not gdhs_rows:
+        console.print("[red]未获取到任何股东数据（港股暂不支持）[/red]")
+        return
+
+    # 终端输出
+    if holders:
+        console.print(f"[bold cyan]{name}({code}) 十大股东（报告期 {report_date}）[/bold cyan]")
+        table = Table()
+        table.add_column("名次", justify="right")
+        table.add_column("股东名称", justify="left")
+        table.add_column("类型", justify="left")
+        table.add_column("持股数", justify="right")
+        table.add_column("占比", justify="right")
+        table.add_column("变动", justify="left")
+        for h in holders:
+            style = "green" if h.change in ("减持", "减少") else (
+                "red" if h.change in ("增持", "新进") else "")
+            chg = h.change + (f" {h.change_ratio:+.1f}%" if h.change_ratio is not None else "")
+            chg_cell = f"[{style}]{chg}[/{style}]" if style else chg
+            def w(v: float | None) -> str:
+                if v is None:
+                    return "-"
+                return f"{v/1e8:.2f} 亿" if abs(v) >= 1e8 else f"{v/1e4:.0f} 万"
+            table.add_row(str(h.rank), h.name, h.share_type,
+                          w(h.hold_num), f"{h.ratio:.2f}%" if h.ratio is not None else "-",
+                          chg_cell)
+        console.print(table)
+    if gdhs_rows:
+        console.print(f"[bold cyan]股东户数趋势（最新 {gdhs_rows[0].end_date}）[/bold cyan]")
+        for line in analyze_gdhs(gdhs_rows):
+            console.print(f"  {line}")
+    print_disclaimer()
+
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"股东分析 {name}({code})"]
+            lines.extend(analyze_gdhs(gdhs_rows))
+            if holders:
+                top = ", ".join(f"{h.name} {h.ratio:.1f}%" for h in holders[:3])
+                lines.append(f"前三大股东：{top}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+
+    if report:
+        html, md = build_holders_report(
+            code, name, market, holders, gdhs_rows, report_date,
+        )
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"holders-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]股东分析报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "股东分析"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"holders-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_fundflow(code: str | None, config_path: str | None,
                  report: bool = False, push: bool = False) -> None:
     """资金面监控：个股主力资金流 + 沪深港通概要。"""
@@ -1654,6 +1756,12 @@ def main() -> None:
                             help="生成资金面报告（HTML + Obsidian）")
     p_fundflow.add_argument("--push", action="store_true",
                             help="推送资金面概要 webhook")
+    p_holders = sub.add_parser("holders", help="股东分析（十大股东 + 股东户数趋势）")
+    p_holders.add_argument("code", help="A 股代码，如 002594")
+    p_holders.add_argument("--report", action="store_true",
+                           help="生成股东分析报告（HTML + Obsidian）")
+    p_holders.add_argument("--push", action="store_true",
+                           help="推送股东分析摘要 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -1716,6 +1824,9 @@ def main() -> None:
     elif args.command == "fundflow":
         run_fundflow(args.code or None, args.config,
                      report=args.report, push=args.push)
+    elif args.command == "holders":
+        run_holders(args.code, args.config,
+                    report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 
