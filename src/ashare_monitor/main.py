@@ -1338,6 +1338,294 @@ def run_site(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def _corp_metric_run(name: str, cfg, fetch_fn, save_fn, report_fn,
+                     report_dir: str, console_title: str,
+                     cols: list[str], row_fn, save: bool = True,
+                     push_text: str | None = None, push: bool = False):
+    """公司信号类命令的通用执行器（终端表 + 入库 + 报告）。"""
+    import os
+    from pathlib import Path
+
+    console.print(f"[cyan]{console_title}…[/cyan]")
+    try:
+        rows = fetch_fn()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]获取失败：{exc}[/red]")
+        return
+    if not rows:
+        console.print("[yellow]无数据[/yellow]")
+    else:
+        table = Table(title=console_title)
+        for c in cols:
+            table.add_column(c, justify="right" if c not in ("标的",) else "left")
+        for r in rows:
+            table.add_row(*row_fn(r))
+        console.print(table)
+    print_disclaimer()
+    if save and save_fn and rows:
+        added = save_fn(rows)
+        console.print(f"[dim]入库新增 {added} 条[/dim]")
+    if push and push_text and rows:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [push_text]
+            for r in rows[:8]:
+                lines.append(str(r))
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    if report_fn:
+        html, md = report_fn(rows)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"{name}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]{name} 报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / report_dir
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"{name}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
+def run_insider(code: str | None, config_path: str | None, days: int = 30,
+                report: bool = False, push: bool = False) -> None:
+    """增减持与回购监控。"""
+    from .corp_events import (
+        build_corp_report,
+        load_saved_events,
+        save_corp_events,
+        scan_corp_events,
+    )
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        rows = scan_corp_events(cfg, codes=[code] if code else None)
+        return [r for r in rows if r.date >= (
+            datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")]
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.date, r.event_type, r.title)
+
+    _corp_metric_run(
+        "insider", cfg, _fetch, save_corp_events, build_corp_report,
+        "增减持回购", f"增减持与回购事件（近 {days} 天）",
+        ["标的", "日期", "类型", "标题"],
+        _row, push_text="增减持/回购事件", push=push,
+    )
+    if report:
+        pass  # 报告已在通用执行器生成
+
+
+def run_pledge(code: str | None, config_path: str | None, days: int = 7,
+               report: bool = False, push: bool = False) -> None:
+    """股权质押监控。"""
+    from .pledge import build_pledge_report, scan_watchlist_pledges
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        rows = scan_watchlist_pledges(cfg, days=days)
+        return [r for r in rows if not code or r.code == code]
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.announce_date, r.pledger,
+                f"{r.pledge_shares / 1e4:.0f} 万股" if r.pledge_shares else "-",
+                f"{r.ratio:.2f}%" if r.ratio is not None else "-")
+
+    _corp_metric_run(
+        "pledge", cfg, _fetch, None, build_pledge_report,
+        "股权质押", f"股权质押公告（近 {days} 天）",
+        ["标的", "公告日", "出质人", "质押数量", "占比"],
+        _row, push_text="股权质押", push=push,
+    )
+
+
+def run_rating(code: str | None, config_path: str | None, days: int = 30,
+               report: bool = False, push: bool = False) -> None:
+    """券商研报监控。"""
+    from .rating import build_rating_report, save_ratings, scan_ratings
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        return scan_ratings(cfg, codes=[code] if code else None, days=days)
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.date, r.org, r.title[:30],
+                f"{r.eps_this_year:.2f}" if r.eps_this_year is not None else "-")
+
+    _corp_metric_run(
+        "rating", cfg, _fetch, save_ratings, build_rating_report,
+        "研报评级", f"券商研报（近 {days} 天）",
+        ["标的", "日期", "机构", "标题", "EPS预测"],
+        _row, push_text="券商研报", push=push,
+    )
+
+
+def run_lhb(code: str | None, config_path: str | None, days: int = 10,
+            report: bool = False, push: bool = False) -> None:
+    """龙虎榜监控。"""
+    from .lhb import build_lhb_report, scan_lhb
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        rows = scan_lhb(cfg, days=days)
+        return [r for r in rows if not code or r.code == code]
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.date,
+                f"{r.change_pct:+.2f}%" if r.change_pct is not None else "-",
+                r.reason[:30])
+
+    _corp_metric_run(
+        "lhb", cfg, _fetch, None, build_lhb_report,
+        "龙虎榜", f"龙虎榜（近 {days} 天）",
+        ["标的", "日期", "涨跌幅", "上榜原因"],
+        _row, push_text="龙虎榜", push=push,
+    )
+
+
+def run_north(code: str | None, config_path: str | None,
+              report: bool = False, push: bool = False) -> None:
+    """北向持股监控。"""
+    from .north import build_north_report, scan_watchlist_north
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        data = scan_watchlist_north(cfg, codes=[code] if code else None)
+        return data
+
+    def _rows(data):
+        flat = []
+        for c, rows in data.items():
+            if rows:
+                flat.append(rows[0])
+        return flat
+
+    rows = _fetch()
+    flat = _rows(rows)
+    if not flat:
+        console.print("[yellow]无北向持股数据[/yellow]")
+    else:
+        table = Table(title="北向持股（自选股）")
+        table.add_column("代码", justify="left")
+        table.add_column("日期", justify="right")
+        table.add_column("持股(亿股)", justify="right")
+        table.add_column("占A股%", justify="right")
+        table.add_column("今日增持(万股)", justify="right")
+        for r in flat:
+            add = (f"{r.today_add / 1e4:.0f}" if r.today_add is not None else "-")
+            table.add_row(r.code, r.date,
+                          f"{r.hold_shares / 1e8:.2f}" if r.hold_shares else "-",
+                          f"{r.hold_ratio:.2f}" if r.hold_ratio is not None else "-",
+                          add)
+        console.print(table)
+    print_disclaimer()
+    if report:
+        html, md = build_north_report(rows)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"north-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]north 报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "北向持股"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"north-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
+def run_block(code: str | None, config_path: str | None, days: int = 10,
+              report: bool = False, push: bool = False) -> None:
+    """大宗交易监控。"""
+    from .block import build_block_report, scan_block_trades
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        rows = scan_block_trades(cfg, days=days)
+        return [r for r in rows if not code or r.code == code]
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.date,
+                f"{r.price:.2f}" if r.price is not None else "-",
+                f"{r.premium:+.2f}%" if r.premium is not None else "-",
+                f"{r.amount / 1e8:.2f} 亿" if r.amount else "-")
+
+    _corp_metric_run(
+        "block", cfg, _fetch, None, build_block_report,
+        "大宗交易", f"大宗交易（近 {days} 天）",
+        ["标的", "日期", "成交价", "折溢率", "成交额"],
+        _row, push_text="大宗交易", push=push,
+    )
+
+
+def run_valuation(code: str | None, config_path: str | None, years: int = 5,
+                  report: bool = False, push: bool = False) -> None:
+    """估值分位监控。"""
+    from .valuation import (
+        _zone,
+        build_valuation_report,
+        scan_watchlist_valuation,
+    )
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        rows = scan_watchlist_valuation(cfg, years=years)
+        return [r for r in rows if not code or r.code == code]
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.date,
+                f"{r.close:.2f}" if r.close is not None else "-",
+                f"{r.pe_ttm:.1f} ({_zone(r.pe_pct)})" if r.pe_ttm is not None else "-",
+                f"{r.pe_pct:.0f}%" if r.pe_pct is not None else "-",
+                f"{r.pb_mrq:.2f} ({_zone(r.pb_pct)})" if r.pb_mrq is not None else "-")
+
+    _corp_metric_run(
+        "valuation", cfg, _fetch, None,
+        lambda rows: build_valuation_report(rows, years),
+        "估值分位", f"估值分位（近 {years} 年）",
+        ["标的", "日期", "收盘", "PE(TTM)", "PE分位", "PB分位"],
+        _row, push_text="估值分位", push=push,
+    )
+
+
+def run_sector(code: str | None, config_path: str | None,
+               report: bool = False, push: bool = False) -> None:
+    """月度产销快报（行业景气先行指标）。"""
+    from .sector import build_sales_report, save_sales, scan_sales
+
+    cfg = load_config(config_path)
+
+    def _fetch():
+        return scan_sales(cfg, codes=[code] if code else None)
+
+    def _row(r):
+        return (f"{r.name}({r.code})", r.month,
+                f"{r.sales:.2f} {r.sales_unit}" if r.sales is not None
+                else f"（{r.raw_sales or '未提取'}）",
+                r.title[:30])
+
+    _corp_metric_run(
+        "sector", cfg, _fetch, save_sales, build_sales_report,
+        "产销快报", "月度产销快报",
+        ["标的", "报表月", "销量", "公告"],
+        _row, push_text="产销快报", push=push,
+    )
+
+
 def run_gov(code: str | None, config_path: str | None, days: int = 30,
             report: bool = False, push: bool = False) -> None:
     """政府侧企业动态：中标/拿地/补助/税收优惠公告。"""
@@ -2433,6 +2721,45 @@ def main() -> None:
                         help="指定代码（缺省全部自选股）")
     p_site.add_argument("--report", action="store_true",
                         help="生成官网档案报告（HTML + Obsidian）")
+    # 公司信号监控（新增 8 个）
+    p_insider = sub.add_parser("insider", help="增减持与回购监控（公告信号）")
+    p_insider.add_argument("code", nargs="?", default="", help="指定代码")
+    p_insider.add_argument("--days", type=int, default=30, help="回看天数")
+    p_insider.add_argument("--report", action="store_true", help="生成报告")
+    p_insider.add_argument("--push", action="store_true", help="推送 webhook")
+    p_pledge = sub.add_parser("pledge", help="股权质押监控（巨潮）")
+    p_pledge.add_argument("code", nargs="?", default="", help="指定代码")
+    p_pledge.add_argument("--days", type=int, default=7, help="回看天数")
+    p_pledge.add_argument("--report", action="store_true", help="生成报告")
+    p_pledge.add_argument("--push", action="store_true", help="推送 webhook")
+    p_rating = sub.add_parser("rating", help="券商研报监控（含 EPS 预测）")
+    p_rating.add_argument("code", nargs="?", default="", help="指定代码")
+    p_rating.add_argument("--days", type=int, default=30, help="回看天数")
+    p_rating.add_argument("--report", action="store_true", help="生成报告")
+    p_rating.add_argument("--push", action="store_true", help="推送 webhook")
+    p_lhb = sub.add_parser("lhb", help="龙虎榜监控（自选股上榜）")
+    p_lhb.add_argument("code", nargs="?", default="", help="指定代码")
+    p_lhb.add_argument("--days", type=int, default=10, help="回看天数")
+    p_lhb.add_argument("--report", action="store_true", help="生成报告")
+    p_lhb.add_argument("--push", action="store_true", help="推送 webhook")
+    p_north = sub.add_parser("north", help="北向持股监控（个股持股明细）")
+    p_north.add_argument("code", nargs="?", default="", help="指定代码")
+    p_north.add_argument("--report", action="store_true", help="生成报告")
+    p_north.add_argument("--push", action="store_true", help="推送 webhook")
+    p_block = sub.add_parser("block", help="大宗交易监控（折溢率）")
+    p_block.add_argument("code", nargs="?", default="", help="指定代码")
+    p_block.add_argument("--days", type=int, default=10, help="回看天数")
+    p_block.add_argument("--report", action="store_true", help="生成报告")
+    p_block.add_argument("--push", action="store_true", help="推送 webhook")
+    p_valuation = sub.add_parser("valuation", help="估值分位（PE/PB 历史百分位）")
+    p_valuation.add_argument("code", nargs="?", default="", help="指定代码")
+    p_valuation.add_argument("--years", type=int, default=5, help="回看年数")
+    p_valuation.add_argument("--report", action="store_true", help="生成报告")
+    p_valuation.add_argument("--push", action="store_true", help="推送 webhook")
+    p_sector = sub.add_parser("sector", help="月度产销快报（行业景气先行指标）")
+    p_sector.add_argument("code", nargs="?", default="", help="指定代码")
+    p_sector.add_argument("--report", action="store_true", help="生成报告")
+    p_sector.add_argument("--push", action="store_true", help="推送 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2523,6 +2850,30 @@ def main() -> None:
                 report=args.report, push=args.push)
     elif args.command == "site":
         run_site(args.code or None, args.config, report=args.report)
+    elif args.command == "insider":
+        run_insider(args.code or None, args.config, days=args.days,
+                    report=args.report, push=args.push)
+    elif args.command == "pledge":
+        run_pledge(args.code or None, args.config, days=args.days,
+                   report=args.report, push=args.push)
+    elif args.command == "rating":
+        run_rating(args.code or None, args.config, days=args.days,
+                   report=args.report, push=args.push)
+    elif args.command == "lhb":
+        run_lhb(args.code or None, args.config, days=args.days,
+                report=args.report, push=args.push)
+    elif args.command == "north":
+        run_north(args.code or None, args.config,
+                  report=args.report, push=args.push)
+    elif args.command == "block":
+        run_block(args.code or None, args.config, days=args.days,
+                  report=args.report, push=args.push)
+    elif args.command == "valuation":
+        run_valuation(args.code or None, args.config, years=args.years,
+                      report=args.report, push=args.push)
+    elif args.command == "sector":
+        run_sector(args.code or None, args.config,
+                   report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

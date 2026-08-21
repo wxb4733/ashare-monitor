@@ -403,3 +403,14 @@ python -m ashare_monitor.main site --report
 #   sites: {002594: {website: ..., notice_url: ..., ir_url: ..., social: ...}}
 # 公告监控：可配置 notice_url 抓取（多数官网公告页为 JS 动态加载，抓不到时如实提示，
 # 权威官方公告以东财公告为准）
+
+# 公司信号监控（8 个新命令）
+python -m ashare_monitor.main insider 002594 --report   # 增减持+回购（公告信号）
+python -m ashare_monitor.main pledge --report           # 股权质押（巨潮）
+python -m ashare_monitor.main rating 002594 --report    # 券商研报（含EPS预测）
+python -m ashare_monitor.main lhb 002594                # 龙虎榜（自选股上榜）
+python -m ashare_monitor.main north 002594              # 北向持股（2024-08-16后停每日披露，历史保留）
+python -m ashare_monitor.main block 002594              # 大宗交易（折溢率）
+python -m ashare_monitor.main valuation 002594 --report # 估值分位（PE/PB 历史百分位）
+python -m ashare_monitor.main sector 002594 --report    # 月度产销快报（行业景气先行指标）
+# 说明：产销快报销量在公告正文（东财内容 API 提取，沙箱偶发空体需本机验证）
