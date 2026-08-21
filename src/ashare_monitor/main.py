@@ -1621,6 +1621,126 @@ def run_valuation(code: str | None, config_path: str | None, years: int = 5,
     )
 
 
+def run_buyer(code: str | None, config_path: str | None,
+              report: bool = False, push: bool = False) -> None:
+    """买方视角：盈利预测修正 / 基金重仓 / 风险收益 / 相关性。"""
+    import os
+    from pathlib import Path
+
+    from .buyer import (
+        build_buyer_report,
+        correlation_matrix,
+        fetch_fund_holds,
+        fetch_prediction,
+        risk_metrics,
+    )
+
+    cfg = load_config(config_path)
+    console.print("[cyan]正在聚合买方视角数据（预期/资金/风险）…[/cyan]")
+    targets = []
+    for it in cfg.watchlist:
+        if str(it.get("market", "ashare")) == "crypto":
+            continue
+        c = str(it["code"])
+        if code and c != code:
+            continue
+        targets.append((c, str(it.get("name", c)),
+                        str(it.get("market", "ashare"))))
+    if not targets:
+        console.print("[yellow]无标的[/yellow]")
+        return
+
+    # 预期：预测修正
+    preds = []
+    for c, n, m in targets:
+        preds.append(fetch_prediction(c, n))
+    # 资金：基金重仓
+    holds = fetch_fund_holds(cfg, codes=[c for c, _, _ in targets])
+    # 风险
+    risks = [risk_metrics(c, n, m) for c, n, m in targets]
+    corr_names, corr_mat = correlation_matrix(cfg)
+
+    # 终端展示
+    if preds:
+        table = Table(title="盈利预测修正（近 120 天研报 EPS）")
+        table.add_column("标的", justify="left")
+        table.add_column("最新EPS", justify="right")
+        table.add_column("平均EPS", justify="right")
+        table.add_column("方向", justify="left")
+        table.add_column("变化", justify="right")
+        for p in preds:
+            dir_style = {"上修": "red", "下修": "green", "平稳": "yellow"}.get(p.direction, "")
+            d_cell = f"[{dir_style}]{p.direction}[/{dir_style}]" if dir_style else p.direction
+            table.add_row(f"{p.name}({p.code})",
+                          f"{p.latest_eps:.2f}" if p.latest_eps is not None else "-",
+                          f"{p.avg_eps:.2f}" if p.avg_eps is not None else "-",
+                          d_cell,
+                          f"{p.chg_pct:+.1f}%" if p.chg_pct is not None else "-")
+        console.print(table)
+    if holds:
+        table = Table(title=f"公募基金重仓（{holds[0].quarter}）")
+        table.add_column("标的", justify="left")
+        table.add_column("基金家数", justify="right")
+        table.add_column("持股(万股)", justify="right")
+        table.add_column("变动", justify="left")
+        for h in holds:
+            chg_style = "red" if h.change == "增仓" else "green"
+            table.add_row(f"{h.name}({h.code})", str(h.fund_count),
+                          f"{h.hold_shares / 1e4:.0f}" if h.hold_shares else "-",
+                          f"[{chg_style}]{h.change} {h.change_ratio:+.1f}%[/{chg_style}]"
+                          if h.change_ratio is not None else h.change)
+        console.print(table)
+    if risks:
+        table = Table(title="风险收益（近 250 日）")
+        table.add_column("标的", justify="left")
+        table.add_column("年化波动率", justify="right")
+        table.add_column("最大回撤", justify="right")
+        table.add_column("夏普", justify="right")
+        for r in risks:
+            table.add_row(f"{r.name}({r.code})",
+                          f"{r.annual_vol:.1f}%" if r.annual_vol is not None else "-",
+                          f"{r.max_drawdown:.1f}%" if r.max_drawdown is not None else "-",
+                          f"{r.sharpe:.2f}" if r.sharpe is not None else "-")
+        console.print(table)
+    if corr_names and corr_mat:
+        table = Table(title="组合相关性（近 120 日收益）")
+        table.add_column("标的", justify="left")
+        for i, n in enumerate(corr_names):
+            table.add_column(n[:5], justify="right")
+        for i, n in enumerate(corr_names):
+            table.add_row(n[:6], *[f"{v:.2f}" for v in corr_mat[i]])
+        console.print(table)
+    print_disclaimer()
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"买方视角 {datetime.now():%Y-%m-%d}"]
+            for p in preds:
+                lines.append(f"{p.name} 预测{p.direction}({p.chg_pct:+.1f}%)")
+            for h in holds:
+                lines.append(f"{h.name} 基金{h.change}{h.change_ratio:+.1f}%")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    if report:
+        html, md = build_buyer_report(preds, holds, risks,
+                                      corr_names, corr_mat)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"buyer-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]买方视角报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "买方视角"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"buyer-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_industry(config_path: str | None, report: bool = False,
                  push: bool = False, detail: bool = False) -> None:
     """汽车行业景气数据（乘联会 CPCA）；--detail 含细分/国别/锂价。"""
@@ -3046,6 +3166,10 @@ def main() -> None:
     p_industry.add_argument("--push", action="store_true", help="推送 webhook")
     p_industry.add_argument("--detail", action="store_true",
                             help="分析师版：细分市场/国别结构/碳酸锂价格")
+    p_buyer = sub.add_parser("buyer", help="买方视角（预测修正/基金重仓/风险收益）")
+    p_buyer.add_argument("code", nargs="?", default="", help="指定代码")
+    p_buyer.add_argument("--report", action="store_true", help="生成报告")
+    p_buyer.add_argument("--push", action="store_true", help="推送 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3169,6 +3293,9 @@ def main() -> None:
     elif args.command == "industry":
         run_industry(args.config, report=args.report, push=args.push,
                      detail=getattr(args, "detail", False))
+    elif args.command == "buyer":
+        run_buyer(args.code or None, args.config,
+                  report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

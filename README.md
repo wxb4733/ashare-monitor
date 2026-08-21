@@ -428,3 +428,9 @@ python -m ashare_monitor.main industry --report --push
 python -m ashare_monitor.main industry --detail --report
 # 细分市场：A00/A0/A/B/C 级别销量；国别结构：自主/德系/日系/美系份额
 # 碳酸锂：广期所 LC0 主力价格（比亚迪核心成本变量，60 日变化）
+
+# 买方视角（预测修正 / 基金重仓 / 风险收益 / 相关性）
+python -m ashare_monitor.main buyer --report --push
+# 预期：研报 EPS 最新 vs 平均 → 上修/下修方向
+# 资金：公募基金季度重仓（家数/持股/增减仓）
+# 风险：年化波动率/最大回撤/夏普（无风险利率2%）；组合相关性（日期对齐）
