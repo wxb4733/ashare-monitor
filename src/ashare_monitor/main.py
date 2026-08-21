@@ -1264,6 +1264,83 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_profile(code: str, config_path: str | None,
+                report: bool = False) -> None:
+    """公司档案：工商信息 + 股权结构。"""
+    from pathlib import Path
+
+    from .holders import fetch_top10
+    from .profile import (
+        build_profile_report,
+        fetch_profile,
+        infer_controller,
+    )
+
+    cfg = load_config(config_path)
+    if not code:
+        console.print("[red]请指定股票代码：profile 002594[/red]")
+        return
+    market = "hk" if len(code) == 5 and code.isdigit() else "ashare"
+    console.print(f"[cyan]正在获取 {code} 公司档案…[/cyan]")
+    p = fetch_profile(code, market)
+    holders, report_date = [], ""
+    try:
+        holders, report_date = fetch_top10(code, market)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]股权结构获取失败：{exc}[/yellow]")
+
+    # 终端输出
+    console.print(f"[bold cyan]{p.full_name or p.name or code}（{code}）[/bold cyan]")
+    if p.legal_person:
+        console.print(
+            f"  法人: {p.legal_person} | 注册资金: "
+            f"{p.reg_capital / 10000:.2f} 亿" if p.reg_capital and p.reg_capital >= 10000
+            else f"  法人: {p.legal_person} | 注册资金: {p.reg_capital:.0f} 万"
+            if p.reg_capital else f"  法人: {p.legal_person}"
+        )
+        console.print(
+            f"  成立: {p.founded} | 上市: {p.listed} | 行业: {p.industry}"
+        )
+        console.print(f"  注册地: {p.reg_address}")
+        if p.main_biz:
+            console.print(f"  主营: {p.main_biz[:80]}")
+    for err in p.errors:
+        console.print(f"[yellow]  ⚠ {err}[/yellow]")
+    if holders:
+        total = sum(h.ratio for h in holders if h.ratio is not None)
+        controller = infer_controller(holders)
+        console.print(f"[bold cyan]股权结构（十大股东合计 {total:.1f}%）[/bold cyan]")
+        table = Table()
+        table.add_column("名次", justify="right")
+        table.add_column("股东", justify="left")
+        table.add_column("占比", justify="right")
+        table.add_column("变动", justify="left")
+        for h in holders[:8]:
+            table.add_row(str(h.rank), h.name,
+                          f"{h.ratio:.2f}%" if h.ratio is not None else "-",
+                          h.change)
+        console.print(table)
+        if controller:
+            console.print(f"[cyan]疑似实控人（推断）: {controller}[/cyan]")
+    print_disclaimer()
+
+    if report:
+        html, md = build_profile_report(p, holders, report_date)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"profile-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]公司档案报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "公司档案"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"profile-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_litigation(code: str | None, config_path: str | None,
                    days: int = 365, report: bool = False,
                    push: bool = False) -> None:
@@ -2199,6 +2276,10 @@ def main() -> None:
                        help="生成诉讼监控报告（HTML + Obsidian）")
     p_lit.add_argument("--push", action="store_true",
                        help="推送诉讼摘要 webhook")
+    p_profile = sub.add_parser("profile", help="公司档案（工商信息 + 股权结构）")
+    p_profile.add_argument("code", help="证券代码，如 002594")
+    p_profile.add_argument("--report", action="store_true",
+                           help="生成公司档案报告（HTML + Obsidian）")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2282,6 +2363,8 @@ def main() -> None:
     elif args.command == "litigation":
         run_litigation(args.code or None, args.config, days=args.days,
                        report=args.report, push=args.push)
+    elif args.command == "profile":
+        run_profile(args.code, args.config, report=args.report)
     else:
         run_monitor(args.config)
 

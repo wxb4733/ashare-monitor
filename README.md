@@ -384,3 +384,9 @@ python -m ashare_monitor.main litigation --report --push
 # 数据源：巨潮资讯 p_sysapi1055（经 akshare）；入库 SQLite 去重（code+period）
 # 注意：仅覆盖达到重大诉讼披露标准的公司；未出现=近 N 天无重大诉讼（正常）
 # 专利数据：免费源不可用（Google Patents 被墙/CNIPA 需登录），需天眼查/智慧芽连接器
+
+# 公司档案（工商信息 + 股权结构）
+python -m ashare_monitor.main profile 002594 --report
+# 工商来源：巨潮资讯 stock_profile_cninfo（法人/注册资本/成立上市日期/地址/主营/经营范围）
+# 股权来源：东财 F10 十大股东（复用 holders）；实控人为规则化推断（持股最多自然人）
+# 完整股权穿透需企查查/天眼查连接器
