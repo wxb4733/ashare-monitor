@@ -1602,6 +1602,99 @@ def run_valuation(code: str | None, config_path: str | None, years: int = 5,
     )
 
 
+def run_industry(config_path: str | None, report: bool = False,
+                 push: bool = False) -> None:
+    """汽车行业景气数据（乘联会 CPCA）。"""
+    import os
+    from pathlib import Path
+
+    from .industry import build_industry_report, fetch_industry
+
+    cfg = load_config(config_path)
+    console.print("[cyan]正在拉取乘联会行业数据…[/cyan]")
+    try:
+        ind = fetch_industry()
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]行业数据获取失败：{exc}[/red]")
+        return
+    for err in ind.errors:
+        console.print(f"[yellow]  ⚠ {err}[/yellow]")
+
+    tot = ind.total.latest()
+    ne = ind.new_energy.latest()
+    pen = sorted(ind.penetration.items(),
+                 key=lambda kv: kv[0])[-1] if ind.penetration else None
+    console.print(
+        f"[bold cyan]乘联会行业数据[/bold cyan] | 总销量 "
+        f"{tot[1]:.1f} 万辆（{tot[0]}）" if tot else "[yellow]总销量缺失[/yellow]"
+    )
+    if ne:
+        console.print(f"  新能源 {ne[1]:.1f} 万辆（{ne[0]}）")
+    if pen:
+        console.print(f"  渗透率 {pen[1]:.1f}%（{pen[0]}）")
+
+    months = sorted(ind.total.data.keys())[-6:]
+    table = Table(title="月度趋势（近 6 期）")
+    table.add_column("月份", justify="left")
+    table.add_column("总销量(万辆)", justify="right")
+    table.add_column("新能源(万辆)", justify="right")
+    table.add_column("渗透率", justify="right")
+    for m in months:
+        d = ind.total.data[m]
+        nd = ind.new_energy.data.get(m, {})
+        table.add_row(m,
+                      f"{max(d.values()):.1f}",
+                      f"{max(nd.values()):.1f}" if nd else "-",
+                      f"{ind.penetration.get(m):.1f}%"
+                      if ind.penetration.get(m) is not None else "-")
+    console.print(table)
+    if ind.man_rank:
+        rtable = Table(title="厂商排名（TOP10）")
+        rtable.add_column("排名", justify="right")
+        rtable.add_column("厂商", justify="left")
+        rtable.add_column("最新(万辆)", justify="right")
+        rtable.add_column("同比", justify="right")
+        for x in ind.man_rank[:10]:
+            chg = f"{x['chg']:+.1f}%" if x["chg"] is not None else "-"
+            style = "red" if (x["chg"] or 0) >= 0 else "green"
+            rtable.add_row(str(x["rank"]), x["name"],
+                           f"{x['cur']:.1f}" if x["cur"] is not None else "-",
+                           f"[{style}]{chg}[/{style}]" if x["chg"] is not None else "-")
+        console.print(rtable)
+    console.print("[dim]口径：批发量；渗透率按新能源/总销量估算；中汽研官方产品需授权[/dim]")
+    print_disclaimer()
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = ["汽车行业数据（乘联会）"]
+            if tot:
+                lines.append(f"总销量 {tot[1]:.1f} 万辆（{tot[0]}）")
+            if pen:
+                lines.append(f"渗透率 {pen[1]:.1f}%")
+            for x in ind.man_rank[:3]:
+                lines.append(f"{x['rank']}. {x['name']} {x['cur']:.1f} 万辆"
+                             if x["cur"] else f"{x['rank']}. {x['name']}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    if report:
+        html, md = build_industry_report(ind)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"industry-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]行业数据报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "行业数据"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"industry-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_radar(code: str | None, config_path: str | None,
               report: bool = False, push: bool = False) -> None:
     """信号聚合雷达：多维度多空计分。"""
@@ -2900,6 +2993,9 @@ def main() -> None:
     p_daily.add_argument("code", nargs="?", default="", help="指定代码")
     p_daily.add_argument("--report", action="store_true", help="生成报告")
     p_daily.add_argument("--push", action="store_true", help="推送 webhook")
+    p_industry = sub.add_parser("industry", help="汽车行业景气数据（乘联会 CPCA）")
+    p_industry.add_argument("--report", action="store_true", help="生成报告")
+    p_industry.add_argument("--push", action="store_true", help="推送 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3020,6 +3116,8 @@ def main() -> None:
     elif args.command == "daily":
         run_daily(args.code or None, args.config,
                   report=args.report, push=args.push)
+    elif args.command == "industry":
+        run_industry(args.config, report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

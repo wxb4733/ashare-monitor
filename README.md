@@ -419,3 +419,8 @@ python -m ashare_monitor.main sector 002594 --report    # 月度产销快报（�
 python -m ashare_monitor.main radar --report --push   # 18 维信号多空计分（≥+2偏多/≤-2偏空）
 python -m ashare_monitor.main daily --report --push   # 一键日报（行情+雷达+择时+事件+估值+研报+增减持+K线健康）
 # radar 计分：技术/筹码/资金/估值/事件/增减持/质押/研报/产销；缺失维度不计分
+
+# 汽车行业景气数据（乘联会 CPCA）
+python -m ashare_monitor.main industry --report --push
+# 月度总销量/新能源渗透率/厂商排名TOP10；口径：批发量
+# 说明：中汽研(catarc.info)官方数据产品需授权；本命令用乘联会公开数据
