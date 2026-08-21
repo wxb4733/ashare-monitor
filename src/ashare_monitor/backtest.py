@@ -149,6 +149,8 @@ def dca_backtest(
         if ym not in seen:
             seen.add(ym)
             monthly_idx.append(i)
+    # 回看最近 months 个月（默认取最近 N 笔，而非上市以来前 N 笔）
+    monthly_idx = monthly_idx[-months:]
 
     # 每笔：买 + 持有，卖出日需在数据范围内
     trades = []
@@ -182,7 +184,8 @@ def dca_backtest(
 
     if not trades:
         raise RuntimeError(
-            f"{code} 无可完成交易的月份（持有 {hold_days} 日超出数据范围）"
+            f"{code} 无可完成交易的月份（持有 {hold_days} 日超出数据范围，"
+            f"或每期金额 {amount:,.0f} 不足以买入 1 手——港股 1 手 {lot} 股）"
         )
 
     rets = [t["return_pct"] for t in trades]
@@ -491,6 +494,223 @@ generated_at: {_dt.now():%Y-%m-%d %H:%M:%S}
 每月首个交易日买入 {amount:,.0f} 元，持有 {hold_days} 个交易日卖出，近 {months} 个月。
 
 {chr(10).join(md_rows)}
+
+> 历史价格模拟，未计佣金税费，不构成投资建议。
+"""
+    return html, md
+
+
+def dca_portfolio(
+    codes: list[str],
+    weights: list[float] | None = None,
+    amount: float = 10000.0,
+    months: int = 60,
+    hold_days: int = 250,
+) -> dict:
+    """组合定投回测：多标的按权重每月同额定投，按月份对齐合成组合收益。
+
+    :param codes: 标代码列表（A 股 6 位 / 港股 5 位）
+    :param weights: 权重 %（缺省等权，自动归一）
+    :return: {portfolio: 组合统计, items: 各标的明细, months_map: 月份对齐明细}
+    """
+    n = len(codes)
+    if n < 2:
+        raise RuntimeError("组合至少需要 2 个标的")
+    w = weights or [100.0 / n] * n
+    if len(w) != n:
+        raise RuntimeError("权重数量与标的数量不一致")
+    total_w = sum(w)
+    if total_w <= 0:
+        raise RuntimeError("权重和需大于 0")
+    w = [x / total_w * 100 for x in w]  # 归一化为 %
+
+    items = []
+    by_month: dict[str, dict[str, float]] = {}  # "YYYY-MM" -> {code: return_pct}
+    for code, wi in zip(codes, w):
+        market = "hk" if len(code) == 5 and code.isdigit() else "ashare"
+        res = dca_backtest(code, market=market, amount=amount * wi / 100,
+                           months=months, hold_days=hold_days)
+        items.append({"code": code, "market": market, "weight_pct": round(wi, 1),
+                      **res})
+        # 按月份对齐（A/H 交易日历不同，不要求同日，各取当月首交易日）
+        for t in res["detail"]:
+            by_month.setdefault(t["buy_date"][:7], {})[code] = t["return_pct"]
+
+    # 组合：仅统计所有标的都覆盖的月份（保证可比）
+    common_months = sorted(
+        (m for m, d in by_month.items() if len(d) == n), reverse=True
+    )
+    combo = []
+    for m in common_months:
+        ret = sum(
+            by_month[m][code] * wi / 100 for code, wi in zip(codes, w)
+        )
+        combo.append({"buy_date": m, "return_pct": round(ret, 2)})
+    if not combo:
+        raise RuntimeError("各标的无共同可交易月份（数据覆盖不一致）")
+
+    rets = [t["return_pct"] for t in combo]
+    wins = [r for r in rets if r > 0]
+    # 组合累计收益（各笔复利）
+    cum = 1.0
+    for t in combo:
+        cum *= (1 + t["return_pct"] / 100)
+    portfolio = {
+        "trades": len(combo),
+        "period": f"{combo[-1]['buy_date']} ~ {combo[0]['buy_date']}",
+        "avg_return_pct": round(sum(rets) / len(rets), 2),
+        "median_return_pct": round(sorted(rets)[len(rets) // 2], 2),
+        "win_rate_pct": round(len(wins) / len(rets) * 100, 1),
+        "best_pct": max(rets),
+        "worst_pct": min(rets),
+        "cum_return_pct": round((cum - 1) * 100, 1),
+        "trades_detail": combo,
+    }
+    return {"portfolio": portfolio, "items": items}
+
+
+def build_portfolio_report(
+    result: dict,
+    amount: float = 10000.0,
+    hold_days: int = 250,
+    months: int = 60,
+    as_of: str | None = None,
+) -> tuple[str, str]:
+    """生成组合定投回测报告（HTML, Markdown）。"""
+    from datetime import datetime as _dt
+
+    as_of = as_of or _dt.now().strftime("%Y-%m-%d")
+    pf = result["portfolio"]
+
+    def _fmt(v, suffix: str = "", nd: int = 1) -> str:
+        return f"{v:.{nd}f}{suffix}" if v is not None else "-"
+
+    def _cls(v: float | None) -> str:
+        if v is None:
+            return ""
+        return "up" if v > 0 else ("down" if v < 0 else "")
+
+    # 组合 + 标的对比表
+    tr = []
+    md_rows = [
+        "| 标的 | 权重 | 笔数 | 平均收益 | 中位数 | 胜率 | 最好 | 最差 | 年化 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    combo_tr = (
+        "<tr style=\"font-weight:600;background:#fff7e6\">"
+        "<td>组合</td><td>100%</td>"
+        f"<td>{pf['trades']}</td><td>{_fmt(pf['avg_return_pct'], '%')}</td>"
+        f"<td>{_fmt(pf['median_return_pct'], '%')}</td>"
+        f"<td>{pf['win_rate_pct']:.0f}%</td>"
+        f"<td>{_fmt(pf['best_pct'], '%')}</td>"
+        f"<td>{_fmt(pf['worst_pct'], '%')}</td>"
+        f"<td>{_fmt(pf['cum_return_pct'], '%')}</td>"
+        "</tr>"
+    )
+    md_rows.insert(1, f"| **组合** | 100% | {pf['trades']} | "
+                     f"{_fmt(pf['avg_return_pct'], '%')} | "
+                     f"{_fmt(pf['median_return_pct'], '%')} | {pf['win_rate_pct']:.0f}% | "
+                     f"{_fmt(pf['best_pct'], '%')} | {_fmt(pf['worst_pct'], '%')} | "
+                     f"{_fmt(pf['cum_return_pct'], '%')} |")
+    for it in result["items"]:
+        style = ("red" if (it["win_rate_pct"] or 0) >= 60 else
+                 ("green" if (it["win_rate_pct"] or 0) <= 40 else ""))
+        win = f"{it['win_rate_pct']:.0f}%"
+        win_cell = f'<span class="{style}">{win}</span>' if style else win
+        tr.append(
+            "<tr>"
+            f"<td>{it['code']}({it['market']})</td><td>{it['weight_pct']:.0f}%</td>"
+            f"<td>{it['trades']}</td>"
+            f'<td class="{_cls(it["avg_return_pct"])}">{_fmt(it["avg_return_pct"], "%")}</td>'
+            f"<td>{_fmt(it['median_return_pct'], '%')}</td>"
+            f"<td>{win_cell}</td>"
+            f'<td class="up">{_fmt(it["best_pct"], "%")}</td>'
+            f'<td class="down">{_fmt(it["worst_pct"], "%")}</td>'
+            f"<td>{_fmt(it['avg_annualized_pct'], '%')}</td>"
+            "</tr>"
+        )
+        md_rows.append(
+            f"| {it['code']}({it['market']}) | {it['weight_pct']:.0f}% | "
+            f"{it['trades']} | {_fmt(it['avg_return_pct'], '%')} | "
+            f"{_fmt(it['median_return_pct'], '%')} | {win} | "
+            f"{_fmt(it['best_pct'], '%')} | {_fmt(it['worst_pct'], '%')} | "
+            f"{_fmt(it['avg_annualized_pct'], '%')} |"
+        )
+    tr.insert(0, combo_tr)
+
+    # 组合逐笔明细（最近 12 笔）
+    dtr = []
+    dmd = []
+    for t in pf["trades_detail"][-12:]:
+        dtr.append(
+            "<tr>"
+            f"<td>{t['buy_date']}</td>"
+            f'<td class="{_cls(t["return_pct"])}">{t["return_pct"]:+.2f}%</td>'
+            "</tr>"
+        )
+        dmd.append(f"| {t['buy_date']} | {t['return_pct']:+.2f}% |")
+    dmd_hdr = "| 买入月 | 组合收益 |\n| --- | --- |"
+
+    css = """
+body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f7f8fa; color: #1f2329; margin: 0; }
+.container { max-width: 1080px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 20px 0 8px; }
+.meta { color: #86909c; font-size: 12px; margin-bottom: 16px; }
+.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #f0f0f0; }
+th { background: #fafafa; color: #666; font-weight: 600; }
+th:first-child, td:first-child { text-align: left; }
+.up { color: #e02e24; } .down { color: #00a870; }
+.footer { color: #86909c; font-size: 12px; text-align: center; padding: 16px 0 8px; }
+"""
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>组合定投回测 {as_of}</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="container">
+<h1>组合定投回测</h1>
+<div class="meta">{as_of} · 每月定投 {amount:,.0f} 元按权重分配，持有 {hold_days} 个交易日卖出 ·
+近 {months} 个月 · 组合累计收益（复利）{_fmt(pf['cum_return_pct'], '%')} · 涨红跌绿</div>
+<h2>组合与标的对</h2>
+<div class="card"><table>
+<tr><th>标的</th><th>权重</th><th>笔数</th><th>平均收益</th><th>中位数</th><th>胜率</th><th>最好</th><th>最差</th><th>累计/年化</th></tr>
+{''.join(tr)}
+</table></div>
+<h2>组合逐笔明细（最近 12 笔）</h2>
+<div class="card"><table>
+<tr><th>买入月</th><th>组合收益</th></tr>
+{''.join(dtr)}
+</table></div>
+<div class="footer">历史价格模拟，未计佣金税费，不构成投资建议。</div>
+</div>
+</body>
+</html>"""
+
+    md = f"""---
+title: 组合定投回测 {as_of}
+date: {as_of}
+tags: [回测, 定投, 组合]
+generated_at: {_dt.now():%Y-%m-%d %H:%M:%S}
+---
+# 组合定投回测 {as_of}
+
+每月定投 {amount:,.0f} 元按权重分配，持有 {hold_days} 个交易日卖出，近 {months} 个月。
+组合累计收益（复利）：**{_fmt(pf['cum_return_pct'], '%')}**
+
+## 组合与标的对
+
+{chr(10).join(md_rows)}
+
+## 组合逐笔明细（最近 12 笔）
+
+{dmd_hdr}
+{chr(10).join(dmd)}
 
 > 历史价格模拟，未计佣金税费，不构成投资建议。
 """

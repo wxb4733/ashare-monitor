@@ -933,6 +933,78 @@ def run_history(code: str, market: str | None, config_path: str | None) -> None:
     print_disclaimer()
 
 
+def run_portfolio(codes: str, weights: str | None, amount: float,
+                  months: int, hold_days: int, config_path: str | None,
+                  report: bool = False) -> None:
+    """组合定投回测：多标的按权重每月定投。"""
+    from pathlib import Path
+
+    from .backtest import build_portfolio_report, dca_portfolio
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    w_list = ([float(x) for x in weights.split(",")]
+              if weights else None)
+    if w_list and len(w_list) != len(code_list):
+        console.print("[red]权重数量与标的不一致[/red]")
+        return
+    console.print(f"[cyan]组合定投回测 {code_list}（权重 "
+                  f"{w_list or ['等权'] * len(code_list)}，每月 {amount:,.0f} 元，"
+                  f"持有 {hold_days} 交易日，近 {months} 月）…[/cyan]")
+    try:
+        result = dca_portfolio(code_list, w_list, amount=amount,
+                               months=months, hold_days=hold_days)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]组合回测失败：{exc}[/red]")
+        return
+    pf = result["portfolio"]
+    table = Table(title="组合定投对比（持有 %d 交易日）" % hold_days)
+    table.add_column("标的", justify="left")
+    table.add_column("权重", justify="right")
+    table.add_column("笔数", justify="right")
+    table.add_column("平均收益", justify="right")
+    table.add_column("胜率", justify="right")
+    table.add_column("最好", justify="right")
+    table.add_column("最差", justify="right")
+    table.add_column("累计/年化", justify="right")
+    for row in [("组合", "100%", pf["trades"], pf["avg_return_pct"],
+                 pf["win_rate_pct"], pf["best_pct"], pf["worst_pct"],
+                 pf["cum_return_pct"])] + [
+        (it["code"], f"{it['weight_pct']:.0f}%", it["trades"],
+         it["avg_return_pct"], it["win_rate_pct"], it["best_pct"],
+         it["worst_pct"], it["avg_annualized_pct"])
+        for it in result["items"]
+    ]:
+        def cell(v: float) -> str:
+            style = "red" if v > 0 else ("green" if v < 0 else "")
+            return f"[{style}]{v:+.1f}%[/{style}]" if style else f"{v:+.1f}%"
+        table.add_row(
+            str(row[0]), str(row[1]), str(row[2]),
+            cell(row[3]), f"{row[4]:.0f}%",
+            cell(row[5]), cell(row[6]), cell(row[7]),
+        )
+    console.print(table)
+    console.print(f"[dim]组合区间 {pf['period']} · 累计收益（复利）{pf['cum_return_pct']:+.1f}%[/dim]")
+    print_disclaimer()
+
+    if report:
+        html, md = build_portfolio_report(result, amount=amount,
+                                          hold_days=hold_days, months=months)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"portfolio-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]组合回测报告已生成: {out_path}[/green]")
+        cfg = load_config(config_path)
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "策略验证"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"portfolio-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_backtest(code: str, market: str | None, buy_date: str | None,
                  amount: float, holds: str, config_path: str | None,
                  dca: bool = False, months: int = 60,
@@ -1188,6 +1260,67 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             vdir = Path(vault) / "策略验证"
             vdir.mkdir(parents=True, exist_ok=True)
             md_path = vdir / f"verify-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
+def run_doctor(code: str, config_path: str | None,
+               report: bool = False) -> None:
+    """个股全方位体检：行情/技术/基本面/筹码/资金/事件/择时 一键汇总评分。"""
+    from pathlib import Path
+
+    from .doctor import build_doctor_report, run_doctor as _run_doctor
+
+    cfg = load_config(config_path)
+    if not code:
+        console.print("[red]请指定股票代码：doctor 002594[/red]")
+        return
+    market = "hk" if len(code) == 5 and code.isdigit() else "ashare"
+    name = code
+    for item in cfg.watchlist:
+        if str(item["code"]) == code:
+            name = str(item.get("name", code))
+            break
+    console.print(f"[cyan]正在体检 {name}({code})…[/cyan]")
+    data = _run_doctor(code, market, name)
+
+    verdict_color = {"强势": "red", "中性": "yellow", "谨慎": "green"}
+    vc = verdict_color.get(data["verdict"], "")
+    total = data["total"]
+    total_str = f"[{vc} bold]{total} {data['verdict']}[/{vc} bold]" if total is not None else "无法评分"
+    console.print(f"[bold cyan]{name}({code}) 综合评分：{total_str}[/bold cyan]")
+    table = Table()
+    table.add_column("维度", justify="left")
+    table.add_column("评分", justify="right")
+    table.add_column("明细", justify="left", overflow="fold")
+    for d in data["dims"]:
+        sc = f"{d['score']}" if d["score"] is not None else "[dim]缺失[/dim]"
+        table.add_row(d["label"], sc, d["detail"])
+    console.print(table)
+    if data["highlights"]:
+        for x in data["highlights"]:
+            console.print(f"[green]★ {x}[/green]")
+    if data["risks"]:
+        for x in data["risks"]:
+            console.print(f"[red]⚠ {x}[/red]")
+    if data["timing_notes"]:
+        for x in data["timing_notes"]:
+            console.print(f"[cyan]择时: {x}[/cyan]")
+    print_disclaimer()
+
+    if report:
+        html, md = build_doctor_report(data)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"doctor-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]体检报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "个股体检"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"doctor-{code}-{today}.md"
             md_path.write_text(md, encoding="utf-8")
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
@@ -1711,6 +1844,17 @@ def main() -> None:
                       help="多标的定投对比，逗号分隔（如 002594,01211）")
     p_bt.add_argument("--chart", action="store_true",
                       help="生成单笔回测 K 线可视化 HTML（含买卖点标注）")
+    p_pf = sub.add_parser("portfolio", help="组合定投回测（多标的按权重）")
+    p_pf.add_argument("codes", help="标的代码，逗号分隔（如 002594,01211）")
+    p_pf.add_argument("--weights", default="",
+                      help="权重 %，逗号分隔（缺省等权，如 60,40）")
+    p_pf.add_argument("--amount", type=float, default=10000.0,
+                      help="每月定投总额（默认 10000）")
+    p_pf.add_argument("--months", type=int, default=60, help="回看月数（默认 60）")
+    p_pf.add_argument("--hold-days", type=int, default=250,
+                      help="持有交易日数（默认 250）")
+    p_pf.add_argument("--report", action="store_true",
+                      help="生成组合回测报告（HTML + Obsidian）")
     p_review = sub.add_parser("review", help="生成复盘报告（默认今天；--backfill 回填历史）")
     p_review.add_argument("--date", help="复盘日期 YYYY-MM-DD，默认今天")
     p_review.add_argument("--backfill", metavar="START",
@@ -1772,6 +1916,10 @@ def main() -> None:
                            help="生成股东分析报告（HTML + Obsidian）")
     p_holders.add_argument("--push", action="store_true",
                            help="推送股东分析摘要 webhook")
+    p_doctor = sub.add_parser("doctor", help="个股全方位体检（评分+汇总报告）")
+    p_doctor.add_argument("code", help="证券代码，如 002594")
+    p_doctor.add_argument("--report", action="store_true",
+                          help="生成体检报告（HTML + Obsidian）")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -1811,6 +1959,10 @@ def main() -> None:
                      args.amount, args.hold_days, args.config,
                      dca=args.dca, months=args.months, detail=args.detail,
                      compare=args.compare, chart=args.chart)
+    elif args.command == "portfolio":
+        run_portfolio(args.codes, args.weights or None, args.amount,
+                      args.months, args.hold_days, args.config,
+                      report=args.report)
     elif args.command == "review":
         run_review(args.date, args.config,
                    backfill_start=args.backfill, backfill_end=args.end)
@@ -1838,6 +1990,8 @@ def main() -> None:
     elif args.command == "holders":
         run_holders(args.code, args.config,
                     report=args.report, push=args.push)
+    elif args.command == "doctor":
+        run_doctor(args.code, args.config, report=args.report)
     else:
         run_monitor(args.config)
 

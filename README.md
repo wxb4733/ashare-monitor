@@ -356,3 +356,11 @@ python -m ashare_monitor.main fundflow --report --push
 python -m ashare_monitor.main holders 002594 --report --push
 # 解读：户数半年减少>10% → 筹码集中（潜在看涨信号）；增加>10% → 分散（潜在承压）
 # 数据源：东方财富 F10（十大股东）/ RPT_HOLDERNUM_DET（户数历史）
+
+# 个股全方位体检（行情/技术/基本面/筹码/资金/事件/择时 一键评分）
+python -m ashare_monitor.main doctor 002594 --report
+
+# 组合定投回测（多标的按权重，月度对齐合成组合收益）
+python -m ashare_monitor.main portfolio 002594,01211 --weights 60,40 --amount 100000 --report
+# 注意：港股 1 手 500 股，月投金额需买得起整手（如比亚迪H约3.7万港元/手）
+# 盘中预警实时推送：monitor 已支持 webhook（设置 ASHARE_MONITOR_WEBHOOK 环境变量即可）
