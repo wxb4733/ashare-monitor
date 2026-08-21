@@ -43,13 +43,17 @@ class IndustryData:
     new_energy: MonthlySeries     # 新能源销量
     penetration: dict[str, float] = field(default_factory=dict)  # {月份: 渗透率%}
     man_rank: list[dict] = field(default_factory=list)          # 厂商排名
+    segment: list[dict] = field(default_factory=list)  # 细分市场 [{"月份", **级别}]
+    country: list[dict] = field(default_factory=list)  # 国别结构 [{"月份", **国别}]
+    lithium: list[dict] = field(default_factory=list)  # 碳酸锂 [{date, close}]
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "total": self.total.data, "new_energy": self.new_energy.data,
             "penetration": self.penetration, "man_rank": self.man_rank,
-            "errors": self.errors,
+            "segment": self.segment, "country": self.country,
+            "lithium": self.lithium, "errors": self.errors,
         }
 
 
@@ -113,6 +117,52 @@ def fetch_industry() -> IndustryData:
                 })
     except Exception as exc:  # noqa: BLE001
         ind.errors.append(f"厂商排名：{exc}")
+    return ind
+
+
+def _parse_flat(df) -> list[dict]:
+    """解析单层结构表（月份列 + 分类列，月份形如 '2025-8月'）。"""
+    import re
+
+    rows = []
+    if df is None or df.empty:
+        return rows
+    for _, r in df.iterrows():
+        month_raw = str(r.iloc[0]).strip()
+        m = re.match(r"(\d{4})-(\d{1,2})月", month_raw)
+        key = (f"{m.group(1)}-{int(m.group(2)):02d}" if m
+               else month_raw.replace("月", ""))
+        row = {"月份": key}
+        for col in df.columns[1:]:
+            v = _num(r[col])
+            if v is not None:
+                row[str(col).strip()] = v
+        rows.append(row)
+    return rows
+
+
+def fetch_detail(ind: IndustryData) -> IndustryData:
+    """detail 模式：细分市场 / 国别结构 / 碳酸锂价格。"""
+    import akshare as ak
+
+    try:
+        ind.segment = _parse_flat(ak.car_market_segment_cpca())
+    except Exception as exc:  # noqa: BLE001
+        ind.errors.append(f"细分市场：{exc}")
+    try:
+        ind.country = _parse_flat(ak.car_market_country_cpca())
+    except Exception as exc:  # noqa: BLE001
+        ind.errors.append(f"国别结构：{exc}")
+    try:
+        df = ak.futures_zh_daily_sina(symbol="LC0")
+        if df is not None and not df.empty:
+            for _, r in df.tail(60).iterrows():
+                ind.lithium.append({
+                    "date": str(r["date"])[:10],
+                    "close": _num(r["close"]),
+                })
+    except Exception as exc:  # noqa: BLE001
+        ind.errors.append(f"碳酸锂：{exc}")
     return ind
 
 
@@ -213,6 +263,7 @@ th:first-child, td:first-child { text-align: left; }
 <tr><th>排名</th><th>厂商</th><th>最新(万辆)</th><th>上年同期</th><th>同比</th></tr>
 {''.join(rtr) if rtr else '<tr><td colspan="5" style="text-align:center;color:#86909c">无数据</td></tr>'}
 </table></div>
+{_detail_sections_html(ind)}
 <div class="footer">数据来源：乘联会（CPCA）公开批发数据；渗透率按新能源/总销量估算。
 中汽研官方数据产品需授权。不构成投资建议。</div>
 </div>
@@ -237,6 +288,74 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 
 {chr(10).join(rmd) if rmd else "无数据。"}
 
+{_detail_sections_md(ind)}
+
 > 数据来源：乘联会（CPCA）公开批发数据，不构成投资建议。
 """
     return html, md
+
+
+def _detail_sections_html(ind: IndustryData) -> str:
+    """detail 数据（细分市场/国别/锂价）的 HTML 段。"""
+    parts = []
+    # 细分市场（最新一期）
+    if ind.segment:
+        latest = ind.segment[-1]
+        cols = [k for k in latest if k != "月份"]
+        rows = "".join(
+            f"<tr><td>{k}</td><td>{latest[k]:.1f} 万辆</td></tr>" for k in cols)
+        parts.append(
+            '<h2>细分市场（' + latest["月份"] + '）</h2>'
+            '<div class="card"><table>'
+            '<tr><th>级别</th><th>销量</th></tr>' + rows + "</table></div>")
+    # 国别结构（最新一期）
+    if ind.country:
+        latest = ind.country[-1]
+        cols = [k for k in latest if k != "月份"]
+        rows = "".join(
+            f"<tr><td>{k}</td><td>{latest[k]:.1f} 万辆（{latest[k]:.1f}%）</td></tr>"
+            for k in cols)
+        parts.append(
+            '<h2>国别结构（' + latest["月份"] + '）</h2>'
+            '<div class="card"><table>'
+            '<tr><th>国别</th><th>销量</th></tr>' + rows + "</table></div>")
+    # 碳酸锂价格
+    if ind.lithium:
+        latest = ind.lithium[-1]
+        close = latest["close"]
+        d60 = ind.lithium[0]["close"]
+        chg60 = (close / d60 - 1) * 100 if d60 else None
+        chg_cell = (f'<span style="color:{"#e02e24" if chg60 >= 0 else "#00a870"}">'
+                    f"{chg60:+.1f}%</span>" if chg60 is not None else "-")
+        parts.append(
+            f'<h2>碳酸锂价格（广期所 LC0 主力）</h2>'
+            f'<div class="card"><table>'
+            f'<tr><th>日期</th><th>收盘(元/吨)</th><th>60日变化</th></tr>'
+            f'<tr><td>{latest["date"]}</td><td>{close:,.0f}</td>'
+            f"<td>{chg_cell}</td></tr></table></div>")
+    return "".join(parts)
+
+
+def _detail_sections_md(ind: IndustryData) -> str:
+    """detail 数据（细分市场/国别/锂价）的 Markdown 段。"""
+    parts = []
+    if ind.segment:
+        latest = ind.segment[-1]
+        cols = [k for k in latest if k != "月份"]
+        rows = "\n".join(f"- **{k}**：{latest[k]:.1f} 万辆" for k in cols)
+        parts.append(f"## 细分市场（{latest['月份']}）\n\n{rows}")
+    if ind.country:
+        latest = ind.country[-1]
+        cols = [k for k in latest if k != "月份"]
+        rows = "\n".join(f"- **{k}**：{latest[k]:.1f} 万辆" for k in cols)
+        parts.append(f"## 国别结构（{latest['月份']}）\n\n{rows}")
+    if ind.lithium:
+        latest = ind.lithium[-1]
+        close = latest["close"]
+        d60 = ind.lithium[0]["close"]
+        chg60 = (close / d60 - 1) * 100 if d60 else None
+        chg_s = f"{chg60:+.1f}%" if chg60 is not None else "-"
+        parts.append(f"## 碳酸锂价格（广期所 LC0）\n\n"
+                     f"- 收盘：{close:,.0f} 元/吨（{latest['date']}）\n"
+                     f"- 60 日变化：{chg_s}")
+    return "\n\n".join(parts)

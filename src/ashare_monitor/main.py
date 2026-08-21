@@ -1622,17 +1622,20 @@ def run_valuation(code: str | None, config_path: str | None, years: int = 5,
 
 
 def run_industry(config_path: str | None, report: bool = False,
-                 push: bool = False) -> None:
-    """汽车行业景气数据（乘联会 CPCA）。"""
+                 push: bool = False, detail: bool = False) -> None:
+    """汽车行业景气数据（乘联会 CPCA）；--detail 含细分/国别/锂价。"""
     import os
     from pathlib import Path
 
-    from .industry import build_industry_report, fetch_industry
+    from .industry import build_industry_report, fetch_detail, fetch_industry
 
     cfg = load_config(config_path)
     console.print("[cyan]正在拉取乘联会行业数据…[/cyan]")
     try:
         ind = fetch_industry()
+        if detail:
+            console.print("[dim]detail 模式：细分市场/国别结构/碳酸锂…[/dim]")
+            ind = fetch_detail(ind)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]行业数据获取失败：{exc}[/red]")
         return
@@ -1680,6 +1683,32 @@ def run_industry(config_path: str | None, report: bool = False,
                            f"{x['cur']:.1f}" if x["cur"] is not None else "-",
                            f"[{style}]{chg}[/{style}]" if x["chg"] is not None else "-")
         console.print(rtable)
+    if detail:
+        if ind.segment:
+            seg = ind.segment[-1]
+            st = Table(title=f"细分市场（{seg['月份']}）")
+            st.add_column("级别", justify="left")
+            st.add_column("销量(万辆)", justify="right")
+            for k, v in seg.items():
+                if k != "月份":
+                    st.add_row(k, f"{v:.1f}")
+            console.print(st)
+        if ind.country:
+            ctr = ind.country[-1]
+            ct = Table(title=f"国别结构（{ctr['月份']}）")
+            ct.add_column("国别", justify="left")
+            ct.add_column("销量(万辆)", justify="right")
+            for k, v in ctr.items():
+                if k != "月份":
+                    ct.add_row(k, f"{v:.1f}")
+            console.print(ct)
+        if ind.lithium:
+            li = ind.lithium
+            d60 = (li[-1]["close"] / li[0]["close"] - 1) * 100 if li[0]["close"] else None
+            console.print(
+                f"[cyan]碳酸锂（广期所 LC0）[/cyan] {li[-1]['close']:,.0f} 元/吨"
+                f"（{li[-1]['date']}）| 60日 {d60:+.1f}%"
+                if d60 is not None else "")
     console.print("[dim]口径：批发量；渗透率按新能源/总销量估算；中汽研官方产品需授权[/dim]")
     print_disclaimer()
     if push:
@@ -3015,6 +3044,8 @@ def main() -> None:
     p_industry = sub.add_parser("industry", help="汽车行业景气数据（乘联会 CPCA）")
     p_industry.add_argument("--report", action="store_true", help="生成报告")
     p_industry.add_argument("--push", action="store_true", help="推送 webhook")
+    p_industry.add_argument("--detail", action="store_true",
+                            help="分析师版：细分市场/国别结构/碳酸锂价格")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3136,7 +3167,8 @@ def main() -> None:
         run_daily(args.code or None, args.config,
                   report=args.report, push=args.push)
     elif args.command == "industry":
-        run_industry(args.config, report=args.report, push=args.push)
+        run_industry(args.config, report=args.report, push=args.push,
+                     detail=getattr(args, "detail", False))
     else:
         run_monitor(args.config)
 

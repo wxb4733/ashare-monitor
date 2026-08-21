@@ -424,3 +424,7 @@ python -m ashare_monitor.main daily --report --push   # 一键日报（行情+�
 python -m ashare_monitor.main industry --report --push
 # 月度总销量/新能源渗透率/厂商排名TOP10；口径：批发量
 # 说明：中汽研(catarc.info)官方数据产品需授权；本命令用乘联会公开数据
+# industry --detail 分析师版（细分市场/国别结构/碳酸锂）
+python -m ashare_monitor.main industry --detail --report
+# 细分市场：A00/A0/A/B/C 级别销量；国别结构：自主/德系/日系/美系份额
+# 碳酸锂：广期所 LC0 主力价格（比亚迪核心成本变量，60 日变化）

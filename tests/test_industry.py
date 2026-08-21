@@ -45,6 +45,43 @@ def test_fetch_industry(monkeypatch):
     assert ind.man_rank[0]["chg"] == pytest.approx(20.4, abs=0.1)
 
 
+def test_parse_flat():
+    import pandas as pd
+
+    from ashare_monitor.industry import _parse_flat
+
+    df = pd.DataFrame([
+        {"月份": "2025-8月", "德系": 12.6, "自主": 69.6},
+        {"月份": "2025-9月", "德系": 12.1, "自主": 70.3},
+    ])
+    rows = _parse_flat(df)
+    assert rows[0]["月份"] == "2025-08"
+    assert rows[0]["自主"] == pytest.approx(69.6)
+
+
+def test_fetch_detail(monkeypatch):
+    import pandas as pd
+
+    from ashare_monitor.industry import IndustryData, MonthlySeries, fetch_detail
+
+    seg_df = pd.DataFrame([{"月份": "2025-8月", "A": 35.6, "B": 31.4}])
+    ctr_df = pd.DataFrame([{"月份": "2025-8月", "自主": 69.6, "德系": 12.6}])
+    li_df = pd.DataFrame([
+        {"date": "2026-06-01", "close": 100000.0},
+        {"date": "2026-08-21", "close": 152160.0},
+    ])
+    monkeypatch.setattr("akshare.car_market_segment_cpca",
+                        lambda: seg_df)
+    monkeypatch.setattr("akshare.car_market_country_cpca",
+                        lambda: ctr_df)
+    monkeypatch.setattr("akshare.futures_zh_daily_sina",
+                        lambda symbol: li_df)
+    ind = fetch_detail(IndustryData(MonthlySeries("总销量"), MonthlySeries("新能源")))
+    assert ind.segment[0]["A"] == pytest.approx(35.6)
+    assert ind.country[0]["自主"] == pytest.approx(69.6)
+    assert ind.lithium[-1]["close"] == pytest.approx(152160.0)
+
+
 def test_build_industry_report():
     from ashare_monitor.industry import (
         IndustryData,
