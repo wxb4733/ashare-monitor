@@ -1264,6 +1264,98 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_hf(code: str, config_path: str | None, org_override: str | None,
+           company_override: str | None, limit: int = 10,
+           report: bool = False, push: bool = False) -> None:
+    """Hugging Face 监测：公司 HF 模型 + 收录论文。"""
+    import os
+    from pathlib import Path
+
+    from .hf import (
+        build_hf_report,
+        fetch_models,
+        fetch_papers,
+        orgs_for,
+    )
+
+    cfg = load_config(config_path)
+    if not code:
+        console.print("[red]请指定股票代码：hf 00700[/red]")
+        return
+    org, company = orgs_for(cfg, code)
+    if org_override:
+        org = org_override
+    if company_override:
+        company = company_override
+    stock_name = code
+    for item in cfg.watchlist:
+        if str(item["code"]) == code:
+            stock_name = str(item.get("name", code))
+            break
+    console.print(f"[cyan]正在获取 {stock_name}({code}) HF 数据"
+                  f"（组织 {'无' if not org else org}，论文检索 {company or code}）…[/cyan]")
+    models, papers = [], []
+    try:
+        models = fetch_models(org, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]HF 模型获取失败：{exc}[/yellow]")
+    try:
+        papers = fetch_papers(company or code, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]HF 论文获取失败：{exc}[/yellow]")
+
+    if models:
+        table = Table(title=f"{stock_name} HF 最新模型（组织 {org}）")
+        table.add_column("模型", justify="left")
+        table.add_column("更新", justify="right")
+        table.add_column("下载", justify="right")
+        table.add_column("点赞", justify="right")
+        table.add_column("任务", justify="left")
+        for m in models:
+            table.add_row(m.id, m.last_modified, f"{m.downloads:,}",
+                          str(m.likes), m.pipeline_tag or "-")
+        console.print(table)
+    else:
+        console.print(f"[yellow]{stock_name} 无 HF 组织模型数据"
+                      "（可用 --org 指定组织，如 --org Qwen）[/yellow]")
+    if papers:
+        console.print(f"[bold cyan]HF 收录论文（{company or code}）[/bold cyan]")
+        for p in papers[:6]:
+            console.print(f"  {p.published} {p.title[:60]} | {p.authors[:30]}")
+    print_disclaimer()
+
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"HF 监测 {stock_name}({code})"]
+            for m in models[:5]:
+                lines.append(f"模型: {m.id}（下载 {m.downloads:,}）")
+            for p in papers[:5]:
+                lines.append(f"论文: {p.published} {p.title[:45]}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+
+    if report:
+        html, md = build_hf_report(
+            code, stock_name, org, company or code, models, papers,
+        )
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"hf-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]HF 监测报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "公司模型"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"hf-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_arxiv(code: str, config_path: str | None, name_override: str | None,
               days: int = 14600, limit: int = 20,
               report: bool = False, push: bool = False) -> None:
@@ -2013,6 +2105,18 @@ def main() -> None:
                          help="生成论文监测报告（HTML + Obsidian）")
     p_arxiv.add_argument("--push", action="store_true",
                          help="推送论文摘要 webhook")
+    p_hf = sub.add_parser("hf", help="HuggingFace 监测（模型 + 收录论文）")
+    p_hf.add_argument("code", help="证券代码，如 00700（腾讯）/ 09988（阿里）")
+    p_hf.add_argument("--org", default="",
+                      help="HF 组织名（缺省用内置映射，如 Qwen / tencent）")
+    p_hf.add_argument("--company", default="",
+                      help="论文检索公司名（缺省用内置英文名）")
+    p_hf.add_argument("--limit", type=int, default=10,
+                      help="最多返回条数（默认 10）")
+    p_hf.add_argument("--report", action="store_true",
+                      help="生成 HF 监测报告（HTML + Obsidian）")
+    p_hf.add_argument("--push", action="store_true",
+                      help="推送 HF 摘要 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2089,6 +2193,10 @@ def main() -> None:
         run_arxiv(args.code, args.config, args.name or None,
                   days=args.days, limit=args.limit,
                   report=args.report, push=args.push)
+    elif args.command == "hf":
+        run_hf(args.code, args.config, args.org or None,
+               args.company or None, limit=args.limit,
+               report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

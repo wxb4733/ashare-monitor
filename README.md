@@ -371,3 +371,10 @@ python -m ashare_monitor.main arxiv 000000 --name Huawei --report  # 自定义�
 # 检索策略：arXiv API abs: 摘要含公司名（API 不返回 affiliation 字段，内容匹配）；--days 可调范围
 # 内置映射：002594/01211→BYD 300750→CATL 600519→Moutai 等；config.local.yaml 的 arxiv 段可覆盖
 # 用途：跟踪上市公司 AI/技术研发动态（华为诺亚方舟：SysEvolve/MoE/Aicir 等）
+
+# HuggingFace 监测（模型 + 收录论文）
+python -m ashare_monitor.main hf 00700 --report     # 腾讯（tencent 组织）
+python -m ashare_monitor.main hf 09988 --report     # 阿里（Qwen 组织）
+python -m ashare_monitor.main hf 002594 --org BYD-Auto  # 自定义组织
+# 数据源：HF API（默认 hf-mirror.com 国内镜像，可设 HF_ENDPOINT 覆盖）
+# 内置组织映射：00700→tencent 09988→Qwen 03690→bytedance-research 等；config 的 hf 段可覆盖
