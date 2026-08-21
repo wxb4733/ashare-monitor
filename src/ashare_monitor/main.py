@@ -1602,6 +1602,138 @@ def run_valuation(code: str | None, config_path: str | None, years: int = 5,
     )
 
 
+def run_radar(code: str | None, config_path: str | None,
+              report: bool = False, push: bool = False) -> None:
+    """信号聚合雷达：多维度多空计分。"""
+    import os
+    from pathlib import Path
+
+    from .radar import build_radar_report, scan_radar
+
+    cfg = load_config(config_path)
+    console.print("[cyan]正在聚合信号雷达（多维度计分）…[/cyan]")
+    radars = scan_radar(cfg, codes=[code] if code else None)
+    if not radars:
+        console.print("[yellow]无数据[/yellow]")
+        return
+    vc = {"偏多": "red", "偏空": "green", "中性": "yellow"}
+    table = Table(title=f"信号聚合雷达（{datetime.now():%Y-%m-%d}）")
+    table.add_column("标的", justify="left")
+    table.add_column("总分", justify="right")
+    table.add_column("判定", justify="left")
+    table.add_column("各维信号", justify="left", overflow="fold")
+    for r in radars:
+        style = vc.get(r.verdict, "")
+        verdict = f"[{style} bold]{r.verdict}[/{style} bold]" if style else r.verdict
+        sigs = []
+        for s in r.signals:
+            if s.score is None:
+                sigs.append(f"[dim]{s.label}缺失[/dim]")
+            elif s.score > 0:
+                sigs.append(f"[red]{s.label}+{s.score:.1f}[/red]")
+            elif s.score < 0:
+                sigs.append(f"[green]{s.label}{s.score:.1f}[/green]")
+            else:
+                sigs.append(f"{s.label}0")
+        table.add_row(f"{r.name}({r.code})", f"{r.total:+.1f}", verdict,
+                      " ".join(sigs))
+    console.print(table)
+    print_disclaimer()
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = ["信号雷达"]
+            for r in radars:
+                lines.append(f"{r.name}({r.code}) {r.total:+.1f} {r.verdict}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    if report:
+        html, md = build_radar_report(radars)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"radar-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]信号雷达报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "信号雷达"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"radar-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
+def run_daily(code: str | None, config_path: str | None,
+              report: bool = False, push: bool = False) -> None:
+    """一键日报：核心信号聚合。"""
+    import os
+    from pathlib import Path
+
+    from .daily import build_daily_data, build_daily_report
+
+    cfg = load_config(config_path)
+    console.print("[cyan]正在聚合每日信号日报…[/cyan]")
+    data = build_daily_data(cfg, codes=[code] if code else None)
+    items = data["items"]
+    if not items:
+        console.print("[yellow]无数据[/yellow]")
+        return
+    table = Table(title=f"每日信号日报（{datetime.now():%Y-%m-%d}）")
+    table.add_column("标的", justify="left")
+    table.add_column("现价/涨跌", justify="right")
+    table.add_column("雷达", justify="right")
+    table.add_column("择时", justify="left", overflow="fold")
+    table.add_column("事件", justify="left", overflow="fold")
+    table.add_column("估值", justify="left", overflow="fold")
+    for x in items:
+        q = x["quote"]
+        price = f"{q['price']:.2f}" if q.get("price") else "-"
+        chg = f"({q['change_pct']:+.2f}%)" if q.get("change_pct") is not None else ""
+        r = x["radar"]
+        radar_cell = f"{r.total:+.1f} {r.verdict}" if r else "-"
+        timing = "、".join(x["timing"]) if x["timing"] else "-"
+        events = "、".join(x["events"]) if x["events"] else "-"
+        val = x["valuation"] or "-"
+        table.add_row(f"{x['name']}({x['code']})", f"{price} {chg}",
+                      radar_cell, timing, events, val)
+    console.print(table)
+    for h in data["health"]:
+        console.print(f"[dim]  {h}[/dim]")
+    print_disclaimer()
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"每日信号日报 {datetime.now():%Y-%m-%d}"]
+            for x in items:
+                r = x["radar"]
+                rc = f"{r.total:+.1f} {r.verdict}" if r else "-"
+                q = x["quote"]
+                price = f"{q['price']:.2f}" if q.get("price") else "-"
+                lines.append(f"{x['name']}({x['code']}) {price} 雷达{rc}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    if report:
+        html, md = build_daily_report(data)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"daily-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]每日日报已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "每日日报"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"daily-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_sector(code: str | None, config_path: str | None,
                report: bool = False, push: bool = False) -> None:
     """月度产销快报（行业景气先行指标）。"""
@@ -2760,6 +2892,14 @@ def main() -> None:
     p_sector.add_argument("code", nargs="?", default="", help="指定代码")
     p_sector.add_argument("--report", action="store_true", help="生成报告")
     p_sector.add_argument("--push", action="store_true", help="推送 webhook")
+    p_radar = sub.add_parser("radar", help="信号聚合雷达（多维度多空计分）")
+    p_radar.add_argument("code", nargs="?", default="", help="指定代码")
+    p_radar.add_argument("--report", action="store_true", help="生成报告")
+    p_radar.add_argument("--push", action="store_true", help="推送 webhook")
+    p_daily = sub.add_parser("daily", help="一键日报（核心信号聚合）")
+    p_daily.add_argument("code", nargs="?", default="", help="指定代码")
+    p_daily.add_argument("--report", action="store_true", help="生成报告")
+    p_daily.add_argument("--push", action="store_true", help="推送 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2874,6 +3014,12 @@ def main() -> None:
     elif args.command == "sector":
         run_sector(args.code or None, args.config,
                    report=args.report, push=args.push)
+    elif args.command == "radar":
+        run_radar(args.code or None, args.config,
+                  report=args.report, push=args.push)
+    elif args.command == "daily":
+        run_daily(args.code or None, args.config,
+                  report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

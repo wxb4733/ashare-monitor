@@ -414,3 +414,8 @@ python -m ashare_monitor.main block 002594              # 大宗交易（折溢�
 python -m ashare_monitor.main valuation 002594 --report # 估值分位（PE/PB 历史百分位）
 python -m ashare_monitor.main sector 002594 --report    # 月度产销快报（行业景气先行指标）
 # 说明：产销快报销量在公告正文（东财内容 API 提取，沙箱偶发空体需本机验证）
+
+# 信号聚合雷达 + 一键日报（汇总裁决层）
+python -m ashare_monitor.main radar --report --push   # 18 维信号多空计分（≥+2偏多/≤-2偏空）
+python -m ashare_monitor.main daily --report --push   # 一键日报（行情+雷达+择时+事件+估值+研报+增减持+K线健康）
+# radar 计分：技术/筹码/资金/估值/事件/增减持/质押/研报/产销；缺失维度不计分
