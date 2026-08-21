@@ -1264,6 +1264,85 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_arxiv(code: str, config_path: str | None, name_override: str | None,
+              days: int = 730, limit: int = 20,
+              report: bool = False, push: bool = False) -> None:
+    """arXiv 论文监测：以指定股票代码对应公司为署名单位的论文。"""
+    import os
+    from pathlib import Path
+
+    from .arxiv import (
+        build_arxiv_report,
+        company_aliases,
+        fetch_company_papers,
+    )
+
+    cfg = load_config(config_path)
+    if not code:
+        console.print("[red]请指定股票代码：arxiv 002594[/red]")
+        return
+    company, aliases = company_aliases(cfg, code)
+    if name_override:
+        company, aliases = name_override, [name_override]
+    if not company:
+        console.print("[yellow]未内置该公司英文名映射，可用 --name 指定英文名"
+                      "（如 arxiv 002594 --name BYD）[/yellow]")
+        return
+    stock_name = code
+    for item in cfg.watchlist:
+        if str(item["code"]) == code:
+            stock_name = str(item.get("name", code))
+            break
+    console.print(f"[cyan]正在检索署名单位含「{company}」的 arXiv 论文"
+                  f"（近 {days} 天）…[/cyan]")
+    try:
+        papers = fetch_company_papers(company, aliases,
+                                      max_results=limit, days=days)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]arXiv 查询失败：{exc}[/red]")
+        return
+    if not papers:
+        console.print(f"[yellow]近 {days} 天未发现以 {company} 为署名单位的论文[/yellow]")
+    else:
+        table = Table(title=f"{stock_name}({code}) 公司署名论文（arXiv）")
+        table.add_column("日期", justify="left")
+        table.add_column("标题", justify="left", overflow="fold")
+        table.add_column("署名单位", justify="left", overflow="fold")
+        for p in papers[:limit]:
+            table.add_row(p.published, p.title, p.affiliation[:50])
+        console.print(table)
+        for p in papers[:3]:
+            console.print(f"[dim]  └─ {p.link} | {p.authors[:60]}[/dim]")
+    print_disclaimer()
+
+    if push and papers:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"{stock_name}({code}) 公司署名论文（arXiv）"]
+            for p in papers[:5]:
+                lines.append(f"{p.published} {p.title[:50]}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+
+    if report:
+        html, md = build_arxiv_report(papers, code, stock_name, company, days)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"arxiv-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]论文监测报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "公司论文"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"arxiv-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_doctor(code: str, config_path: str | None,
                report: bool = False) -> None:
     """个股全方位体检：行情/技术/基本面/筹码/资金/事件/择时 一键汇总评分。"""
@@ -1920,6 +1999,18 @@ def main() -> None:
     p_doctor.add_argument("code", help="证券代码，如 002594")
     p_doctor.add_argument("--report", action="store_true",
                           help="生成体检报告（HTML + Obsidian）")
+    p_arxiv = sub.add_parser("arxiv", help="arXiv 论文监测（公司署名单位）")
+    p_arxiv.add_argument("code", help="证券代码，如 002594（需英文名映射）")
+    p_arxiv.add_argument("--name", default="",
+                         help="公司英文名（缺省用内置映射，如 BYD）")
+    p_arxiv.add_argument("--days", type=int, default=730,
+                         help="回看天数（默认 730）")
+    p_arxiv.add_argument("--limit", type=int, default=20,
+                         help="最多返回论文数（默认 20）")
+    p_arxiv.add_argument("--report", action="store_true",
+                         help="生成论文监测报告（HTML + Obsidian）")
+    p_arxiv.add_argument("--push", action="store_true",
+                         help="推送论文摘要 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -1992,6 +2083,10 @@ def main() -> None:
                     report=args.report, push=args.push)
     elif args.command == "doctor":
         run_doctor(args.code, args.config, report=args.report)
+    elif args.command == "arxiv":
+        run_arxiv(args.code, args.config, args.name or None,
+                  days=args.days, limit=args.limit,
+                  report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 

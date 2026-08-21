@@ -94,6 +94,7 @@ class ObsidianConfig:
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     positions: list[dict] = field(default_factory=list)  # 持仓：code/name/market/cost/shares
+    arxiv: dict = field(default_factory=dict)  # 论文监测：code -> [英文名, 别名...]
     alerts: AlertConfig = field(default_factory=AlertConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     quotes: QuoteConfig = field(default_factory=QuoteConfig)
@@ -127,6 +128,7 @@ def load_config(path: str | None = None) -> Config:
     return Config(
         watchlist=raw.get("watchlist", []) or [],
         positions=raw.get("positions", []) or [],
+        arxiv=raw.get("arxiv", {}) or {},
         alerts=AlertConfig(
             change_pct_threshold=float(alerts_raw.get("change_pct_threshold", 3.0)),
             price_above={str(k): float(v) for k, v in (alerts_raw.get("price_above") or {}).items()},

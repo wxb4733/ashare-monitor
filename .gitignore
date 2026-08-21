@@ -13,3 +13,6 @@ output/
 .pytest_cache/
 .idea/
 .vscode/
+
+# WorkBuddy 自动化运行时状态（不入库）
+.workbuddy/
