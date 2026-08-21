@@ -1264,6 +1264,72 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_gov(code: str | None, config_path: str | None, days: int = 30,
+            report: bool = False, push: bool = False) -> None:
+    """政府侧企业动态：中标/拿地/补助/税收优惠公告。"""
+    import os
+    from pathlib import Path
+
+    from .gov import (
+        GOV_KEYWORDS,
+        build_gov_report,
+        scan_government_dynamics,
+    )
+
+    cfg = load_config(config_path)
+    codes = [code] if code else None
+    console.print(f"[cyan]正在扫描政府相关公告（近 {days} 天）…[/cyan]")
+    try:
+        items = scan_government_dynamics(cfg, codes=codes, limit=30)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]政府动态获取失败：{exc}[/red]")
+        return
+    if not items:
+        console.print(f"[yellow]近期自选股无政府相关公告[/yellow]")
+    else:
+        cat_color = {"招投标": "cyan", "拿地": "red",
+                     "补助补贴": "green", "资质税收": "yellow"}
+        table = Table(title=f"政府侧企业动态（近 {days} 天）")
+        table.add_column("日期", justify="left")
+        table.add_column("标的", justify="left")
+        table.add_column("分类", justify="left")
+        table.add_column("公告", justify="left", overflow="fold")
+        for x in items:
+            style = cat_color.get(x.category, "")
+            cat = f"[{style}]{x.category}[/{style}]" if style else x.category
+            table.add_row(x.date, f"{x.name}({x.code})", cat, x.title)
+        console.print(table)
+    console.print(f"[dim]关键词: {', '.join(GOV_KEYWORDS)}[/dim]")
+    print_disclaimer()
+
+    if push and items:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"政府动态（近 {days} 天）"]
+            for x in items[:8]:
+                lines.append(f"{x.date} {x.name} {x.category}: {x.title[:40]}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+
+    if report:
+        html, md = build_gov_report(items, days)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"gov-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]政府动态报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "政府动态"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"gov-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_profile(code: str, config_path: str | None,
                 report: bool = False) -> None:
     """公司档案：工商信息 + 股权结构。"""
@@ -2280,6 +2346,14 @@ def main() -> None:
     p_profile.add_argument("code", help="证券代码，如 002594")
     p_profile.add_argument("--report", action="store_true",
                            help="生成公司档案报告（HTML + Obsidian）")
+    p_gov = sub.add_parser("gov", help="政府侧企业动态（中标/拿地/补助/税收优惠公告）")
+    p_gov.add_argument("code", nargs="?", default="",
+                       help="指定代码（缺省扫描全部自选股）")
+    p_gov.add_argument("--days", type=int, default=30, help="回看天数（默认 30）")
+    p_gov.add_argument("--report", action="store_true",
+                       help="生成政府动态报告（HTML + Obsidian）")
+    p_gov.add_argument("--push", action="store_true",
+                       help="推送政府动态摘要 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2365,6 +2439,9 @@ def main() -> None:
                        report=args.report, push=args.push)
     elif args.command == "profile":
         run_profile(args.code, args.config, report=args.report)
+    elif args.command == "gov":
+        run_gov(args.code or None, args.config, days=args.days,
+                report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 
