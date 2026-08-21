@@ -366,8 +366,8 @@ python -m ashare_monitor.main portfolio 002594,01211 --weights 60,40 --amount 10
 # 盘中预警实时推送：monitor 已支持 webhook（设置 ASHARE_MONITOR_WEBHOOK 环境变量即可）
 
 # arXiv 论文监测（以指定股票代码对应公司为主题/署名单位）
-python -m ashare_monitor.main arxiv 002594 --report     # 比亚迪（内置 BYD 映射）
+python -m ashare_monitor.main arxiv 002594 --report     # 比亚迪（内置 BYD 映射，默认覆盖近 40 年）
 python -m ashare_monitor.main arxiv 000000 --name Huawei --report  # 自定义英文名
-# 检索策略：arXiv API abs: 摘要含公司名（API 不返回 affiliation 字段，内容匹配）
+# 检索策略：arXiv API abs: 摘要含公司名（API 不返回 affiliation 字段，内容匹配）；--days 可调范围
 # 内置映射：002594/01211→BYD 300750→CATL 600519→Moutai 等；config.local.yaml 的 arxiv 段可覆盖
 # 用途：跟踪上市公司 AI/技术研发动态（华为诺亚方舟：SysEvolve/MoE/Aicir 等）

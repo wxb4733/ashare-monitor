@@ -1265,9 +1265,9 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
 
 
 def run_arxiv(code: str, config_path: str | None, name_override: str | None,
-              days: int = 730, limit: int = 20,
+              days: int = 14600, limit: int = 20,
               report: bool = False, push: bool = False) -> None:
-    """arXiv 论文监测：以指定股票代码对应公司为署名单位的论文。"""
+    """arXiv 论文监测：以指定股票代码对应公司为署名单位的论文（默认覆盖近 40 年）。"""
     import os
     from pathlib import Path
 
@@ -1293,8 +1293,10 @@ def run_arxiv(code: str, config_path: str | None, name_override: str | None,
         if str(item["code"]) == code:
             stock_name = str(item.get("name", code))
             break
+    from .arxiv import _human_days
+
     console.print(f"[cyan]正在检索署名单位含「{company}」的 arXiv 论文"
-                  f"（近 {days} 天）…[/cyan]")
+                  f"（{_human_days(days)}）…[/cyan]")
     try:
         papers = fetch_company_papers(company, aliases,
                                       max_results=limit, days=days)
@@ -1302,7 +1304,7 @@ def run_arxiv(code: str, config_path: str | None, name_override: str | None,
         console.print(f"[red]arXiv 查询失败：{exc}[/red]")
         return
     if not papers:
-        console.print(f"[yellow]近 {days} 天未发现以 {company} 为署名单位的论文[/yellow]")
+        console.print(f"[yellow]{_human_days(days)}未发现以 {company} 为署名单位的论文[/yellow]")
     else:
         table = Table(title=f"{stock_name}({code}) 公司署名论文（arXiv）")
         table.add_column("日期", justify="left")
@@ -2003,8 +2005,8 @@ def main() -> None:
     p_arxiv.add_argument("code", help="证券代码，如 002594（需英文名映射）")
     p_arxiv.add_argument("--name", default="",
                          help="公司英文名（缺省用内置映射，如 BYD）")
-    p_arxiv.add_argument("--days", type=int, default=730,
-                         help="回看天数（默认 730）")
+    p_arxiv.add_argument("--days", type=int, default=14600,
+                         help="回看天数（默认 14600 ≈ 近 40 年，覆盖 arXiv 全历史）")
     p_arxiv.add_argument("--limit", type=int, default=20,
                          help="最多返回论文数（默认 20）")
     p_arxiv.add_argument("--report", action="store_true",

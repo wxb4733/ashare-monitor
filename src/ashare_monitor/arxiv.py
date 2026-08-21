@@ -164,11 +164,21 @@ def company_aliases(cfg, code: str) -> tuple[str, list[str]]:
     return "", []
 
 
+def _human_days(days: int) -> str:
+    """14600 → '近 40 年'；730 → '近 730 天'。"""
+    if days >= 3650 and days % 365 == 0:
+        return f"近 {days // 365} 年"
+    if days >= 365:
+        return f"近 {days / 365:.1f} 年"
+    return f"近 {days} 天"
+
+
 def build_arxiv_report(papers: list[ArxivPaper], code: str, name: str,
                        company: str, days: int,
                        as_of: str | None = None) -> tuple[str, str]:
     """生成公司论文监测报告（HTML, Markdown）。"""
     as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+    span = _human_days(days)
 
     tr = []
     md_rows = [
@@ -213,7 +223,7 @@ th:first-child, td:first-child { text-align: left; }
 <body>
 <div class="container">
 <h1>arXiv 论文监测：{name}（{code}）</h1>
-<div class="meta">{as_of} · 检索署名单位含「{company}」的论文（近 {days} 天）· 数据来源：arXiv API</div>
+<div class="meta">{as_of} · 检索署名单位含「{company}」的论文（{span}）· 数据来源：arXiv API</div>
 <div class="card"><table>
 <tr><th>日期</th><th style="text-align:left">标题</th><th style="text-align:left">署名单位</th><th>方向</th></tr>
 {''.join(tr) if tr else '<tr><td colspan="4" style="text-align:center;color:#86909c">近期无该公司署名论文</td></tr>'}
@@ -231,7 +241,7 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 ---
 # arXiv 论文监测：{name}（{code}）
 
-检索署名单位含「{company}」的论文（近 {days} 天）。
+检索署名单位含「{company}」的论文（{span}）。
 
 {chr(10).join(md_rows) if md_rows else "近期无该公司署名论文。"}
 
