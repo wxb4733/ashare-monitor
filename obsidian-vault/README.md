@@ -46,6 +46,7 @@
 <!-- REPORT_INDEX_START -->
 - [[汇总报告/report-monthly-2026-08-20|月报 2026-08-20]]
 - [[汇总报告/report-weekly-2026-08-20|周报 2026-08-20]]
+- [[汇总报告/report-weekly-2026-08-21|周报 2026-08-21]]
 - [[汇总报告/report-yearly-2026-08-20|年报 2026-08-20]]
 <!-- REPORT_INDEX_END -->
 

@@ -1,0 +1,55 @@
+# =============================================================
+# ashare-monitor 本地配置文件模板（gitignored）
+# 用法：复制本文件为 config.local.yaml，按注释填写真实数据。
+#   在 Windows:  copy config.local.example.yaml config.local.yaml
+#   在 Git Bash: cp config.local.example.yaml config.local.yaml
+# 本文件内容（自选股/持仓/webhook）不会提交到 Git。
+# =============================================================
+
+# ---------- 自选股（必填，5 只示例已就绪） ----------
+# code: A股6位代码 / 港股5位代码；market: ashare / hk / crypto
+watchlist:
+  - {code: "600519", market: "ashare", name: "贵州茅台"}
+  - {code: "000001", market: "ashare", name: "平安银行"}
+  - {code: "300750", market: "ashare", name: "宁德时代"}
+  - {code: "002594", market: "ashare", name: "比亚迪"}
+  - {code: "01211", market: "hk", name: "比亚迪股份"}
+
+# ---------- 持仓（重要！填入后 position/portfolio/risk 才真正工作） ----------
+# cost: 成本价；shares: 持股数量（股）；港股按股，crypto 按币
+# 示例（假数据，替换成你的真实持仓）：
+positions:
+  - {code: "002594", market: "ashare", name: "比亚迪", cost: 85.0, shares: 1000}
+  - {code: "300750", market: "ashare", name: "宁德时代", cost: 180.0, shares: 500}
+  # - {code: "600519", market: "ashare", name: "贵州茅台", cost: 1450.0, shares: 100}
+  # - {code: "01211", market: "hk", name: "比亚迪股份", cost: 95.0, shares: 1000}
+  # - {code: "000001", market: "ashare", name: "平安银行", cost: 11.0, shares: 2000}
+
+# ---------- 预警（可选，默认值即可） ----------
+alerts:
+  change_pct_threshold: 3.0          # 涨跌幅超 3% 预警
+  # price_above: {"002594": 120.0}   # 单票价格上穿预警
+  # price_below: {"002594": 60.0}    # 单票价格下穿预警
+  amplitude_threshold: 5.0           # 振幅超 5% 预警（None 关闭）
+
+# ---------- 论文/模型监测（可选） ----------
+# arXiv 公司英文名映射（默认内置：002594/01211→BYD 300750→CATL 600519→Moutai 000001→Ping An Bank）
+# arxiv:
+#   002594: [BYD Auto, FinDreams]
+# HuggingFace 组织映射（默认内置：00700→tencent 09988→Qwen 等）
+# hf:
+#   002594: [BYD-Auto, BYD]
+
+# ---------- 官网档案（可选） ----------
+# sites:
+#   002594:
+#     website: https://www.bydglobal.com/
+#     notice_url: https://www.bydglobal.com/cn/InvestorRelation.html
+
+# ---------- Obsidian 导出（可选） ----------
+obsidian:
+  vault: "obsidian-vault"
+
+# ---------- 日志（可选） ----------
+logging:
+  level: INFO

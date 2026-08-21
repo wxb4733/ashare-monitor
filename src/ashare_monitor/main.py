@@ -17,6 +17,25 @@ from .config import load_config
 from .notify import ConsoleNotifier, Notifier
 from .quotes import Quote, fetch_spot_quotes, is_market_open, is_trading_time
 
+
+def _load_dotenv(path: str = ".env") -> None:
+    """轻量加载 .env（不覆盖已有环境变量，无外部依赖）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key, value = key.strip(), value.strip().strip("'\"")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError:
+        pass  # 无 .env 文件时静默
+
+
+_load_dotenv()
+
 console = Console()
 logger = logging.getLogger(__name__)
 
