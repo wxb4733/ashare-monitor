@@ -1538,7 +1538,7 @@ def run_position(config_path: str | None, report: bool = False,
 
 def run_timing(code: str | None, config_path: str | None,
                report: bool = False, push: bool = False,
-               forward: int = 5) -> None:
+               forward: int = 5, concentrated: bool = False) -> None:
     """择时买入提醒：收盘后扫描自选股的技术性买点信号。"""
     import os
     from pathlib import Path
@@ -1547,8 +1547,10 @@ def run_timing(code: str | None, config_path: str | None,
 
     cfg = load_config(config_path)
     codes = [code] if code else None
-    console.print(f"[cyan]正在扫描择时买入信号（观察 {forward} 交易日）…[/cyan]")
-    signals = scan_watchlist(cfg, codes=codes, forward=forward)
+    hint = "（仅筹码集中标的）" if concentrated else ""
+    console.print(f"[cyan]正在扫描择时买入信号{hint}（观察 {forward} 交易日）…[/cyan]")
+    signals = scan_watchlist(cfg, codes=codes, forward=forward,
+                             chip_filter=concentrated)
     if not signals:
         console.print("[yellow]今日未触发任何买入信号（可按 --report 生成空报告）[/yellow]")
     else:
@@ -1558,18 +1560,24 @@ def run_timing(code: str | None, config_path: str | None,
         table.add_column("历史命中率", justify="right")
         table.add_column("平均收益", justify="right")
         table.add_column("样本数", justify="right")
+        table.add_column("筹码", justify="left")
+        chip_style = {"集中": "red", "分散": "green"}
         for sg in signals:
             style = ("red" if (sg.win_rate or 0) >= 55 else "")
             win = f"{sg.win_rate:.0f}%" if sg.win_rate is not None else "-"
             win_cell = f"[{style}]{win}[/{style}]" if style else win
             avg = f"{sg.avg_return:+.2f}%" if sg.avg_return is not None else "-"
+            cst = sg.chip_state or "-"
+            c_style = chip_style.get(cst, "")
+            chip_cell = f"[{c_style}]{cst}[/{c_style}]" if c_style else cst
             table.add_row(
                 f"{sg.name}({sg.code})", f"[bold cyan]{sg.label}[/bold cyan]",
-                win_cell, avg, str(sg.signals_count),
+                win_cell, avg, str(sg.signals_count), chip_cell,
             )
         console.print(table)
         for sg in signals:
-            console.print(f"[dim]  └─ {sg.message}[/dim]")
+            extra = f" | 筹码: {sg.chip_desc}" if sg.chip_desc else ""
+            console.print(f"[dim]  └─ {sg.message}{extra}[/dim]")
     console.print(f"[dim]规则: {', '.join(v['label'] for v in RULES.values())}[/dim]")
     print_disclaimer()
 
@@ -1733,6 +1741,8 @@ def main() -> None:
                           help="生成择时信号报告（HTML + Obsidian）")
     p_timing.add_argument("--push", action="store_true",
                           help="有信号时推送 webhook（需 ASHARE_MONITOR_WEBHOOK 环境变量）")
+    p_timing.add_argument("--concentrated", action="store_true",
+                          help="只保留筹码集中标的的信号（需联网查股东户数，A 股）")
     p_position = sub.add_parser("position", help="持仓管理与盈亏日报")
     p_position.add_argument("--live", action="store_true",
                             help="使用实时行情（缺省用本地收盘价）")
@@ -1814,7 +1824,8 @@ def main() -> None:
                    args.forward, args.config, report=args.report)
     elif args.command == "timing":
         run_timing(args.code or None, args.config,
-                   report=args.report, push=args.push, forward=args.forward)
+                   report=args.report, push=args.push, forward=args.forward,
+                   concentrated=args.concentrated)
     elif args.command == "position":
         run_position(args.config, report=args.report,
                      push=args.push, live=args.live)

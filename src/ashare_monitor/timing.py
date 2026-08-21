@@ -60,6 +60,8 @@ class TimingSignal:
     avg_return: float | None = None    # 历史平均收益 %
     signals_count: int = 0             # 历史信号样本数
     signal_date: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
+    chip_state: str | None = None      # 筹码集中度：集中/分散/稳定/None
+    chip_desc: str = ""                # 筹码状态说明
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +69,7 @@ class TimingSignal:
             "rule": self.rule, "label": self.label, "message": self.message,
             "win_rate": self.win_rate, "avg_return": self.avg_return,
             "signals_count": self.signals_count, "signal_date": self.signal_date,
+            "chip_state": self.chip_state, "chip_desc": self.chip_desc,
         }
 
 
@@ -219,8 +222,8 @@ def build_timing_report(
 
     tr = []
     md_rows = [
-        "| 标的 | 信号 | 说明 | 历史命中率 | 平均收益 | 样本数 |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| 标的 | 信号 | 说明 | 历史命中率 | 平均收益 | 样本数 | 筹码 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for sg in all_signals:
         style = ("red" if (sg.win_rate or 0) >= 55 else "")
@@ -234,11 +237,12 @@ def build_timing_report(
             f"<td>{win_cell}</td>"
             f'<td class="{_cls(sg.avg_return)}">{_fmt(sg.avg_return, "%")}</td>'
             f"<td>{sg.signals_count}</td>"
+            f"<td>{sg.chip_state or '-'}</td>"
             "</tr>"
         )
         md_rows.append(
             f"| {sg.name}({sg.code}) | {sg.label} | {sg.message} | "
-            f"{win} | {_fmt(sg.avg_return, '%')} | {sg.signals_count} |"
+            f"{win} | {_fmt(sg.avg_return, '%')} | {sg.signals_count} | {sg.chip_state or '-'} |"
         )
 
     css = """
@@ -269,7 +273,7 @@ th:first-child, td:first-child { text-align: left; }
 <div class="meta">{as_of} · 收盘后扫描自选股 · 历史命中率 = 该信号在标的上近 5 年全部历史信号触发后
 { FORWARD } 个交易日收益为正的比例 · 数据来源：本地回填 K 线</div>
 <div class="card"><table>
-<tr><th>标的</th><th>信号</th><th>说明</th><th>历史命中率</th><th>平均收益</th><th>样本数</th></tr>
+<tr><th>标的</th><th>信号</th><th>说明</th><th>历史命中率</th><th>平均收益</th><th>样本数</th><th>筹码</th></tr>
 {''.join(tr) if tr else '<tr><td colspan="6" style="text-align:center;color:#86909c">今日无买入信号</td></tr>'}
 </table></div>
 <div class="footer">信号为历史统计提示，不构成投资建议。市场有风险，投资需谨慎。</div>
@@ -296,8 +300,12 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 
 
 def scan_watchlist(cfg, codes: list[str] | None = None,
-                   forward: int = FORWARD) -> list[TimingSignal]:
-    """扫描自选股（或指定代码）全部标的，返回所有触发信号。"""
+                   forward: int = FORWARD,
+                   chip_filter: bool = False) -> list[TimingSignal]:
+    """扫描自选股（或指定代码）全部标的，返回所有触发信号。
+
+    :param chip_filter: 只保留「筹码集中」标的的信号（需联网查股东户数，A 股）
+    """
     all_signals: list[TimingSignal] = []
     for item in cfg.watchlist:
         market = str(item.get("market", "ashare"))
@@ -313,7 +321,25 @@ def scan_watchlist(cfg, codes: list[str] | None = None,
             logger.warning("择时扫描：%s 数据读取失败: %s", code, exc)
             continue
         try:
-            all_signals.extend(scan_timing(rows, code, name, market, forward))
+            signals = scan_timing(rows, code, name, market, forward)
         except Exception as exc:  # noqa: BLE001
             logger.warning("择时扫描：%s 信号计算失败: %s", code, exc)
+            continue
+        if not signals:
+            continue
+        # 筹码集中度（联网查询，失败不阻塞；--concentrated 时无数据标的剔除）
+        chip_state, chip_desc = None, ""
+        try:
+            if market == "ashare":
+                from .holders import concentration_status
+
+                chip_state, chip_desc = concentration_status(code)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("择时扫描：%s 筹码状态失败: %s", code, exc)
+        if chip_filter and chip_state != "集中":
+            continue
+        for sg in signals:
+            sg.chip_state = chip_state
+            sg.chip_desc = chip_desc
+        all_signals.extend(signals)
     return all_signals

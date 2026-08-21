@@ -106,3 +106,42 @@ def test_build_holders_report():
     assert "股东户数趋势" in html and "400,000" in html
     assert "不构成投资建议" in html
     assert md.startswith("---\ntitle: 股东分析 比亚迪")
+
+
+def test_concentration_status(monkeypatch):
+    from ashare_monitor.holders import concentration_status
+
+    rows = [
+        HolderNumRow("2026-06-30", 400000, 450000, -11.1, 2.0e6, 5000, 8e11),
+        HolderNumRow("2026-03-31", 450000, 500000, -10.0, 1.8e6, 4400, 8.1e11),
+        HolderNumRow("2025-12-31", 500000, 520000, -3.8, 1.6e6, 4000, 8e11),
+        HolderNumRow("2025-06-30", 520000, 500000, 4.0, 1.5e6, 3800, 7.8e11),
+    ]
+    monkeypatch.setattr("ashare_monitor.holders.fetch_gdhs",
+                        lambda code: rows)
+    state, desc = concentration_status("002594")
+    assert state == "集中"
+    assert "2026-06-30" in desc and "-20.0%" in desc  # 400000/500000-1（anchor=180天前）
+
+
+def test_scan_watchlist_chip_filter(monkeypatch):
+    from ashare_monitor.timing import scan_watchlist
+
+    # 构造 60 天横盘 K 线（无信号，避免依赖真实行情）
+    rows = [{"date": f"2026-01-{i+1:02d}", "open": 10.0, "close": 10.0,
+             "high": 10.2, "low": 9.8, "volume": 10000.0} for i in range(60)]
+    monkeypatch.setattr("ashare_monitor.timing._load_watch_rows",
+                        lambda code, market: rows)
+    monkeypatch.setattr("ashare_monitor.holders.fetch_gdhs",
+                        lambda code: [
+                            HolderNumRow("2026-06-30", 100000, 130000, -23.1,
+                                         2e6, 5000, 8e11),
+                            HolderNumRow("2025-06-30", 130000, 120000, 8.3,
+                                         1.5e6, 3800, 7.8e11),
+                        ])
+
+    class _Cfg:
+        watchlist = [{"code": "002594", "market": "ashare", "name": "比亚迪"}]
+
+    # 无信号时 chip_filter 不影响（空）
+    assert scan_watchlist(_Cfg(), chip_filter=True) == []

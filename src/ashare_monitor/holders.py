@@ -337,3 +337,29 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 > 股东分析为公开信息统计，不构成投资建议。
 """
     return html, md
+
+
+def concentration_status(code: str) -> tuple[str | None, str]:
+    """筹码集中度状态（基于股东户数半年变化）。
+
+    :return: (状态: "集中"/"分散"/"稳定"/None, 说明文本)。失败/无数据返回 (None, "")
+    """
+    try:
+        rows = fetch_gdhs(code)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("筹码状态：%s 户数查询失败: %s", code, exc)
+        return None, ""
+    if len(rows) < 2:
+        return None, ""
+    latest = rows[0]
+    anchor = (datetime.strptime(latest.end_date, "%Y-%m-%d")
+              - timedelta(days=180)).strftime("%Y-%m-%d")
+    base = next((r for r in rows if r.end_date <= anchor), None)
+    if not base or not base.holder_num:
+        return None, ""
+    chg = (latest.holder_num / base.holder_num - 1) * 100
+    state = "集中" if chg <= -10 else ("分散" if chg >= 10 else "稳定")
+    return state, (
+        f"{latest.end_date} 户数 {latest.holder_num:,.0f}，"
+        f"较半年({base.end_date})前 {chg:+.1f}%"
+    )
