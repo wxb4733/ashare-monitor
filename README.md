@@ -440,3 +440,8 @@ python -m ashare_monitor.main period --period daily --push    # 日报
 python -m ashare_monitor.main period --period weekly --push   # 周报（含行业）
 python -m ashare_monitor.main period --period monthly --push  # 月报（含行业）
 # 一屏多视角：卖方（行业渗透率/份额）· 买方（预测修正/基金）· 大股东（倾向）· 雷达（裁决）
+
+# 个股资料完整性体检（check）
+python -m ashare_monitor.main check 002594 --report
+# 18 维度：K线/基本面/估值/筹码/基金/研报/事件/诉讼/工商/官网/产销/行业/北向/增减持/质押/龙虎榜/大宗/研发
+# 状态：OK/WARN/MISSING + 原因（数据源受限如实标注）

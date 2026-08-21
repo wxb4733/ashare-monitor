@@ -1825,6 +1825,54 @@ def run_insider_view(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_check(code: str, config_path: str | None,
+              report: bool = False) -> None:
+    """个股资料完整性体检。"""
+    from pathlib import Path
+
+    from .check import build_check_report, check_stock
+
+    cfg = load_config(config_path)
+    if not code:
+        console.print("[red]请指定代码：check 002594[/red]")
+        return
+    market = "hk" if len(code) == 5 and code.isdigit() else "ashare"
+    name = code
+    for it in cfg.watchlist:
+        if str(it["code"]) == code:
+            name = str(it.get("name", code))
+            break
+    console.print(f"[cyan]正在体检 {name}({code}) 全维度资料…[/cyan]")
+    checks = check_stock(code, name, market, cfg=cfg)
+    table = Table(title=f"资料体检 {name}({code})")
+    table.add_column("维度", justify="left")
+    table.add_column("状态", justify="left")
+    table.add_column("说明", justify="left", overflow="fold")
+    for c in checks:
+        style = {"OK": "green", "WARN": "yellow", "MISSING": "red"}.get(c.status, "")
+        st = f"[{style} bold]{c.status}[/{style} bold]" if style else c.status
+        table.add_row(c.name, st, c.detail)
+    console.print(table)
+    ok_n = sum(1 for c in checks if c.status == "OK")
+    console.print(f"[cyan]体检完成：OK {ok_n} / 共 {len(checks)} 维度[/cyan]")
+    print_disclaimer()
+    if report:
+        html, md = build_check_report(code, name, checks)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"check-{code}-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]体检报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "资料体检"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"check-{code}-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_period_report(period: str, code: str | None, config_path: str | None,
                      push: bool = False) -> None:
     """周期报告（日报/周报/月报，多视角）。"""
@@ -3333,6 +3381,9 @@ def main() -> None:
                           default="daily", help="周期（默认 daily）")
     p_period.add_argument("code", nargs="?", default="", help="指定代码")
     p_period.add_argument("--push", action="store_true", help="推送 webhook")
+    p_check = sub.add_parser("check", help="个股资料完整性体检")
+    p_check.add_argument("code", help="证券代码，如 002594")
+    p_check.add_argument("--report", action="store_true", help="生成体检报告")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3465,6 +3516,8 @@ def main() -> None:
     elif args.command == "period":
         run_period_report(args.period, args.code or None, args.config,
                           push=args.push)
+    elif args.command == "check":
+        run_check(args.code, args.config, report=args.report)
     else:
         run_monitor(args.config)
 
