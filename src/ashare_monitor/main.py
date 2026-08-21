@@ -1741,6 +1741,90 @@ def run_buyer(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_insider_view(code: str | None, config_path: str | None,
+                     report: bool = False, push: bool = False) -> None:
+    """大股东视角：增持/减持决策框架。"""
+    import os
+    from pathlib import Path
+
+    from .insider_view import analyze_insider, build_insider_report
+
+    cfg = load_config(config_path)
+    console.print("[cyan]正在聚合大股东视角（合规闸门 + 信号打分）…[/cyan]")
+    views = []
+    for it in cfg.watchlist:
+        if str(it.get("market", "ashare")) == "crypto":
+            continue
+        c = str(it["code"])
+        if code and c != code:
+            continue
+        name = str(it.get("name", c))
+        try:
+            views.append(analyze_insider(c, name,
+                                         str(it.get("market", "ashare")),
+                                         cfg=cfg))
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]{name}({c}) 分析失败：{exc}[/yellow]")
+    if not views:
+        console.print("[yellow]无数据[/yellow]")
+        return
+    vc = {"增持": "red", "减持": "green", "观望": "yellow"}
+    table = Table(title="大股东视角（增持/减持/观望）")
+    table.add_column("标的", justify="left")
+    table.add_column("总分", justify="right")
+    table.add_column("倾向", justify="left")
+    table.add_column("合规闸门", justify="left", overflow="fold")
+    table.add_column("信号", justify="left", overflow="fold")
+    for x in views:
+        style = vc.get(x.verdict, "")
+        verdict = f"[{style} bold]{x.verdict}[/{style} bold]" if style else x.verdict
+        gates = []
+        for g in x.gates:
+            mark = ("[red]✗[/red]" if g.passed is False
+                    else ("[green]✓[/green]" if g.passed else "[dim]?[/dim]"))
+            gates.append(f"{mark}{g.name}")
+        sigs = []
+        for label, sv, note in x.signals:
+            if sv > 0:
+                sigs.append(f"[red]{label}+{sv:.1f}[/red]")
+            elif sv < 0:
+                sigs.append(f"[green]{label}{sv:.1f}[/green]")
+            else:
+                sigs.append(f"{label}0")
+        table.add_row(f"{x.name}({x.code})", f"{x.total:+.1f}", verdict,
+                      " ".join(gates), " ".join(sigs))
+    console.print(table)
+    for x in views:
+        for i in x.issues:
+            console.print(f"[yellow]  ⚠ {x.name}: {i}[/yellow]")
+    print_disclaimer()
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"大股东视角 {datetime.now():%Y-%m-%d}"]
+            for x in views:
+                lines.append(f"{x.name} {x.total:+.1f} {x.verdict}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    if report:
+        html, md = build_insider_report(views)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"insider-view-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]大股东视角报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "大股东视角"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"insider-view-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_industry(config_path: str | None, report: bool = False,
                  push: bool = False, detail: bool = False) -> None:
     """汽车行业景气数据（乘联会 CPCA）；--detail 含细分/国别/锂价。"""
@@ -3170,6 +3254,10 @@ def main() -> None:
     p_buyer.add_argument("code", nargs="?", default="", help="指定代码")
     p_buyer.add_argument("--report", action="store_true", help="生成报告")
     p_buyer.add_argument("--push", action="store_true", help="推送 webhook")
+    p_insider_view = sub.add_parser("insider_view", help="大股东视角（增持/减持决策框架）")
+    p_insider_view.add_argument("code", nargs="?", default="", help="指定代码")
+    p_insider_view.add_argument("--report", action="store_true", help="生成报告")
+    p_insider_view.add_argument("--push", action="store_true", help="推送 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3296,6 +3384,9 @@ def main() -> None:
     elif args.command == "buyer":
         run_buyer(args.code or None, args.config,
                   report=args.report, push=args.push)
+    elif args.command == "insider_view":
+        run_insider_view(args.code or None, args.config,
+                         report=args.report, push=args.push)
     else:
         run_monitor(args.config)
 
