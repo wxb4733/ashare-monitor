@@ -445,3 +445,10 @@ python -m ashare_monitor.main period --period monthly --push  # 月报（含行�
 python -m ashare_monitor.main check 002594 --report
 # 18 维度：K线/基本面/估值/筹码/基金/研报/事件/诉讼/工商/官网/产销/行业/北向/增减持/质押/龙虎榜/大宗/研发
 # 状态：OK/WARN/MISSING + 原因（数据源受限如实标注）
+
+# 港股研究（按比亚迪标准）
+python -m ashare_monitor.main backfill 01810    # 回填小米 K 线（自动补上市日）
+python -m ashare_monitor.main check 01810 --report  # 港股 11 维体检
+python -m ashare_monitor.main radar 01810           # 雷达（技术面/择时）
+# 港股支持：K线/基本面(东财港股财务)/估值近似(EPS×现价)/择时/事件/诉讼
+# 如实标注：公告/研报/事件接口港股暂不可用；开曼实体无工商档案；官网需 config sites 段

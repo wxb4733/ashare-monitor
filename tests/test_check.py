@@ -20,9 +20,8 @@ def test_check_stock_hk_limited(monkeypatch):
     checks = check_stock("01211", "比亚迪股份", "hk")
     names = {c.name for c in checks}
     assert "K线历史" in names
-    assert "基本面" in names  # 港股标注受限（WARN）
-    hk_notes = [c for c in checks if c.name == "基本面"]
-    assert hk_notes and hk_notes[0].status == "WARN"
+    assert "基本面" in names  # 港股基本面已支持（东财港股财务指标）
+    assert "估值(近似)" in names  # 港股 PE 近似计算
 
 
 def test_check_stock_ashare(monkeypatch):

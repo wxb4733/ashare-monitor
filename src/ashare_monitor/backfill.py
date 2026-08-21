@@ -21,10 +21,11 @@ from .storage import (
 
 logger = logging.getLogger(__name__)
 
-# 比亚迪 A 股 / 港股上市日（用于 K 线回填起点，其他标的走全量兜底）
+# 已知上市日（用于 K 线回填起点，其他标的走全量兜底）
 KNOWN_IPO_DATES = {
     ("ashare", "002594"): "2011-06-30",
     ("hk", "01211"): "2002-07-31",
+    ("hk", "01810"): "2018-07-09",   # 小米集团
 }
 
 
@@ -97,6 +98,9 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
     guard = 0
     while win_start < today and guard < 100:
         guard += 1
+        # 数据已推进到今日（00:00 < now 的时间差会导致空窗口），直接收尾
+        if win_start.date() >= today.date():
+            break
         win_end = min(win_start + timedelta(days=1120), today)  # ≈800 交易日
         url = (f"{api}?param={symbol},day,{win_start:%Y-%m-%d},{win_end:%Y-%m-%d},800,qfq")
         resp = requests.get(url, timeout=20, headers=headers)

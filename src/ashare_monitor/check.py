@@ -61,9 +61,107 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
         checks.append(_miss("K线历史", f"无本地数据：{exc}"))
 
     if market != "ashare":
-        checks.append(_warn("基本面", "港股财报数据源受限"))
-        checks.append(_warn("估值分位", "估值接口仅 A 股"))
-        checks.append(_warn("基金持仓", "基金重仓仅 A 股"))
+        # 港股：基本面 / 估值近似 / 公告 / 研报 / 事件 / 诉讼 / 工商 / 官网 / 择时 / 行业
+        try:
+            from .fundamentals import fetch_financials
+
+            fins = fetch_financials(code, periods=2, market="hk")
+            if fins and fins[0].roe is not None:
+                f0 = fins[0]
+                detail = f"ROE {f0.roe:.1f}%"
+                if f0.profit_yoy is not None:
+                    detail += f" 净利同比 {f0.profit_yoy:+.1f}%（{f0.report_date}）"
+                checks.append(_ok("基本面", detail))
+            else:
+                checks.append(_warn("基本面", "港股财报字段缺失"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_miss("基本面", f"获取失败：{str(exc)[:40]}"))
+        try:
+            from .quotes import fetch_spot_quotes
+            from .fundamentals import fetch_financials as _ff
+
+            fins = _ff(code, periods=2, market="hk")
+            qs, _ = fetch_spot_quotes([code], market="hk")
+            if fins and fins[0].eps and qs:
+                pe = qs[0].price / fins[0].eps
+                checks.append(_ok("估值(近似)",
+                                  f"PE≈{pe:.1f}（EPS {fins[0].eps:.2f} × 现价 {qs[0].price:.2f}）"))
+            else:
+                checks.append(_warn("估值(近似)", "EPS 或现价缺失"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_warn("估值(近似)", f"计算失败：{str(exc)[:40]}"))
+        try:
+            from .announcements import fetch_announcements
+
+            anns = fetch_announcements(code, limit=5)
+            checks.append(_ok("公告", f"{len(anns)} 条" if anns
+                              else "东财接口港股公告暂不可用（如实）"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_warn("公告", f"获取失败：{str(exc)[:40]}"))
+        try:
+            from .announcements import fetch_research_reports
+
+            reps = fetch_research_reports(code, days=90, limit=5)
+            checks.append(_ok("研报", f"近90天 {len(reps)} 篇" if reps
+                              else "东财研报接口港股暂不可用（如实）"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_warn("研报", f"获取失败：{str(exc)[:40]}"))
+        try:
+            from .events import fetch_events
+
+            evs = fetch_events(code, "hk", days=60)
+            checks.append(_ok("事件日历", f"未来 60 天 {len(evs)} 项" if evs
+                              else "港股事件源暂不可用（如实）"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_warn("事件日历", f"获取失败：{str(exc)[:40]}"))
+        try:
+            from .litigation import scan_watchlist_lawsuits
+
+            lits = scan_watchlist_lawsuits(cfg, days=365)
+            lits = [l for l in lits if l.code == code]
+            checks.append(_ok("诉讼监控", f"{len(lits)} 条" if lits
+                              else "港股无公开诉讼记录（开曼实体，如实）"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_warn("诉讼监控", f"获取失败：{str(exc)[:40]}"))
+        try:
+            from .profile import fetch_profile
+
+            p = fetch_profile(code, "hk")
+            if p.legal_person or p.full_name:
+                checks.append(_ok("工商档案", p.full_name or p.name))
+            else:
+                checks.append(_warn("工商档案", "港股开曼实体巨潮无档案（如实）"))
+        except Exception:  # noqa: BLE001
+            checks.append(_warn("工商档案", "获取失败（开曼实体）"))
+        try:
+            from .site import site_links
+
+            sl = site_links(cfg, code, name)
+            if sl.website:
+                checks.append(_ok("官网链接", sl.website))
+            else:
+                checks.append(_warn("官网链接", "无官网（可配置 sites 段）"))
+        except Exception:  # noqa: BLE001
+            checks.append(_warn("官网链接", "获取失败"))
+        try:
+            from .timing import scan_timing
+
+            sigs = scan_timing(rows, code, name, "hk")
+            checks.append(_ok("择时信号", "；".join(s.label for s in sigs[:3])
+                              if sigs else "无信号"))
+        except Exception:  # noqa: BLE001
+            checks.append(_warn("择时信号", "计算失败"))
+        try:
+            from .industry import fetch_industry
+
+            ind = fetch_industry()
+            hit = next((x for x in ind.man_rank
+                        if x["name"] and (name[:2] in x["name"]
+                                          or x["name"][:2] in name)), None)
+            checks.append(_ok("行业数据", f"厂商第 {hit['rank']} 名（{hit['cur']:.1f}万）"
+                              if hit else "乘联会 TOP10 榜无该司（如实）"))
+        except Exception as exc:  # noqa: BLE001
+            checks.append(_miss("行业数据", f"获取失败：{str(exc)[:40]}"))
         return checks
 
     # 2. 基本面
