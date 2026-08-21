@@ -1825,6 +1825,76 @@ def run_insider_view(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_period_report(period: str, code: str | None, config_path: str | None,
+                     push: bool = False) -> None:
+    """周期报告（日报/周报/月报，多视角）。"""
+    import os
+    from pathlib import Path
+
+    from .report import build_period_report, build_report_data
+
+    cfg = load_config(config_path)
+    title = {"daily": "日报", "weekly": "周报", "monthly": "月报"}.get(period, "报告")
+    console.print(f"[cyan]正在生成{title}（多视角聚合）…[/cyan]")
+    data = build_report_data(cfg, period=period, codes=[code] if code else None)
+    items = data["items"]
+    if not items:
+        console.print("[yellow]无数据[/yellow]")
+        return
+    table = Table(title=f"投资{title}（多视角）")
+    table.add_column("标的", justify="left")
+    table.add_column("现价/涨跌", justify="right")
+    table.add_column("雷达", justify="right")
+    table.add_column("买方预期", justify="left")
+    table.add_column("基金", justify="left")
+    table.add_column("大股东", justify="left")
+    table.add_column("卖方行业", justify="left", overflow="fold")
+    for x in items:
+        q = x["quote"]
+        price = f"{q['price']:.2f}" if q.get("price") else "-"
+        chg = f"({q['change_pct']:+.2f}%)" if q.get("change_pct") is not None else ""
+        r = x["radar"]
+        rc = f"{r.total:+.1f} {r.verdict}" if r else "-"
+        ind = x.get("industry")
+        ind_c = (f"渗透{ind['penetration']} 比亚迪{ind['byd_rank']}"
+                 if ind else "-")
+        table.add_row(f"{x['name']}({x['code']})", f"{price} {chg}", rc,
+                      x.get("prediction", "-"), x.get("fund_hold", "-"),
+                      x.get("insider", "-"), ind_c)
+    console.print(table)
+    for h in data.get("health", []):
+        console.print(f"[dim]  {h}[/dim]")
+    print_disclaimer()
+    if push:
+        webhook = os.environ.get("ASHARE_MONITOR_WEBHOOK")
+        if webhook:
+            from .notify import WebhookNotifier
+
+            lines = [f"投资{title} {datetime.now():%Y-%m-%d}"]
+            for x in items:
+                r = x["radar"]
+                rc = f"{r.total:+.1f} {r.verdict}" if r else "-"
+                lines.append(f"{x['name']}({x['code']}) 雷达{rc} "
+                             f"大股东{x.get('insider', '-')} "
+                             f"基金{x.get('fund_hold', '-')}")
+            WebhookNotifier(webhook).send_text("\n".join(lines))
+            console.print("[green]已推送 webhook[/green]")
+    html, md = build_period_report(data)
+    out_dir = Path("output")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    out_path = out_dir / f"{period}-{today}.html"
+    out_path.write_text(html, encoding="utf-8")
+    console.print(f"[green]{title}已生成: {out_path}[/green]")
+    vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+    if vault:
+        vdir = Path(vault) / f"{title}多视角"
+        vdir.mkdir(parents=True, exist_ok=True)
+        md_path = vdir / f"{period}-{today}.md"
+        md_path.write_text(md, encoding="utf-8")
+        console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_industry(config_path: str | None, report: bool = False,
                  push: bool = False, detail: bool = False) -> None:
     """汽车行业景气数据（乘联会 CPCA）；--detail 含细分/国别/锂价。"""
@@ -3258,6 +3328,11 @@ def main() -> None:
     p_insider_view.add_argument("code", nargs="?", default="", help="指定代码")
     p_insider_view.add_argument("--report", action="store_true", help="生成报告")
     p_insider_view.add_argument("--push", action="store_true", help="推送 webhook")
+    p_period = sub.add_parser("period", help="周期报告（日报/周报/月报，多视角）")
+    p_period.add_argument("--period", choices=["daily", "weekly", "monthly"],
+                          default="daily", help="周期（默认 daily）")
+    p_period.add_argument("code", nargs="?", default="", help="指定代码")
+    p_period.add_argument("--push", action="store_true", help="推送 webhook")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3387,6 +3462,9 @@ def main() -> None:
     elif args.command == "insider_view":
         run_insider_view(args.code or None, args.config,
                          report=args.report, push=args.push)
+    elif args.command == "period":
+        run_period_report(args.period, args.code or None, args.config,
+                          push=args.push)
     else:
         run_monitor(args.config)
 

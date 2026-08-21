@@ -434,3 +434,9 @@ python -m ashare_monitor.main buyer --report --push
 # 预期：研报 EPS 最新 vs 平均 → 上修/下修方向
 # 资金：公募基金季度重仓（家数/持股/增减仓）
 # 风险：年化波动率/最大回撤/夏普（无风险利率2%）；组合相关性（日期对齐）
+
+# 周期报告（日报/周报/月报，多视角）
+python -m ashare_monitor.main period --period daily --push    # 日报
+python -m ashare_monitor.main period --period weekly --push   # 周报（含行业）
+python -m ashare_monitor.main period --period monthly --push  # 月报（含行业）
+# 一屏多视角：卖方（行业渗透率/份额）· 买方（预测修正/基金）· 大股东（倾向）· 雷达（裁决）
