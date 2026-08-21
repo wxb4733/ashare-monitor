@@ -396,3 +396,10 @@ python -m ashare_monitor.main gov --report --push
 # 数据源：东财公告标题关键词过滤（招投标/拿地/补助补贴/资质税收四类）
 # 注意：为公告侧动态（公司主动披露）；完整政府数据（纳税信用/社保人数/招投标记录/拿地档案）
 # 免费源全反爬（政府采购网403/土地市场网418），需天眼查/上奇/帆软连接器
+
+# 官方网站链接档案 + 官网公告监控
+python -m ashare_monitor.main site --report
+# 官网链接：工商档案自动获取（巨潮）+ config.local.yaml 的 sites 段扩展
+#   sites: {002594: {website: ..., notice_url: ..., ir_url: ..., social: ...}}
+# 公告监控：可配置 notice_url 抓取（多数官网公告页为 JS 动态加载，抓不到时如实提示，
+# 权威官方公告以东财公告为准）

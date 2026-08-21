@@ -1264,6 +1264,80 @@ def run_verify(code: str, market: str, rule: str | None, days: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_site(code: str | None, config_path: str | None,
+             report: bool = False) -> None:
+    """官方网站链接档案 + 官网公告监控。"""
+    from pathlib import Path
+
+    from .site import (
+        build_site_report,
+        fetch_site_notices,
+        site_links,
+    )
+
+    cfg = load_config(config_path)
+    targets = []
+    for item in cfg.watchlist:
+        c = str(item["code"])
+        if code and c != code:
+            continue
+        targets.append((c, str(item.get("name", c))))
+    if not targets:
+        console.print("[yellow]自选股为空或指定代码不在自选股[/yellow]")
+        return
+
+    links_list, all_notices = [], []
+    console.print("[cyan]正在聚合官方链接并抓取公告…[/cyan]")
+    for c, name in targets:
+        sl = site_links(cfg, c, name)
+        links_list.append(sl)
+        notices, status = fetch_site_notices(sl)
+        if notices:
+            all_notices.extend(notices)
+            console.print(f"[dim]{name}({c})：抓取到 {len(notices)} 条官网公告[/dim]")
+        elif sl.notice_url:
+            console.print(f"[yellow]{name}({c})：{status}[/yellow]")
+        else:
+            console.print(f"[dim]{name}({c})：未配置公告页（官网 {sl.website or '-'}）[/dim]")
+
+    table = Table(title="官方网站链接档案")
+    table.add_column("标的", justify="left")
+    table.add_column("官网", justify="left", overflow="fold")
+    table.add_column("公告页", justify="left", overflow="fold")
+    for sl in links_list:
+        table.add_row(f"{sl.name}({sl.code})", sl.website or "-",
+                      sl.notice_url or "-")
+    console.print(table)
+    if all_notices:
+        ntable = Table(title="官网公告（可解析部分）")
+        ntable.add_column("日期", justify="left")
+        ntable.add_column("标的", justify="left")
+        ntable.add_column("标题", justify="left", overflow="fold")
+        for n in all_notices[:15]:
+            ntable.add_row(n.date, f"{n.name}({n.code})", n.title)
+        console.print(ntable)
+    else:
+        console.print("[yellow]官网公告多为 JS 动态加载，自动抓取不可用"
+                      "（请从公告页链接人工查看；权威公告以东财公告为准）[/yellow]")
+    print_disclaimer()
+
+    if report:
+        html, md = build_site_report(links_list, all_notices)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"site-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]官网档案报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "官网公告"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"site-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_gov(code: str | None, config_path: str | None, days: int = 30,
             report: bool = False, push: bool = False) -> None:
     """政府侧企业动态：中标/拿地/补助/税收优惠公告。"""
@@ -2354,6 +2428,11 @@ def main() -> None:
                        help="生成政府动态报告（HTML + Obsidian）")
     p_gov.add_argument("--push", action="store_true",
                        help="推送政府动态摘要 webhook")
+    p_site = sub.add_parser("site", help="官方网站链接档案 + 官网公告监控")
+    p_site.add_argument("code", nargs="?", default="",
+                        help="指定代码（缺省全部自选股）")
+    p_site.add_argument("--report", action="store_true",
+                        help="生成官网档案报告（HTML + Obsidian）")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -2442,6 +2521,8 @@ def main() -> None:
     elif args.command == "gov":
         run_gov(args.code or None, args.config, days=args.days,
                 report=args.report, push=args.push)
+    elif args.command == "site":
+        run_site(args.code or None, args.config, report=args.report)
     else:
         run_monitor(args.config)
 
