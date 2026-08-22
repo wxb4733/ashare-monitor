@@ -2028,6 +2028,8 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     from .screen import (
         build_screen_report,
         screen_dividend,
+        screen_growth,
+        screen_lowval,
         screen_margin,
         screen_share,
         screen_sgr,
@@ -2045,6 +2047,13 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
         elif metric == "share":
             hits = screen_share(top_n=top_n, min_share=min_yield)
             title = f"市场占有率选股（市占率 ≥ {min_yield}%）"
+        elif metric == "lowval":
+            max_pe = min_yield if min_yield > 5 else 25.0  # min_yield 缺省 3 时用默认 25
+            hits = screen_lowval(top_n=top_n, max_pe=max_pe)
+            title = f"低估选股（PE ≤ {max_pe}）"
+        elif metric == "growth":
+            hits = screen_growth(top_n=top_n, min_growth=min_yield)
+            title = f"高成长选股（净利增速 ≥ {min_yield}%）"
         else:
             hits = screen_dividend(top_n=top_n, min_yield=min_yield,
                                    min_mv=min_mv, max_mv=max_mv)
@@ -2055,7 +2064,38 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     if not hits:
         console.print("[yellow]无结果（可降低阈值）[/yellow]")
         return
-    if metric == "share":
+    if metric == "lowval":
+        table = Table(title=title)
+        table.add_column("#", justify="right")
+        table.add_column("名称", justify="left")
+        table.add_column("代码", justify="left")
+        table.add_column("PE(TTM)", justify="right")
+        table.add_column("PB", justify="right")
+        table.add_column("现价", justify="right")
+        table.add_column("总市值(亿)", justify="right")
+        for i, h in enumerate(hits, 1):
+            table.add_row(str(i), h.name, h.code,
+                          f"[red]{h.pe:.1f}[/red]",
+                          f"{h.pb:.2f}" if h.pb is not None else "-",
+                          f"{h.price:.2f}" if h.price is not None else "-",
+                          f"{h.market_value / 1e8:.0f}"
+                          if h.market_value else "-")
+        console.print(table)
+    elif metric == "growth":
+        table = Table(title=title)
+        table.add_column("#", justify="right")
+        table.add_column("名称", justify="left")
+        table.add_column("代码", justify="left")
+        table.add_column("净利增速%", justify="right")
+        table.add_column("营收增速%", justify="right")
+        table.add_column("归母净利(亿)", justify="right")
+        for i, h in enumerate(hits, 1):
+            table.add_row(str(i), h.name, h.code,
+                          f"[red]{h._growth:.1f}[/red]",
+                          f"{h._rev_growth:.1f}",
+                          f"{h._net_profit:.1f}")
+        console.print(table)
+    elif metric == "share":
         table = Table(title=title)
         table.add_column("#", justify="right")
         table.add_column("名称", justify="left")
@@ -2125,7 +2165,8 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
         params = {"top": top_n, "min_yield%": min_yield,
                   "min_mv亿": min_mv or "-", "max_mv亿": max_mv or "-"}
         metric_name = {"sgr": "持续增长率", "margin": "高利润率",
-                       "share": "市场占有率"}.get(metric, "高股息率")
+                       "share": "市场占有率", "lowval": "低估",
+                       "growth": "高成长"}.get(metric, "高股息率")
         html, md = build_screen_report(hits, metric_name, params)
         out_dir = Path("output")
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -3703,8 +3744,7 @@ def main() -> None:
     p_check.add_argument("--report", action="store_true", help="生成体检报告")
     p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")
     p_screen.add_argument("--metric", default="dividend",
-                          help="指标：dividend 高股息率 / sgr 持续增长率 / "
-                               "margin 高利润率 / share 市场占有率")
+                          help="指标：dividend/sgr/margin/share/lowval/growth")
     p_screen.add_argument("--top", type=int, default=60, help="返回 TOP N")
     p_screen.add_argument("--min-yield", type=float, default=3.0,
                           help="最低股息率 %（默认 3）")

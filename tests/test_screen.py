@@ -178,6 +178,59 @@ def test_screen_share(monkeypatch):
     assert mt._industry == "白酒Ⅱ"
 
 
+def test_screen_lowval(monkeypatch):
+    from ashare_monitor.screen import screen_lowval
+
+    report = {
+        "000001": {"SECURITY_CODE": "000001", "SECURITY_NAME_ABBR": "平安银行",
+                   "PE_TTM": 5.1, "PB_MRQ": 0.47, "CLOSE_PRICE": 11.41,
+                   "TOTAL_MARKET_CAP": 2214e8},
+        "600519": {"SECURITY_CODE": "600519", "SECURITY_NAME_ABBR": "贵州茅台",
+                   "PE_TTM": 22.0, "PB_MRQ": 7.0, "CLOSE_PRICE": 1450.0,
+                   "TOTAL_MARKET_CAP": 1.8e12},
+        "300999": {"SECURITY_CODE": "300999", "SECURITY_NAME_ABBR": "金龙鱼",
+                   "PE_TTM": 60.0, "PB_MRQ": 3.0, "CLOSE_PRICE": 30.0,
+                   "TOTAL_MARKET_CAP": 1600e8},   # PE>25 过滤
+        "430282": {"SECURITY_CODE": "430282", "SECURITY_NAME_ABBR": "土友生物",
+                   "PE_TTM": 3.0, "PB_MRQ": 0.5, "CLOSE_PRICE": 5.0,
+                   "TOTAL_MARKET_CAP": 10e8},      # 北交所排除
+    }
+    monkeypatch.setattr("ashare_monitor.screen._fetch_valuation_all",
+                        lambda d: report)
+    hits = screen_lowval(top_n=10, max_pe=25.0, min_pe=5.0)
+    codes = {h.code for h in hits}
+    assert "000001" in codes
+    assert "600519" not in codes      # PE 22 <25 应入选？PB 7 >5 被过滤
+    assert "300999" not in codes      # PE 高
+    assert "430282" not in codes      # 北交所
+    assert hits[0].code == "000001"   # PE 最低排前
+
+
+def test_screen_growth(monkeypatch):
+    from ashare_monitor.screen import screen_growth
+
+    report = {
+        "301308": {"SECURITY_CODE": "301308", "SECURITY_NAME_ABBR": "江波龙",
+                   "SJLTZ": 71528.7, "YSTZ": 136.3,
+                   "TOTAL_OPERATE_INCOME": 200e8, "PARENT_NETPROFIT": 105.8e8},
+        "600519": {"SECURITY_CODE": "600519", "SECURITY_NAME_ABBR": "贵州茅台",
+                   "SJLTZ": 15.0, "YSTZ": 12.0,
+                   "TOTAL_OPERATE_INCOME": 900e8, "PARENT_NETPROFIT": 440e8},
+        "600000": {"SECURITY_CODE": "600000", "SECURITY_NAME_ABBR": "浦发银行",
+                   "SJLTZ": -10.0, "YSTZ": -5.0,
+                   "TOTAL_OPERATE_INCOME": 1000e8, "PARENT_NETPROFIT": 300e8},
+    }
+    monkeypatch.setattr("ashare_monitor.screen._fetch_report_all",
+                        lambda d: report)
+    hits = screen_growth(top_n=10, min_growth=30.0)
+    codes = {h.code for h in hits}
+    assert "301308" in codes
+    assert "600519" not in codes      # 增速 15 < 30
+    assert "600000" not in codes      # 负增长
+    j = hits[0]
+    assert j._growth == pytest.approx(71528.7)
+
+
 def test_build_screen_report():
     hits = [
         ScreenHit("601088", "中国神华", 38.9, 5.21, 12.5, 1.8, 7.73e11),

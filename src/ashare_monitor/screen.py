@@ -440,3 +440,130 @@ def screen_share(top_n: int = 60, min_share: float = 15.0,
         hits[-1]._net_profit = npf / 1e8
     hits.sort(key=lambda x: x._share, reverse=True)
     return hits[:top_n]
+
+
+# ===================== 指标 5/6：低估 / 高成长 =====================
+
+# lowval：RPT_VALUEANALYSIS_DET 按交易日全市场（PE_TTM/PB_MRQ/CLOSE_PRICE/TOTAL_MARKET_CAP）
+# growth：业绩报表净利同比 SJLTZ（2026H1）。
+
+_VAL_API = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+
+
+def _fetch_valuation_all(trade_date: str) -> dict[str, dict]:
+    """拉全市场估值（按交易日分页去重）。"""
+    import math
+    import requests
+
+    headers = {"User-Agent": "Mozilla/5.0",
+               "Referer": "https://data.eastmoney.com/"}
+    result: dict[str, dict] = {}
+
+    def one_page(page: int):
+        d = requests.get(
+            _VAL_API,
+            params={
+                "reportName": "RPT_VALUEANALYSIS_DET", "columns": "ALL",
+                "pageSize": 500, "pageNumber": page,
+                "filter": f"(TRADE_DATE='{trade_date}')",
+                "sortColumns": "SECURITY_CODE", "sortTypes": 1,
+                "source": "WEB", "client": "WEB",
+            },
+            headers=headers, timeout=20,
+        ).json()
+        res = d.get("result") or {}
+        return (res.get("data") or []), (res.get("count") or 0)
+
+    rows, count = one_page(1)
+    for r in rows:
+        result.setdefault(str(r.get("SECURITY_CODE") or ""), r)
+    if count > 500:
+        for p in range(2, math.ceil(count / 500) + 1):
+            try:
+                more, _ = one_page(p)
+            except Exception:  # noqa: BLE001
+                continue
+            if not more:
+                break
+            for r in more:
+                result.setdefault(str(r.get("SECURITY_CODE") or ""), r)
+    return result
+
+
+def _latest_trade_date() -> str:
+    """近 5 个自然日内取第一个有数据的交易日。"""
+    import datetime as _dt
+
+    for i in range(5):
+        d = (_dt.datetime.now() - _dt.timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            data = _fetch_valuation_all(d)
+            if data:
+                return d
+        except Exception:  # noqa: BLE001
+            continue
+    return _dt.datetime.now().strftime("%Y-%m-%d")
+
+
+def screen_lowval(top_n: int = 60, max_pe: float = 25.0,
+                  min_pe: float = 5.0, max_pb: float | None = 5.0,
+                  exclude_st: bool = True) -> list[ScreenHit]:
+    """低估选股：低 PE（5~max_pe）+ 可选 PB 上限，按 PE 升序。"""
+    trade_date = _latest_trade_date()
+    report = _fetch_valuation_all(trade_date)
+
+    hits = []
+    for code, r in report.items():
+        name = str(r.get("SECURITY_NAME_ABBR") or "")
+        if exclude_st and ("ST" in name.upper() or "退" in name):
+            continue
+        if code.startswith(("43", "83", "87", "92")):
+            continue
+        pe = _f(r.get("PE_TTM"))
+        pb = _f(r.get("PB_MRQ"))
+        if pe is None or pe <= 0:
+            continue
+        if pe < min_pe or pe > max_pe:
+            continue
+        if max_pb is not None and (pb is None or pb > max_pb):
+            continue
+        hits.append(ScreenHit(
+            code=code, name=name,
+            price=_f(r.get("CLOSE_PRICE")),
+            dividend_yield=None, pe=pe, pb=pb,
+            market_value=_f(r.get("TOTAL_MARKET_CAP")),
+        ))
+    hits.sort(key=lambda x: x.pe or 0)
+    return hits[:top_n]
+
+
+def screen_growth(top_n: int = 60, min_growth: float = 30.0,
+                  min_rev: float = 5.0, exclude_st: bool = True,
+                  report_date: str | None = None) -> list[ScreenHit]:
+    """高成长选股：净利同比 SJLTZ > 阈值。"""
+    report_date = report_date or f"{datetime.now().year}-06-30"
+    report = _fetch_report_all(report_date)
+
+    hits = []
+    for code, r in report.items():
+        name = str(r.get("SECURITY_NAME_ABBR") or "")
+        if exclude_st and ("ST" in name.upper() or "退" in name):
+            continue
+        if code.startswith(("43", "83", "87", "92")):
+            continue
+        g = _f(r.get("SJLTZ"))
+        rev = _f(r.get("TOTAL_OPERATE_INCOME"))
+        npf = _f(r.get("PARENT_NETPROFIT"))
+        if g is None or g < min_growth:
+            continue
+        if rev is None or rev < min_rev * 1e8 or npf is None or npf <= 0:
+            continue
+        hits.append(ScreenHit(
+            code=code, name=name, price=None, dividend_yield=g,
+            pe=None, pb=None, market_value=rev,
+        ))
+        hits[-1]._growth = round(g, 1)
+        hits[-1]._rev_growth = round(_f(r.get("YSTZ")) or 0.0, 1)
+        hits[-1]._net_profit = npf / 1e8
+    hits.sort(key=lambda x: x._growth, reverse=True)
+    return hits[:top_n]

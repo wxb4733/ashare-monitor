@@ -497,3 +497,9 @@ python -m ashare_monitor.main screen --metric margin --top 30 --min-yield 20 --r
 python -m ashare_monitor.main screen --metric share --top 30 --min-yield 20 --report
 # 真实（2026H1 样本）：贵州茅台 86.5% 白酒、大秦铁路 84.3%、工业富联 81.3%
 # 口径：东财 BOARD_NAME 行业分组；行业披露样本<5 跳过；缺失行业跳过（如实）
+
+# 指标 5/6：低估（lowval）/ 高成长（growth）
+python -m ashare_monitor.main screen --metric lowval --top 30          # PE 5~25 + PB≤5
+python -m ashare_monitor.main screen --metric growth --top 30 --min-yield 50  # 净利增速≥50%
+# 真实：低估榜=银行（平安银行 PE 5.1/PB 0.47）；成长榜=江波龙 71528%（存储周期爆发）
+# 口径：低估=当日估值(TRADE_DATE 最近交易日)；成长=2026H1 净利同比 SJLTZ
