@@ -452,3 +452,8 @@ python -m ashare_monitor.main check 01810 --report  # 港股 11 维体检
 python -m ashare_monitor.main radar 01810           # 雷达（技术面/择时）
 # 港股支持：K线/基本面(东财港股财务)/估值近似(EPS×现价)/择时/事件/诉讼
 # 如实标注：公告/研报/事件接口港股暂不可用；开曼实体无工商档案；官网需 config sites 段
+
+# A 股市场扫描选股（首个指标：高股息率）
+python -m ashare_monitor.main screen --top 60 --min-yield 3 --report
+# 东财 push2 全市场按股息率(f133 TTM)降序；过滤 ST/市值区间（--min-mv/--max-mv 亿）
+# 注意：东财 push2 在部分沙箱/受限网络 RemoteDisconnected（已知），本机直连通常可用

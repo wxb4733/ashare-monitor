@@ -1825,6 +1825,63 @@ def run_insider_view(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_screen(metric: str, config_path: str | None, top_n: int,
+               min_yield: float, min_mv: float | None,
+               max_mv: float | None, report: bool = False) -> None:
+    """A 股市场扫描选股（首个指标：高股息率）。"""
+    from pathlib import Path
+
+    from .screen import build_screen_report, screen_dividend
+
+    cfg = load_config(config_path)
+    console.print(f"[cyan]正在扫描 A 股市场（{metric}，TOP {top_n}）…[/cyan]")
+    try:
+        hits = screen_dividend(top_n=top_n, min_yield=min_yield,
+                               min_mv=min_mv, max_mv=max_mv)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{exc}[/red]")
+        return
+    if not hits:
+        console.print("[yellow]无结果（可降低阈值）[/yellow]")
+        return
+    table = Table(title=f"高股息率选股（股息率 ≥ {min_yield}%）")
+    table.add_column("#", justify="right")
+    table.add_column("名称", justify="left")
+    table.add_column("代码", justify="left")
+    table.add_column("现价", justify="right")
+    table.add_column("股息率%", justify="right")
+    table.add_column("PE", justify="right")
+    table.add_column("PB", justify="right")
+    table.add_column("总市值", justify="right")
+    for i, h in enumerate(hits, 1):
+        table.add_row(str(i), h.name, h.code,
+                      f"{h.price:.2f}" if h.price is not None else "-",
+                      f"[red]{h.dividend_yield:.2f}[/red]",
+                      f"{h.pe:.1f}" if h.pe is not None else "-",
+                      f"{h.pb:.2f}" if h.pb is not None else "-",
+                      f"{h.market_value / 1e8:.0f} 亿"
+                      if h.market_value else "-")
+    console.print(table)
+    print_disclaimer()
+    if report:
+        params = {"top": top_n, "min_yield%": min_yield,
+                  "min_mv亿": min_mv or "-", "max_mv亿": max_mv or "-"}
+        html, md = build_screen_report(hits, "高股息率", params)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"screen-dividend-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]选股报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "选股扫描"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"screen-dividend-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_check(code: str, config_path: str | None,
               report: bool = False) -> None:
     """个股资料完整性体检。"""
@@ -3384,6 +3441,17 @@ def main() -> None:
     p_check = sub.add_parser("check", help="个股资料完整性体检")
     p_check.add_argument("code", help="证券代码，如 002594")
     p_check.add_argument("--report", action="store_true", help="生成体检报告")
+    p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")
+    p_screen.add_argument("--metric", default="dividend",
+                          help="指标（当前支持 dividend 高股息率）")
+    p_screen.add_argument("--top", type=int, default=60, help="返回 TOP N")
+    p_screen.add_argument("--min-yield", type=float, default=3.0,
+                          help="最低股息率 %（默认 3）")
+    p_screen.add_argument("--min-mv", type=float, default=None,
+                          help="最小总市值（亿）")
+    p_screen.add_argument("--max-mv", type=float, default=None,
+                          help="最大总市值（亿）")
+    p_screen.add_argument("--report", action="store_true", help="生成选股报告")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3518,6 +3586,9 @@ def main() -> None:
                           push=args.push)
     elif args.command == "check":
         run_check(args.code, args.config, report=args.report)
+    elif args.command == "screen":
+        run_screen(args.metric, args.config, args.top, args.min_yield,
+                   args.min_mv, args.max_mv, report=args.report)
     else:
         run_monitor(args.config)
 
