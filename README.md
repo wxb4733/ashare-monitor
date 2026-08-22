@@ -471,3 +471,7 @@ python -m ashare_monitor.main dividend_rank --years 10 --top-k 20 --report
 # 逐年拉东财分红报表 → 每年 TOP K（或 ≥3%）→ 累计上榜年数排名
 # 真实结果（2017-2026）：冀中能源 5/9 年居首（煤炭钢铁周期高股息）
 # 口径：东财"现金分红-股息率"字段为小数（0.026=2.61%，实测验证）
+# 累计股息率排序（N 年累计派息 ÷ 当前价）
+python -m ashare_monitor.main dividend_rank --sort cum-yield --report
+# 真实结果（2017-2026）：三钢闽光 146%、方大特钢 132%、冀中能源 77%
+# 口径：上榜年份累计每股派息 / 现价（datacenter 逐只取价，降级本地 K 线）

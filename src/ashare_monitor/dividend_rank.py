@@ -29,6 +29,9 @@ class RankStat:
     years_detail: list[int]     # 上榜年份
     best_yield: float | None    # 最高年度股息率 %
     latest_yield: float | None
+    cum_dps: float | None = None    # 累计每股派息（元）
+    price: float | None = None      # 当前价（本地 K 线最新）
+    cum_yield: float | None = None  # 累计股息率 %（累计派息/现价）
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,8 @@ class RankStat:
             "years_detail": self.years_detail,
             "best_yield": self.best_yield,
             "latest_yield": self.latest_yield,
+            "cum_dps": self.cum_dps, "price": self.price,
+            "cum_yield": self.cum_yield,
         }
 
 
@@ -48,6 +53,32 @@ def _f(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _fetch_close_price(code: str) -> float | None:
+    """东财 datacenter 单票最新收盘价。"""
+    import requests
+
+    try:
+        d = requests.get(
+            "https://datacenter-web.eastmoney.com/api/data/v1/get",
+            params={
+                "reportName": "RPT_VALUEANALYSIS_DET",
+                "columns": "ALL", "pageSize": 1, "pageNumber": 1,
+                "filter": f'(SECURITY_CODE="{code}")',
+                "sortColumns": "TRADE_DATE", "sortTypes": -1,
+                "source": "WEB", "client": "WEB",
+            },
+            headers={"User-Agent": "Mozilla/5.0",
+                     "Referer": "https://data.eastmoney.com/"},
+            timeout=10,
+        ).json()
+        rows = (d.get("result") or {}).get("data") or []
+        if rows:
+            return _f(rows[0].get("CLOSE_PRICE"))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _fetch_year(date: str, retries: int = 2):
@@ -77,6 +108,7 @@ def rank_dividend_persistence(years: list[int] | None = None,
     yearly_on: dict[str, set[int]] = {}
     yearly_best: dict[str, float] = {}
     yearly_latest: dict[str, float] = {}
+    cum_dps: dict[str, float] = {}   # 累计每股派息
     valid_years = 0
 
     for year in years:
@@ -92,6 +124,8 @@ def rank_dividend_persistence(years: list[int] | None = None,
         if not dy_col:
             continue
         code_col, name_col = df.columns[0], df.columns[1]
+        dps_col = next((c for c in df.columns if "现金分红比例" in c
+                        or "现金分红-现金分红" in c), None)
         rows = []
         for _, r in df.iterrows():
             dy = _f(r.get(dy_col))
@@ -100,7 +134,9 @@ def rank_dividend_persistence(years: list[int] | None = None,
             dy_pct = dy * 100  # 小数 → %
             code = str(r.get(code_col) or "")
             name = str(r.get(name_col) or "")
-            rows.append((code, name, dy_pct))
+            dps10 = _f(r.get(dps_col)) if dps_col else None
+            dps = dps10 / 10.0 if dps10 is not None else None
+            rows.append((code, name, dy_pct, dps))
         if not rows:
             continue
         if top_k:
@@ -108,20 +144,42 @@ def rank_dividend_persistence(years: list[int] | None = None,
             on_list = rows[:top_k]
         else:
             on_list = [x for x in rows if x[2] >= min_yield]
-        for code, name, dy_pct in on_list:
+        for code, name, dy_pct, dps in on_list:
             yearly_on.setdefault(code, set()).add(year)
             yearly_best[code] = max(yearly_best.get(code, 0.0), dy_pct)
             yearly_latest[code] = dy_pct
             name_by_code.setdefault(code, name)
+            if dps is not None:
+                cum_dps[code] = cum_dps.get(code, 0.0) + dps
+
+    # 当前价：datacenter 单票（逐只）→ 降级本地 K 线
+    price_cache: dict[str, float] = {}
+    for code in yearly_on:
+        got = _fetch_close_price(code)
+        if got is None:
+            try:
+                from .storage import load_klines
+
+                rows = load_klines(code, "ashare")
+                if rows:
+                    got = float(rows[-1]["close"])
+            except Exception:  # noqa: BLE001
+                got = None
+        if got:
+            price_cache[code] = got
 
     stats = []
     for code, yset in yearly_on.items():
+        dps = cum_dps.get(code)
+        price = price_cache.get(code)
+        cy = (dps / price * 100) if dps is not None and price else None
         stats.append(RankStat(
             code=code, name=name_by_code.get(code, code),
             years_on_list=len(yset), total_years=valid_years,
             years_detail=sorted(yset),
             best_yield=yearly_best.get(code),
             latest_yield=yearly_latest.get(code),
+            cum_dps=dps, price=price, cum_yield=cy,
         ))
     stats.sort(key=lambda x: (-x.years_on_list, -(x.best_yield or 0)))
     return stats

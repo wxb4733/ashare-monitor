@@ -1826,9 +1826,9 @@ def run_insider_view(code: str | None, config_path: str | None,
 
 
 def run_dividend_rank(config_path: str | None, years: int,
-                     min_yield: float, top_k: int,
+                     min_yield: float, top_k: int, sort_by: str,
                      report: bool = False) -> None:
-    """股息率榜单时长：占据高股息榜单最久的股票。"""
+    """股息率榜单：上榜年数或累计股息率排序。"""
     from pathlib import Path
 
     from .dividend_rank import (
@@ -1855,20 +1855,32 @@ def run_dividend_rank(config_path: str | None, years: int,
     if not stats:
         console.print("[yellow]无数据（数据源不可达，请本机运行）[/yellow]")
         return
-    table = Table(title=f"股息率榜单时长 TOP{min(30, len(stats))}（{y_start}~{datetime.now().year}）")
+    # 排序：cum-yield 按累计股息率，默认按上榜年数
+    if sort_by == "cum-yield":
+        stats.sort(key=lambda x: -(x.cum_yield or 0))
+        title = f"累计股息率 TOP{min(30, len(stats))}（{y_start}~{datetime.now().year}）"
+    else:
+        title = f"股息率榜单时长 TOP{min(30, len(stats))}（{y_start}~{datetime.now().year}）"
+    table = Table(title=title)
     table.add_column("#", justify="right")
     table.add_column("名称", justify="left")
     table.add_column("代码", justify="left")
     table.add_column("上榜年数", justify="right")
+    table.add_column("累计派息", justify="right")
+    table.add_column("现价", justify="right")
+    table.add_column("累计股息率", justify="right")
     table.add_column("上榜年份", justify="left", overflow="fold")
-    table.add_column("最高股息率", justify="right")
-    for i, s in enumerate(stats[:30], 1):
-        y = "、".join(str(x) for x in s.years_detail[:10])
-        if len(s.years_detail) > 10:
+    for i, st in enumerate(stats[:30], 1):
+        y = "、".join(str(x) for x in st.years_detail[:10])
+        if len(st.years_detail) > 10:
             y += "…"
-        table.add_row(str(i), s.name, s.code,
-                      f"[red]{s.years_on_list}/{s.total_years}[/red]",
-                      y, f"{s.best_yield:.2f}%")
+        table.add_row(str(i), st.name, st.code,
+                      f"{st.years_on_list}/{st.total_years}",
+                      f"{st.cum_dps:.2f}" if st.cum_dps is not None else "-",
+                      f"{st.price:.2f}" if st.price is not None else "-",
+                      f"[red]{st.cum_yield:.2f}%[/red]"
+                      if st.cum_yield is not None else "-",
+                      y)
     console.print(table)
     print_disclaimer()
     if report:
@@ -3587,6 +3599,9 @@ def main() -> None:
                       help="上榜阈值 %（默认 3）")
     p_dr.add_argument("--top-k", type=int, default=50,
                       help="每年按排名取 TOP K（0=用阈值）")
+    p_dr.add_argument("--sort", choices=["years", "cum-yield"],
+                      default="years",
+                      help="排序：years 上榜年数 / cum-yield 累计股息率")
     p_dr.add_argument("--report", action="store_true", help="生成报告")
 
     args = parser.parse_args()
@@ -3730,7 +3745,7 @@ def main() -> None:
                               report=args.report)
     elif args.command == "dividend_rank":
         run_dividend_rank(args.config, args.years, args.min_yield,
-                          args.top_k, report=args.report)
+                          args.top_k, args.sort, report=args.report)
     else:
         run_monitor(args.config)
 
