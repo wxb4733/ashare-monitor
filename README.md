@@ -462,3 +462,6 @@ python -m ashare_monitor.main screen --top 60 --min-yield 3 --report
 python -m ashare_monitor.main backfill_dividend --report
 # 年度每股派息（同年多笔累加）/年末价 → 年度股息率，入库 dividend_history 表
 # 说明：东财分红报表在部分沙箱不可用（已知），本机直连通常可用
+# 历史股息率：自 1990 年开市以来全历史（A 股 <40 年，如实）
+python -m ashare_monitor.main backfill_dividend --report
+# 按年循环东财分红报表（1990~今年）；报告仅列有分红年份 + 分红年数/均值

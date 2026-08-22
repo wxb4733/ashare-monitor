@@ -86,5 +86,14 @@ def test_build_dividend_report():
     assert "历史股息率" in html
     assert "比亚迪" in html and "0.33%" in html
     assert "最新 0.33%" in html
+    assert "分红 2 年" in html  # 2020/2022 有分红，2023 空行压缩
     assert "不构成投资建议" in html
     assert md.startswith("---\ntitle: 历史股息率")
+
+
+def test_years_since_1990():
+    from ashare_monitor.dividend import YEARS
+
+    assert YEARS[0] == 1990
+    assert len(YEARS) >= 36  # A 股开市至今 36 年
+    assert YEARS[-1] >= 2025

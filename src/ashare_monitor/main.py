@@ -1827,7 +1827,7 @@ def run_insider_view(code: str | None, config_path: str | None,
 
 def run_backfill_dividend(code: str | None, config_path: str | None,
                           report: bool = False) -> None:
-    """回填历史股息率（近 6 年年度）。"""
+    """回填历史股息率（自 1990 年开市以来；A 股历史 <40 年）。"""
     from pathlib import Path
 
     from .dividend import (
@@ -1851,7 +1851,7 @@ def run_backfill_dividend(code: str | None, config_path: str | None,
         return
     hist: dict[str, list] = {}
     for c, n in targets:
-        console.print(f"[cyan]回填 {n}({c}) 历史股息率…[/cyan]")
+        console.print(f"[cyan]回填 {n}({c}) 历史股息率（1990 至今）…[/cyan]")
         try:
             rows = fetch_dividend_history(c, n)
         except Exception as exc:  # noqa: BLE001
@@ -1862,7 +1862,7 @@ def run_backfill_dividend(code: str | None, config_path: str | None,
         valid = [r for r in rows if r.yield_pct is not None]
         if valid:
             latest, avg = valid[-1].yield_pct, sum(r.yield_pct for r in valid) / len(valid)
-            console.print(f"  新增 {added} 条 | 最新 {latest:.2f}% / 6 年均值 {avg:.2f}%")
+            console.print(f"  新增 {added} 条 | 最新 {latest:.2f}% / 开市以来均值 {avg:.2f}%")
         else:
             console.print(f"  新增 {added} 条 | 分红数据缺失（如实）")
     print_disclaimer()
@@ -3511,7 +3511,7 @@ def main() -> None:
                           help="最大总市值（亿）")
     p_screen.add_argument("--report", action="store_true", help="生成选股报告")
     p_bd = sub.add_parser("backfill_dividend",
-                          help="回填历史股息率（近 6 年年度）")
+                          help="回填历史股息率（自 1990 年开市以来）")
     p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bd.add_argument("--report", action="store_true", help="生成报告")
 

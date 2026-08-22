@@ -18,7 +18,8 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-YEARS = list(range(datetime.now().year - 6, datetime.now().year))  # 近 6 个自然年
+# A 股 1990 年开市（上交所），至今不足 40 年——按开市以来全历史回填
+YEARS = list(range(1990, datetime.now().year + 1))
 
 
 @dataclass
@@ -160,9 +161,6 @@ def build_dividend_report(hist: dict[str, list[DividendYear]],
                           as_of: str | None = None) -> tuple[str, str]:
     """生成历史股息率报告（HTML, Markdown）。"""
     as_of = as_of or datetime.now().strftime("%Y-%m-%d")
-
-    years = sorted({y for rows in hist.values() for y in
-                    {r.year for r in rows}})
     tr = []
     md_rows = ["| 标的 | 年份 | 每股派息 | 年末价 | 股息率 | 分红次数 |",
                "| --- | --- | --- | --- | --- | --- |"]
@@ -171,11 +169,16 @@ def build_dividend_report(hist: dict[str, list[DividendYear]],
         valid = [r for r in rows if r.yield_pct is not None]
         latest = valid[-1].yield_pct if valid else None
         avg = sum(r.yield_pct for r in valid) / len(valid) if valid else None
-        head = (f"<tr><td rowspan='{max(len(rows),1)}'>{name}({code})"
-                f"<br/><span style='color:#86909c;font-size:11px'>"
-                f"最新 {latest:.2f}% / 均值 {avg:.2f}%"
-                f"</span></td>" if valid else f"<tr><td>{name}({code})</td>")
-        for i, r in enumerate(rows):
+        # 只展示有分红记录的年份（全历史可能 36 年，空行压缩）
+        paid = [r for r in rows if r.dps is not None]
+        display = paid if paid else rows[-3:] if rows else []
+        span = max(len(display), 1)
+        summary = (f"<br/><span style='color:#86909c;font-size:11px'>"
+                   f"最新 {latest:.2f}% / 均值 {avg:.2f}% / "
+                   f"分红 {len(paid)} 年"
+                   f"</span>")
+        head = (f"<tr><td rowspan='{span}'>{name}({code}){summary if valid else ''}</td>")
+        for i, r in enumerate(display):
             dps = f"{r.dps:.3f}" if r.dps is not None else "-"
             price = f"{r.year_end_price:.2f}" if r.year_end_price is not None else "-"
             yp = (f'<span style="color:#e02e24;font-weight:600">{r.yield_pct:.2f}%</span>'
@@ -187,14 +190,20 @@ def build_dividend_report(hist: dict[str, list[DividendYear]],
                               f"<td>{price}</td><td>{yp}</td>" \
                               f"<td>{r.n_payments}</td></tr>"
             tr.append(row)
-        md_rows.append(f"| {name}({code}) | 最新 {latest:.2f}% / 均值 {avg:.2f}% |"
-                       if valid else f"| {name}({code}) | 无数据 |")
-        for r in rows:
+        if not display:
+            tr.append(f"<tr><td>{name}({code})</td><td colspan='5' "
+                      f"style='text-align:center;color:#86909c'>无分红数据</td></tr>")
+        md_rows.append(
+            f"| {name}({code}) | 最新 {latest:.2f}% / 均值 {avg:.2f}% / "
+            f"分红 {len(paid)} 年 |" if valid else
+            f"| {name}({code}) | 无分红数据 |")
+        for r in display:
             dps_s = f"{r.dps:.3f}" if r.dps is not None else "-"
             yp_s = f"{r.yield_pct:.2f}%" if r.yield_pct is not None else "-"
+            price_s = (f"{r.year_end_price:.2f}"
+                       if r.year_end_price is not None else "-")
             md_rows.append(f"| {name}({code}) | {r.year} | {dps_s} | "
-                           f"{r.year_end_price:.2f}" if r.year_end_price else "| -"
-                           f" | {yp_s} | {r.n_payments} |")
+                           f"{price_s} | {yp_s} | {r.n_payments} |")
 
     css = """
 body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f7f8fa; color: #1f2329; margin: 0; }
@@ -217,7 +226,7 @@ th:first-child, td:first-child { text-align: left; }
 </head>
 <body>
 <div class="container">
-<h1>历史股息率（近 {len(years)} 年）</h1>
+<h1>历史股息率（自 1990 年开市以来）</h1>
 <div class="meta">{as_of} · 年度每股派息/年末价；分红多次累加；涨红跌绿</div>
 <div class="card"><table>
 <tr><th>标的</th><th>年份</th><th>每股派息</th><th>年末价</th><th>股息率</th><th>分红次数</th></tr>
