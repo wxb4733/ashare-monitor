@@ -46,8 +46,17 @@ def backfill_kline(code: str, market: str) -> tuple[int, int]:
     start = _start_date(code, market)
     end = datetime.now().strftime("%Y%m%d")
     if market == "crypto":
-        # 币：Binance 双域回退直拉，独立分支（不降级 akshare/腾讯）
+        # 币：Binance 双域回退（2017 起）+ CoinGecko 补更早历史（收盘价近似）
         rows = _backfill_kline_binance(code, start)
+        if code.upper() in _COINGECKO_IDS:
+            try:
+                cg = _backfill_kline_coingecko(code, start)
+                if cg:
+                    cg_dates = {c[0] for c in cg}
+                    rows = cg + [r for r in rows if r[0] not in cg_dates]
+                    logger.info("CoinGecko 补充 %d 根（%s 之前）", len(cg), start)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("CoinGecko 补充失败（境外 API 可能不可达）: %s", exc)
     else:
         try:
             if market == "hk":
@@ -111,6 +120,41 @@ def _backfill_kline_binance(code: str, start: str) -> list[tuple]:
         if len(batch) < 1000:
             break
     return all_rows
+
+
+# CoinGecko id 映射（补 Binance 上线前的更早历史）
+_COINGECKO_IDS = {"BTCUSDT": "bitcoin", "ETHUSDT": "ethereum"}
+
+
+def _backfill_kline_coingecko(code: str, before_date: str) -> list[tuple]:
+    """CoinGecko 全历史日价补数据（Binance 起点之前）。
+
+    注意（如实）：market_chart 只提供收盘价——补充段 OHLC 用收盘价近似，
+    volume 记 0。仅返回 before_date 之前的日期（与 Binance 段无缝衔接）。
+    """
+    import requests
+    from datetime import timezone as _tz
+
+    cid = _COINGECKO_IDS.get(code.upper())
+    if not cid:
+        return []
+    resp = requests.get(
+        f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart",
+        params={"vs_currency": "usd", "days": "max"},
+        headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        timeout=25,
+    )
+    resp.raise_for_status()
+    prices = resp.json().get("prices") or []
+    cutoff = datetime.strptime(before_date, "%Y-%m-%d").date()
+    rows: list[tuple] = []
+    for ts, px in prices:
+        d = datetime.fromtimestamp(ts / 1000, tz=_tz.utc).date()
+        if d >= cutoff:
+            break  # prices 按时间升序，到达 Binance 起点即停
+        price = float(px)
+        rows.append((d.strftime("%Y-%m-%d"), price, price, price, price, 0.0))
+    return rows
 
 
 def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:

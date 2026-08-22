@@ -527,3 +527,10 @@ python -m ashare_monitor.main backfill ETHUSDT --market crypto
 # 真实：BTC/ETH 各 3293 根（2017-08-17 币安上线 ~ 2026-08-22，接近 10 年上限）
 # 币安 2017-08 前无 BTCUSDT 数据（BTC 更早价格需其他源，如实）
 # 修复：load_klines code[-6:] 截断对 7 位交易对错误（BTCUSDT→TCUSDT）→ 数字代码才截断
+
+# CoinGecko 补更早历史（Binance 上线前）
+python -m ashare_monitor.main backfill BTCUSDT --market crypto   # 自动补
+python -m ashare_monitor.main backfill ETHUSDT --market crypto
+# 流程：Binance（2017-08 起真实 OHLC）+ CoinGecko 补 2017 前（BTC 2010 起/ETH 2015 起）
+# 如实：CoinGecko market_chart 仅收盘价 → 补充段 OHLC 用收盘近似、volume=0
+# 沙箱境外 API 不可达（已知）→ 本机直连跑一次即可补全
