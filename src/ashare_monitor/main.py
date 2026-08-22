@@ -1825,6 +1825,64 @@ def run_insider_view(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_backfill_dividend(code: str | None, config_path: str | None,
+                          report: bool = False) -> None:
+    """回填历史股息率（近 6 年年度）。"""
+    from pathlib import Path
+
+    from .dividend import (
+        build_dividend_report,
+        fetch_dividend_history,
+        load_dividend_history,
+        save_dividend_history,
+    )
+
+    cfg = load_config(config_path)
+    targets = []
+    for it in cfg.watchlist:
+        if str(it.get("market", "ashare")) != "ashare":
+            continue
+        c = str(it["code"])
+        if code and c != code:
+            continue
+        targets.append((c, str(it.get("name", c))))
+    if not targets:
+        console.print("[yellow]无 A 股自选股[/yellow]")
+        return
+    hist: dict[str, list] = {}
+    for c, n in targets:
+        console.print(f"[cyan]回填 {n}({c}) 历史股息率…[/cyan]")
+        try:
+            rows = fetch_dividend_history(c, n)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]  {n} 回填失败：{str(exc)[:60]}（本机直连通常可用）[/yellow]")
+            continue
+        added = save_dividend_history(rows)
+        hist[c] = rows
+        valid = [r for r in rows if r.yield_pct is not None]
+        if valid:
+            latest, avg = valid[-1].yield_pct, sum(r.yield_pct for r in valid) / len(valid)
+            console.print(f"  新增 {added} 条 | 最新 {latest:.2f}% / 6 年均值 {avg:.2f}%")
+        else:
+            console.print(f"  新增 {added} 条 | 分红数据缺失（如实）")
+    print_disclaimer()
+    if report and hist:
+        html, md = build_dividend_report(hist)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"dividend-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]历史股息率报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "股息率"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"dividend-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_screen(metric: str, config_path: str | None, top_n: int,
                min_yield: float, min_mv: float | None,
                max_mv: float | None, report: bool = False) -> None:
@@ -3452,6 +3510,10 @@ def main() -> None:
     p_screen.add_argument("--max-mv", type=float, default=None,
                           help="最大总市值（亿）")
     p_screen.add_argument("--report", action="store_true", help="生成选股报告")
+    p_bd = sub.add_parser("backfill_dividend",
+                          help="回填历史股息率（近 6 年年度）")
+    p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
+    p_bd.add_argument("--report", action="store_true", help="生成报告")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3589,6 +3651,9 @@ def main() -> None:
     elif args.command == "screen":
         run_screen(args.metric, args.config, args.top, args.min_yield,
                    args.min_mv, args.max_mv, report=args.report)
+    elif args.command == "backfill_dividend":
+        run_backfill_dividend(args.code or None, args.config,
+                              report=args.report)
     else:
         run_monitor(args.config)
 

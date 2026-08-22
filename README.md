@@ -457,3 +457,8 @@ python -m ashare_monitor.main radar 01810           # 雷达（技术面/择时�
 python -m ashare_monitor.main screen --top 60 --min-yield 3 --report
 # 东财 push2 全市场按股息率(f133 TTM)降序；过滤 ST/市值区间（--min-mv/--max-mv 亿）
 # 注意：东财 push2 在部分沙箱/受限网络 RemoteDisconnected（已知），本机直连通常可用
+
+# 历史股息率回填（近 6 年年度）
+python -m ashare_monitor.main backfill_dividend --report
+# 年度每股派息（同年多笔累加）/年末价 → 年度股息率，入库 dividend_history 表
+# 说明：东财分红报表在部分沙箱不可用（已知），本机直连通常可用
