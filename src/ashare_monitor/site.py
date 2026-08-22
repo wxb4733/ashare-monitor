@@ -34,6 +34,8 @@ _HEADERS = {
 DEFAULT_SITES: dict[str, dict] = {
     "300750": {"notice_url": "https://www.catl.com/investor/notice/"},
     "600519": {"website": "https://www.moutai.com.cn/"},
+    "01810": {"website": "https://www.mi.com/",
+              "notice_url": "https://www.hkexnews.hk/search/titlesearch.xhtml"},
 }
 
 

@@ -14,6 +14,7 @@ watchlist:
   - {code: "300750", market: "ashare", name: "宁德时代"}
   - {code: "002594", market: "ashare", name: "比亚迪"}
   - {code: "01211", market: "hk", name: "比亚迪股份"}
+  - {code: "01810", market: "hk", name: "小米集团"}  # 港股（内置官网映射）
 
 # ---------- 持仓（重要！填入后 position/portfolio/risk 才真正工作） ----------
 # cost: 成本价；shares: 持股数量（股）；港股按股，crypto 按币
@@ -40,7 +41,7 @@ alerts:
 # hf:
 #   002594: [BYD-Auto, BYD]
 
-# ---------- 官网档案（可选） ----------
+# ---------- 官网档案（可选；小米/比亚迪 A 股已内置） ----------
 # sites:
 #   002594:
 #     website: https://www.bydglobal.com/
