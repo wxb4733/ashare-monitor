@@ -147,6 +147,15 @@ def test_screen_share(monkeypatch):
         "000858": {"SECURITY_CODE": "000858", "SECURITY_NAME_ABBR": "五粮液",
                    "TOTAL_OPERATE_INCOME": 500e8, "PARENT_NETPROFIT": 200e8,
                    "BOARD_NAME": "白酒Ⅱ"},
+        "000596": {"SECURITY_CODE": "000596", "SECURITY_NAME_ABBR": "古井贡酒",
+                   "TOTAL_OPERATE_INCOME": 100e8, "PARENT_NETPROFIT": 30e8,
+                   "BOARD_NAME": "白酒Ⅱ"},
+        "600809": {"SECURITY_CODE": "600809", "SECURITY_NAME_ABBR": "山西汾酒",
+                   "TOTAL_OPERATE_INCOME": 150e8, "PARENT_NETPROFIT": 50e8,
+                   "BOARD_NAME": "白酒Ⅱ"},
+        "000568": {"SECURITY_CODE": "000568", "SECURITY_NAME_ABBR": "泸州老窖",
+                   "TOTAL_OPERATE_INCOME": 120e8, "PARENT_NETPROFIT": 60e8,
+                   "BOARD_NAME": "白酒Ⅱ"},
         # 单股行业（样本<5 → 跳过）
         "601789": {"SECURITY_CODE": "601789", "SECURITY_NAME_ABBR": "宁波建工",
                    "TOTAL_OPERATE_INCOME": 97e8, "PARENT_NETPROFIT": 2.5e8,
@@ -164,8 +173,8 @@ def test_screen_share(monkeypatch):
     assert "601789" not in codes     # 单股行业样本不足
     assert "600000" not in codes     # 行业缺失
     mt = next(h for h in hits if h.code == "600519")
-    # 923/1423 = 64.9%
-    assert mt._share == pytest.approx(64.9, abs=0.1)
+    # 行业总营收 = 923+500+100+150+120 = 1793 → 923/1793 = 51.5%
+    assert mt._share == pytest.approx(51.5, abs=0.1)
     assert mt._industry == "白酒Ⅱ"
 
 
