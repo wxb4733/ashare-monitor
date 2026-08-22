@@ -123,12 +123,58 @@ def stock_profile(code: str, name: str = "", market: str = "ashare",
 
 
 def crypto_profile(code: str, name: str = "") -> AssetProfile:
-    """数字货币画像（Phase 2 实现占位，返回 WARN）。"""
-    return AssetProfile(
-        code=code, name=name, market="crypto",
-        status="WARN",
-        note="crypto 画像待 Phase 2 接入（CoinGecko 代币经济 + 链上数据）",
-    )
+    """数字货币画像（CoinGecko 代币经济映射到五维）。
+
+    :param code: CoinGecko 币 id（如 bitcoin / ethereum）；可传 Binance 交易对
+                 （如 BTCUSDT）自动映射小写基础币。
+    映射：market_cap / supply_total(总量) / growth_rate(供给增速:流通占比近似) /
+          yield_rate(质押收益：CoinGecko 基础接口无，标 None 如实) /
+          valuation(NVT 近似 = 市值/24h 交易量)。
+    注意：CoinGecko 境外 API 在部分沙箱网络不可达（已知），本机直连通常可用。
+    """
+    import requests
+
+    cid = code.lower()
+    if cid.endswith("usdt"):
+        cid = cid[:-4]
+    p = AssetProfile(code=code, name=name or cid.upper(), market="crypto")
+    try:
+        d = requests.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={"vs_currency": "usd", "ids": cid,
+                    "order": "market_cap_desc", "per_page": 1, "page": 1,
+                    "sparkline": "false",
+                    "price_change_percentage": "24h"},
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            timeout=15,
+        ).json()
+        if not isinstance(d, list) or not d:
+            raise RuntimeError(f"CoinGecko 无 {cid} 数据")
+        c = d[0]
+        p.extra["price"] = c.get("current_price")
+        p.extra["symbol"] = c.get("symbol")
+        p.market_cap = c.get("market_cap")
+        p.supply_total = c.get("total_supply")
+        circ = c.get("circulating_supply")
+        p.extra["circulating_supply"] = circ
+        p.extra["volume_24h"] = c.get("total_volume")
+        p.extra["change_24h_pct"] = c.get("price_change_percentage_24h")
+        # 增长维：流通/总量比例（近似供给释放进度；通胀率需链上数据，如实 None）
+        if circ and p.supply_total:
+            p.growth_rate = circ / p.supply_total * 100
+            p.extra["circulation_pct"] = round(p.growth_rate, 2)
+        # 估值维：NVT 近似（市值/24h 交易量）
+        vol = c.get("total_volume")
+        if p.market_cap and vol:
+            p.valuation["nvt_approx"] = round(p.market_cap / vol, 2)
+        p.valuation["ath"] = c.get("ath")
+        p.valuation["ath_change_pct"] = c.get("ath_change_percentage")
+        p.note = ("质押收益率/通胀率需链上数据，CoinGecko 基础接口无（如实）；"
+                  "增长维=流通/总量比例")
+    except Exception as exc:  # noqa: BLE001
+        p.status = "WARN"
+        p.note = f"CoinGecko 获取失败：{str(exc)[:60]}（境外 API 沙箱可能不可达，本机直连通常可用）"
+    return p
 
 
 def build_profile(code: str, name: str = "", market: str = "ashare",

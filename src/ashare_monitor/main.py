@@ -2246,24 +2246,29 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
-def run_check(code: str, config_path: str | None,
-              report: bool = False) -> None:
-    """个股资料完整性体检。"""
+def run_check(code: str, config_path: str | None, report: bool = False,
+              market: str | None = None) -> None:
+    """标的资料完整性体检（股票/港股/数字货币）。"""
     from pathlib import Path
 
     from .check import build_check_report, check_stock
 
     cfg = load_config(config_path)
     if not code:
-        console.print("[red]请指定代码：check 002594[/red]")
+        console.print("[red]请指定代码：check 002594 / check BTCUSDT --market crypto[/red]")
         return
-    market = "hk" if len(code) == 5 and code.isdigit() else "ashare"
+    # market 优先级：--market > watchlist > 代码推断
     name = code
     for it in cfg.watchlist:
         if str(it["code"]) == code:
             name = str(it.get("name", code))
+            if market is None:
+                market = str(it.get("market", "ashare"))
             break
-    console.print(f"[cyan]正在体检 {name}({code}) 全维度资料…[/cyan]")
+    if market is None:
+        market = ("crypto" if not code.isdigit()
+                  else ("hk" if len(code) == 5 else "ashare"))
+    console.print(f"[cyan]正在体检 {name}({code})[{market}] 全维度资料…[/cyan]")
     checks = check_stock(code, name, market, cfg=cfg)
     table = Table(title=f"资料体检 {name}({code})")
     table.add_column("维度", justify="left")
@@ -3802,8 +3807,10 @@ def main() -> None:
                           default="daily", help="周期（默认 daily）")
     p_period.add_argument("code", nargs="?", default="", help="指定代码")
     p_period.add_argument("--push", action="store_true", help="推送 webhook")
-    p_check = sub.add_parser("check", help="个股资料完整性体检")
-    p_check.add_argument("code", help="证券代码，如 002594")
+    p_check = sub.add_parser("check", help="标的资料完整性体检（股票/港股/数字货币）")
+    p_check.add_argument("code", help="代码，如 002594 / BTCUSDT")
+    p_check.add_argument("--market", choices=["ashare", "hk", "crypto"],
+                         default=None, help="市场（缺省按 watchlist/代码推断）")
     p_check.add_argument("--report", action="store_true", help="生成体检报告")
     p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")
     p_screen.add_argument("--metric", default="dividend",
@@ -3973,7 +3980,8 @@ def main() -> None:
         run_period_report(args.period, args.code or None, args.config,
                           push=args.push)
     elif args.command == "check":
-        run_check(args.code, args.config, report=args.report)
+        run_check(args.code, args.config, report=args.report,
+                  market=getattr(args, "market", None))
     elif args.command == "screen":
         run_screen(args.metric, args.config, args.top, args.min_yield,
                    args.min_mv, args.max_mv, report=args.report)

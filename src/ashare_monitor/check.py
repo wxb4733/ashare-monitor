@@ -40,8 +40,11 @@ def _miss(name: str, detail: str = "") -> CheckItem:
 
 
 def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
-    """体检单只股票。"""
+    """体检单只标的（股票/港股/数字货币）。"""
     checks: list[CheckItem] = []
+
+    if market == "crypto":
+        return _check_crypto(code, name, checks)
 
     # 1. K 线历史（本地）
     try:
@@ -466,3 +469,74 @@ OK {stats['OK']} / WARN {stats['WARN']} / MISSING {stats['MISSING']}
 > 不构成投资建议。
 """
     return html, md
+
+
+def _check_crypto(code: str, name: str, checks: list) -> list:
+    """数字货币体检：行情 / 画像（代币经济）/ K线技术面。"""
+    # 1. 实时行情（Binance，已接入）
+    try:
+        from .providers.binance import BinanceProvider
+
+        p = BinanceProvider()
+        qs = p.fetch([code])
+        if qs:
+            q = qs[0]
+            checks.append(_ok("实时行情",
+                              f"{q.price:,.2f} USDT（24h {q.change_pct:+.2f}%）"
+                              f"｜成交额 {q.turnover / 1e6:,.0f} 万"))
+        else:
+            checks.append(_miss("实时行情", "Binance 无该交易对"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("实时行情", f"获取失败：{str(exc)[:40]}"))
+    # 2. 代币经济画像（CoinGecko）
+    try:
+        from .asset import build_profile
+
+        prof = build_profile(code, name, "crypto")
+        if prof.status == "OK":
+            notes = []
+            if prof.market_cap:
+                notes.append(f"市值 ${prof.market_cap / 1e9:.1f}B")
+            if prof.supply_total:
+                notes.append(f"总供给 {prof.supply_total / 1e6:.0f}M")
+            if prof.extra.get("circulation_pct"):
+                notes.append(f"流通 {prof.extra['circulation_pct']:.0f}%")
+            if prof.valuation.get("nvt_approx"):
+                notes.append(f"NVT≈{prof.valuation['nvt_approx']}")
+            checks.append(_ok("代币经济", "；".join(notes)))
+            checks.append(_ok("估值(NVT)", f"NVT≈{prof.valuation['nvt_approx']}"
+                              if prof.valuation.get("nvt_approx") else "数据缺失"))
+        else:
+            checks.append(_warn("代币经济", prof.note))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("代币经济", f"获取失败：{str(exc)[:40]}"))
+    # 3. K 线技术面（Binance 直拉；open_time 为 int 毫秒时间戳）
+    try:
+        from datetime import datetime, timezone
+
+        from .providers.binance import fetch_klines
+
+        raw = fetch_klines(code, days=200)
+        if raw:
+            closes = [float(k[4]) for k in raw]
+            last_date = datetime.fromtimestamp(
+                int(raw[-1][0]) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            checks.append(_ok("K线(币安)",
+                              f"{len(raw)} 根 ~ {last_date}（最新 {closes[-1]:,.2f}）"))
+            from .timing import scan_timing
+
+            rows = [{"date": datetime.fromtimestamp(
+                        int(k[0]) / 1000, tz=timezone.utc).strftime("%Y-%m-%d"),
+                     "close": float(k[4]), "open": float(k[1]),
+                     "high": float(k[2]), "low": float(k[3]),
+                     "volume": float(k[5])}
+                    for k in raw]
+            sigs = scan_timing(rows, code, name, "crypto")
+            checks.append(_ok("择时信号",
+                              "；".join(s.label for s in sigs[:3]) if sigs
+                              else "无信号"))
+        else:
+            checks.append(_miss("K线(币安)", "无数据"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("K线(币安)", f"获取失败：{str(exc)[:40]}"))
+    return checks

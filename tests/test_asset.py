@@ -39,8 +39,50 @@ def test_crypto_profile_placeholder():
 
     p = crypto_profile("BTC", "Bitcoin")
     assert p.market == "crypto"
+    # 沙箱境外 API 不可达 → 走失败降级（WARN + 本机提示）
     assert p.status == "WARN"
-    assert "Phase 2" in p.note
+    assert p.note
+
+
+def test_crypto_profile_mapping(monkeypatch):
+    from ashare_monitor.asset import crypto_profile
+
+    def fake_get(url, params, headers, timeout=15):
+        class R:
+            def json(self):
+                return [{
+                    "id": "bitcoin", "symbol": "btc",
+                    "current_price": 77206.19, "market_cap": 1.52e12,
+                    "total_supply": 21000000.0,
+                    "circulating_supply": 19700000.0,
+                    "total_volume": 5.0e10,
+                    "price_change_percentage_24h": 0.42, "ath": 100000.0,
+                    "ath_change_percentage": -22.8,
+                }]
+        return R()
+
+    monkeypatch.setattr("requests.get", fake_get)
+    p = crypto_profile("BTCUSDT")   # 交易对自动映射 bitcoin
+    assert p.status == "OK"
+    assert p.market_cap == pytest.approx(1.52e12)
+    assert p.supply_total == pytest.approx(21000000.0)
+    # 流通/总量 = 19.7/21 = 93.8%
+    assert p.growth_rate == pytest.approx(93.81, abs=0.1)
+    # NVT ≈ 1.52e12 / 5e10 = 30.4
+    assert p.valuation["nvt_approx"] == pytest.approx(30.4, abs=0.5)
+    assert p.yield_rate is None  # 质押收益 CoinGecko 基础接口无（如实）
+
+
+def test_crypto_profile_fallback(monkeypatch):
+    from ashare_monitor.asset import crypto_profile
+
+    def fake_get(url, params, headers, timeout=15):
+        raise RuntimeError("connect timeout")
+
+    monkeypatch.setattr("requests.get", fake_get)
+    p = crypto_profile("BTC")
+    assert p.status == "WARN"
+    assert "本机直连" in p.note
 
 
 def test_build_profile_dispatch(monkeypatch):

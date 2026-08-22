@@ -68,6 +68,36 @@ def test_check_stock_ashare(monkeypatch):
     assert any(s == "OK" for s in statuses)
 
 
+def test_check_crypto(monkeypatch):
+    from ashare_monitor.check import check_stock
+
+    class _Q:
+        price = 77206.19
+        change_pct = 0.42
+        turnover = 2.0e7
+
+    monkeypatch.setattr("ashare_monitor.providers.binance.BinanceProvider", lambda: type(
+        "P", (), {"fetch": lambda self, codes: [_Q()]})())
+    monkeypatch.setattr("ashare_monitor.providers.binance.fetch_klines",
+                        lambda code, days=200: [
+                            [1724294400000, "77000", "77500", "78000", "77000",
+                             "1000", 1724298000000, "0", "100", "0", "0", "0"]
+                        ] * 200)
+    monkeypatch.setattr("ashare_monitor.asset.build_profile",
+                        lambda code, name, market: type("Prof", (), {
+                            "status": "OK", "market_cap": 1.52e12,
+                            "supply_total": 2.1e7,
+                            "extra": {"circulation_pct": 93.8},
+                            "valuation": {"nvt_approx": 30.4}})())
+    monkeypatch.setattr("ashare_monitor.timing.scan_timing",
+                        lambda rows, code, name, market: [])
+    checks = check_stock("BTCUSDT", "Bitcoin", "crypto")
+    names = {c.name for c in checks}
+    assert "实时行情" in names and "代币经济" in names and "K线(币安)" in names
+    ok = [c for c in checks if c.status == "OK"]
+    assert len(ok) >= 3
+
+
 def test_build_check_report():
     checks = [_ok("K线历史", "100 根"),
               _warn("北向持股", "2024-08-16 后停每日披露"),
