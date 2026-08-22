@@ -231,6 +231,49 @@ def test_screen_growth(monkeypatch):
     assert j._growth == pytest.approx(71528.7)
 
 
+def test_fetch_growth_history(monkeypatch):
+    from ashare_monitor.screen import fetch_growth_history
+
+    report = {
+        "002594": {"SECURITY_CODE": "002594", "SECURITY_NAME_ABBR": "比亚迪",
+                   "YSTZ": 12.0, "SJLTZ": -19.0,
+                   "TOTAL_OPERATE_INCOME": 7000e8, "PARENT_NETPROFIT": 380e8},
+    }
+
+    def fake(rd):
+        return report if rd == "2025-12-31" else {}
+
+    monkeypatch.setattr("ashare_monitor.screen._fetch_report_all", fake)
+    monkeypatch.setattr("ashare_monitor.screen.datetime", __import__("datetime").datetime)
+    rows = fetch_growth_history("002594", "比亚迪")
+    by = {r.year: r for r in rows}
+    assert 2025 in by
+    assert by[2025].net_growth == pytest.approx(-19.0)
+    assert by[2025].net_profit == pytest.approx(380.0)
+
+
+def test_fetch_valuation_history(monkeypatch):
+    from ashare_monitor.screen import fetch_valuation_history
+
+    report = {
+        "002594": {"SECURITY_CODE": "002594", "SECURITY_NAME_ABBR": "比亚迪",
+                   "PE_TTM": 23.2, "PB_MRQ": 3.56, "CLOSE_PRICE": 90.0},
+    }
+
+    def fake(rd):
+        return report
+
+    monkeypatch.setattr("ashare_monitor.screen._fetch_valuation_all", fake)
+    monkeypatch.setattr("ashare_monitor.screen._trade_date_around",
+                        lambda d, lookback=10: f"{d[:4]}-12-31")
+    monkeypatch.setattr("ashare_monitor.screen.datetime", __import__("datetime").datetime)
+    rows = fetch_valuation_history("002594", "比亚迪")
+    assert len(rows) >= 8  # 2018-2025+
+    latest = rows[-1]
+    assert latest.pe_ttm == pytest.approx(23.2)
+    assert latest.year >= 2025
+
+
 def test_build_screen_report():
     hits = [
         ScreenHit("601088", "中国神华", 38.9, 5.21, 12.5, 1.8, 7.73e11),

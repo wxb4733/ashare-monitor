@@ -567,3 +567,255 @@ def screen_growth(top_n: int = 60, min_growth: float = 30.0,
         hits[-1]._net_profit = npf / 1e8
     hits.sort(key=lambda x: x._growth, reverse=True)
     return hits[:top_n]
+
+
+# ===================== 指标历史回填（growth / lowval） =====================
+
+# growth_history：逐年业绩报表净利/营收增速（1995 年报起，数据可得期）。
+# valuation_history：逐年（2018 起，东财估值数据可得期）年末交易日 PE/PB。
+
+
+@dataclass
+class GrowthYear:
+    code: str
+    name: str
+    year: int
+    rev_growth: float | None   # 营收同比 %
+    net_growth: float | None   # 净利同比 %
+    net_profit: float | None   # 归母净利（亿）
+    rev: float | None          # 营收（亿）
+
+    def to_dict(self) -> dict:
+        return {"code": self.code, "name": self.name, "year": self.year,
+                "rev_growth": self.rev_growth, "net_growth": self.net_growth,
+                "net_profit": self.net_profit, "rev": self.rev}
+
+
+@dataclass
+class ValuationYear:
+    code: str
+    name: str
+    year: int
+    date: str
+    pe_ttm: float | None
+    pb_mrq: float | None
+    close: float | None
+
+    def to_dict(self) -> dict:
+        return {"code": self.code, "name": self.name, "year": self.year,
+                "date": self.date, "pe_ttm": self.pe_ttm,
+                "pb_mrq": self.pb_mrq, "close": self.close}
+
+
+def fetch_growth_history(code: str, name: str = "") -> list[GrowthYear]:
+    """回填单只 A 股增速历史（1995 年报起）。"""
+    result: list[GrowthYear] = []
+    for year in range(1995, datetime.now().year + 1):
+        try:
+            report = _fetch_report_all(f"{year}-12-31")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("业绩报表 %s 失败: %s", year, exc)
+            continue
+        r = report.get(code)
+        if not r:
+            continue
+        rev = _f(r.get("TOTAL_OPERATE_INCOME"))
+        npf = _f(r.get("PARENT_NETPROFIT"))
+        result.append(GrowthYear(
+            code=code, name=name, year=year,
+            rev_growth=_f(r.get("YSTZ")), net_growth=_f(r.get("SJLTZ")),
+            net_profit=(npf / 1e8) if npf is not None else None,
+            rev=(rev / 1e8) if rev is not None else None,
+        ))
+    return result
+
+
+def _trade_date_around(date_str: str, lookback: int = 10) -> str | None:
+    """给定日期往前找最近有估值数据的交易日。"""
+    import datetime as _dt
+
+    base = _dt.datetime.strptime(date_str, "%Y-%m-%d")
+    for i in range(lookback):
+        d = (base - _dt.timedelta(days=i)).strftime("%Y-%m-%d")
+        try:
+            data = _fetch_valuation_all(d)
+            if data:
+                return d
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def fetch_valuation_history(code: str, name: str = "") -> list[ValuationYear]:
+    """回填单只 A 股估值历史（2018 年报末起，东财数据可得期）。"""
+    result: list[ValuationYear] = []
+    for year in range(2018, datetime.now().year + 1):
+        d = _trade_date_around(f"{year}-12-31")
+        if not d:
+            continue
+        try:
+            report = _fetch_valuation_all(d)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("估值 %s 失败: %s", d, exc)
+            continue
+        r = report.get(code)
+        if not r:
+            continue
+        result.append(ValuationYear(
+            code=code, name=name, year=year, date=d,
+            pe_ttm=_f(r.get("PE_TTM")), pb_mrq=_f(r.get("PB_MRQ")),
+            close=_f(r.get("CLOSE_PRICE")),
+        ))
+    return result
+
+
+def save_growth_history(rows: list[GrowthYear]) -> int:
+    """入库 growth_history（code+year 唯一）。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    added = 0
+    with conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS growth_history (
+                code TEXT, name TEXT, year INTEGER,
+                rev_growth REAL, net_growth REAL, net_profit REAL, rev REAL,
+                PRIMARY KEY (code, year))"""
+        )
+        for r in rows:
+            cur = conn.execute(
+                "INSERT OR REPLACE INTO growth_history "
+                "(code, name, year, rev_growth, net_growth, net_profit, rev) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (r.code, r.name, r.year, r.rev_growth, r.net_growth,
+                 r.net_profit, r.rev),
+            )
+            added += cur.rowcount
+    return added
+
+
+def save_valuation_history(rows: list[ValuationYear]) -> int:
+    """入库 valuation_history（code+year 唯一）。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    added = 0
+    with conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS valuation_history (
+                code TEXT, name TEXT, year INTEGER, date TEXT,
+                pe_ttm REAL, pb_mrq REAL, close REAL,
+                PRIMARY KEY (code, year))"""
+        )
+        for r in rows:
+            cur = conn.execute(
+                "INSERT OR REPLACE INTO valuation_history "
+                "(code, name, year, date, pe_ttm, pb_mrq, close) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (r.code, r.name, r.year, r.date, r.pe_ttm, r.pb_mrq, r.close),
+            )
+            added += cur.rowcount
+    return added
+
+
+def build_indicators_report(growth: dict[str, list[GrowthYear]],
+                            valuation: dict[str, list[ValuationYear]],
+                            as_of: str | None = None) -> tuple[str, str]:
+    """生成指标历史报告（HTML, Markdown）。"""
+    as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+
+    # 增速表（只显示有数据的年份）
+    gtr = []
+    for code, rows in growth.items():
+        name = rows[0].name if rows else code
+        valid = [r for r in rows if r.net_growth is not None]
+        latest = valid[-1].net_growth if valid else None
+        avg = (sum(r.net_growth for r in valid) / len(valid) if valid else None)
+        for i, r in enumerate(valid):
+            ng = (f'<span style="color:{"#e02e24" if r.net_growth > 0 else "#00a870"}">'
+                  f"{r.net_growth:+.1f}</span>")
+            rg = f"{r.rev_growth:+.1f}" if r.rev_growth is not None else "-"
+            row = (f"<tr><td>{r.year}</td><td>{rg}</td><td>{ng}</td>"
+                   f"<td>{r.net_profit:.1f}</td><td>{r.rev:.0f}</td></tr>")
+            if i == 0:
+                row = (f"<tr><td rowspan='{len(valid)}'>{name}({code})"
+                       f"<br/><span style='color:#86909c;font-size:11px'>"
+                       f"最新 {latest:+.1f}% / 均值 {avg:+.1f}%</span></td>"
+                       f"<td>{r.year}</td><td>{rg}</td><td>{ng}</td>"
+                       f"<td>{r.net_profit:.1f}</td><td>{r.rev:.0f}</td></tr>")
+            gtr.append(row)
+
+    # 估值表
+    vtr = []
+    for code, rows in valuation.items():
+        name = rows[0].name if rows else code
+        valid = [r for r in rows if r.pe_ttm is not None]
+        for i, r in enumerate(valid):
+            pe = f"{r.pe_ttm:.1f}" if r.pe_ttm else "-"
+            pb = f"{r.pb_mrq:.2f}" if r.pb_mrq else "-"
+            row = (f"<tr><td>{r.year}</td><td>{r.date}</td><td>{pe}</td>"
+                   f"<td>{pb}</td><td>{r.close:.2f}</td></tr>")
+            if i == 0:
+                row = (f"<tr><td rowspan='{len(valid)}'>{name}({code})</td>"
+                       f"<td>{r.year}</td><td>{r.date}</td><td>{pe}</td>"
+                       f"<td>{pb}</td><td>{r.close:.2f}</td></tr>")
+            vtr.append(row)
+
+    css = """
+body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f7f8fa; color: #1f2329; margin: 0; }
+.container { max-width: 1150px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.meta { color: #86909c; font-size: 12px; margin-bottom: 16px; }
+.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #f0f0f0; }
+th { background: #fafafa; color: #666; font-weight: 600; }
+th:first-child, td:first-child { text-align: left; }
+.footer { color: #86909c; font-size: 12px; text-align: center; padding: 16px 0 8px; }
+"""
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>选股指标历史回填 {as_of}</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="container">
+<h1>选股指标历史回填</h1>
+<div class="meta">{as_of} · 增速=净利/营收同比（1995 年报起）· 估值=年末交易日 PE/PB（2018 起，东财可得期）</div>
+<h2>增长历史（净利增速 %）</h2>
+<div class="card"><table>
+<tr><th>标的</th><th>年份</th><th>营收增速%</th><th>净利增速%</th><th>净利(亿)</th><th>营收(亿)</th></tr>
+{''.join(gtr) if gtr else '<tr><td colspan="6" style="text-align:center;color:#86909c">无数据</td></tr>'}
+</table></div>
+<h2>估值历史（年末 PE/PB）</h2>
+<div class="card"><table>
+<tr><th>标的</th><th>年份</th><th>日期</th><th>PE(TTM)</th><th>PB</th><th>收盘</th></tr>
+{''.join(vtr) if vtr else '<tr><td colspan="6" style="text-align:center;color:#86909c">无数据</td></tr>'}
+</table></div>
+<div class="footer">增速极端值多为低基数反转；估值历史用于分位判断。不构成投资建议。</div>
+</div>
+</body>
+</html>"""
+
+    md = f"""---
+title: 选股指标历史回填 {as_of}
+date: {as_of}
+tags: [增速, 估值, 历史]
+generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
+---
+# 选股指标历史回填
+
+- 增速：净利/营收同比（1995 年报起）
+- 估值：年末交易日 PE/PB（2018 起，东财可得期）
+
+> 不构成投资建议。
+"""
+    return html, md

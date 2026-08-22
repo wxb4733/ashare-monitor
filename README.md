@@ -503,3 +503,9 @@ python -m ashare_monitor.main screen --metric lowval --top 30          # PE 5~25
 python -m ashare_monitor.main screen --metric growth --top 30 --min-yield 50  # 净利增速≥50%
 # 真实：低估榜=银行（平安银行 PE 5.1/PB 0.47）；成长榜=江波龙 71528%（存储周期爆发）
 # 口径：低估=当日估值(TRADE_DATE 最近交易日)；成长=2026H1 净利同比 SJLTZ
+
+# 回填选股指标历史（增速 / 估值）
+python -m ashare_monitor.main backfill_indicators --report
+# 增速：净利/营收同比（1995 年报起）→ growth_history 表
+# 估值：年末交易日 PE/PB（2018 起，东财可得期）→ valuation_history 表
+# 真实（比亚迪）：增速 23 条（2002-2025，最新 -19%）；估值 8 条（2018-2025，PE 23.2）

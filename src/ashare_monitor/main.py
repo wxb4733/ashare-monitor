@@ -1884,6 +1884,69 @@ def run_backfill_sgr(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_backfill_indicators(code: str | None, config_path: str | None,
+                            report: bool = False) -> None:
+    """回填选股指标历史（增速 1995 起 / 估值 2018 起）。"""
+    from pathlib import Path
+
+    from .screen import (
+        build_indicators_report,
+        fetch_growth_history,
+        fetch_valuation_history,
+        save_growth_history,
+        save_valuation_history,
+    )
+
+    cfg = load_config(config_path)
+    targets = []
+    for it in cfg.watchlist:
+        if str(it.get("market", "ashare")) != "ashare":
+            continue
+        c = str(it["code"])
+        if code and c != code:
+            continue
+        targets.append((c, str(it.get("name", c))))
+    if not targets:
+        console.print("[yellow]无 A 股自选股[/yellow]")
+        return
+    growth_hist: dict[str, list] = {}
+    val_hist: dict[str, list] = {}
+    for c, n in targets:
+        console.print(f"[cyan]回填 {n}({c}) 增速历史（1995 起）…[/cyan]")
+        try:
+            g = fetch_growth_history(c, n)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]  {n} 增速回填失败：{str(exc)[:50]}[/yellow]")
+            g = []
+        g_added = save_growth_history(g) if g else 0
+        growth_hist[c] = g
+        gv = [x for x in g if x.net_growth is not None]
+        if gv:
+            print(f"  增速 {g_added} 条（{g[0].year}~{g[-1].year}）| "
+                  f"最新 {gv[-1].net_growth:+.1f}%")
+        console.print(f"[cyan]  估值历史（2018 起，年末交易日）…[/cyan]")
+        try:
+            v = fetch_valuation_history(c, n)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]  {n} 估值回填失败：{str(exc)[:50]}[/yellow]")
+            v = []
+        v_added = save_valuation_history(v) if v else 0
+        val_hist[c] = v
+        vv = [x for x in v if x.pe_ttm is not None]
+        if vv:
+            print(f"  估值 {v_added} 条（{vv[0].date}~{vv[-1].date}）| "
+                  f"PE {vv[-1].pe_ttm:.1f}")
+    print_disclaimer()
+    if report and growth_hist:
+        html, md = build_indicators_report(growth_hist, val_hist)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"indicators-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]指标历史报告已生成: {out_path}[/green]")
+
+
 def run_dividend_rank(config_path: str | None, years: int,
                      min_yield: float, top_k: int, sort_by: str,
                      report: bool = False) -> None:
@@ -3769,6 +3832,10 @@ def main() -> None:
                       default="years",
                       help="排序：years 上榜年数 / cum-yield 累计股息率")
     p_dr.add_argument("--report", action="store_true", help="生成报告")
+    p_bi = sub.add_parser("backfill_indicators",
+                          help="回填选股指标历史（增速/估值）")
+    p_bi.add_argument("code", nargs="?", default="", help="指定代码")
+    p_bi.add_argument("--report", action="store_true", help="生成报告")
     p_bs = sub.add_parser("backfill_sgr",
                           help="回填 SGR 持续增长率历史（1995 年报起）")
     p_bs.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
@@ -3916,6 +3983,9 @@ def main() -> None:
     elif args.command == "dividend_rank":
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
+    elif args.command == "backfill_indicators":
+        run_backfill_indicators(args.code or None, args.config,
+                                report=args.report)
     elif args.command == "backfill_sgr":
         run_backfill_sgr(args.code or None, args.config, report=args.report)
     else:
