@@ -61,35 +61,30 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
         checks.append(_miss("K线历史", f"无本地数据：{exc}"))
 
     if market != "ashare":
-        # 港股：基本面 / 估值近似 / 公告 / 研报 / 事件 / 诉讼 / 工商 / 官网 / 择时 / 行业
+        # 港股：画像接口（统一）/ 公告 / 研报 / 事件 / 诉讼 / 工商 / 官网 / 择时 / 行业
+        prof = None
         try:
-            from .fundamentals import fetch_financials
+            from .asset import build_profile
 
-            fins = fetch_financials(code, periods=2, market="hk")
-            if fins and fins[0].roe is not None:
-                f0 = fins[0]
-                detail = f"ROE {f0.roe:.1f}%"
-                if f0.profit_yoy is not None:
-                    detail += f" 净利同比 {f0.profit_yoy:+.1f}%（{f0.report_date}）"
-                checks.append(_ok("基本面", detail))
+            prof = build_profile(code, name, "hk", cfg)
+            detail = []
+            if prof.extra.get("roe") is not None:
+                detail.append(f"ROE {prof.extra['roe']:.1f}%")
+            if prof.growth_rate is not None:
+                detail.append(f"净利同比 {prof.growth_rate:+.1f}%")
+            if prof.valuation.get("pe_ttm"):
+                detail.append(f"PE≈{prof.valuation['pe_ttm']:.1f}")
+            if detail:
+                checks.append(_ok("基本面", "；".join(detail)))
             else:
-                checks.append(_warn("基本面", "港股财报字段缺失"))
+                checks.append(_warn("基本面", prof.note or "画像字段缺失"))
         except Exception as exc:  # noqa: BLE001
             checks.append(_miss("基本面", f"获取失败：{str(exc)[:40]}"))
-        try:
-            from .quotes import fetch_spot_quotes
-            from .fundamentals import fetch_financials as _ff
-
-            fins = _ff(code, periods=2, market="hk")
-            qs, _ = fetch_spot_quotes([code], market="hk")
-            if fins and fins[0].eps and qs:
-                pe = qs[0].price / fins[0].eps
-                checks.append(_ok("估值(近似)",
-                                  f"PE≈{pe:.1f}（EPS {fins[0].eps:.2f} × 现价 {qs[0].price:.2f}）"))
-            else:
-                checks.append(_warn("估值(近似)", "EPS 或现价缺失"))
-        except Exception as exc:  # noqa: BLE001
-            checks.append(_warn("估值(近似)", f"计算失败：{str(exc)[:40]}"))
+        if prof is not None and prof.valuation.get("pe_ttm"):
+            checks.append(_ok("估值(近似)",
+                              f"PE≈{prof.valuation['pe_ttm']:.1f}"))
+        else:
+            checks.append(_warn("估值(近似)", "EPS 或现价缺失"))
         try:
             from .announcements import fetch_announcements
 
@@ -164,34 +159,28 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
             checks.append(_miss("行业数据", f"获取失败：{str(exc)[:40]}"))
         return checks
 
-    # 2. 基本面
+    # 2+3. 基本面与估值（统一画像接口）
     try:
-        from .fundamentals import fetch_financials
+        from .asset import build_profile
 
-        fins = fetch_financials(code, periods=2, market=market)
-        if fins and fins[0].roe is not None:
-            f0 = fins[0]
-            detail = f"ROE {f0.roe:.1f}%"
-            if f0.profit_yoy is not None:
-                detail += f" 净利同比 {f0.profit_yoy:+.1f}%（{f0.report_date}）"
+        prof = build_profile(code, name, "ashare", cfg)
+        if prof.extra.get("roe") is not None:
+            detail = f"ROE {prof.extra['roe']:.1f}%"
+            if prof.growth_rate is not None:
+                detail += f" 净利同比 {prof.growth_rate:+.1f}%（{prof.extra.get('report_date', '')}）"
             checks.append(_ok("基本面", detail))
         else:
-            checks.append(_warn("基本面", "财报字段缺失"))
-    except Exception as exc:  # noqa: BLE001
-        checks.append(_miss("基本面", f"获取失败：{str(exc)[:40]}"))
-
-    # 3. 估值分位
-    try:
-        from .valuation import fetch_valuation
-
-        v = fetch_valuation(code, years=5)
-        if v and v.pe_ttm is not None:
+            checks.append(_warn("基本面", prof.note or "财报字段缺失"))
+        if prof.valuation.get("pe_ttm") is not None:
             checks.append(_ok("估值分位",
-                              f"PE {v.pe_ttm:.1f}(分位{v.pe_pct:.0f}%) "
-                              f"PB {v.pb_mrq:.2f}(分位{v.pb_pct:.0f}%)"))
+                              f"PE {prof.valuation['pe_ttm']:.1f}"
+                              f"(分位{prof.valuation.get('pe_pct', 0):.0f}%) "
+                              f"PB {prof.valuation.get('pb_mrq', 0):.2f}"
+                              f"(分位{prof.valuation.get('pb_pct', 0):.0f}%)"))
         else:
             checks.append(_miss("估值分位", "无数据"))
     except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("基本面", f"获取失败：{str(exc)[:40]}"))
         checks.append(_miss("估值分位", f"获取失败：{str(exc)[:40]}"))
 
     # 4. 筹码（十大股东+户数）

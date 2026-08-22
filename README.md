@@ -509,3 +509,8 @@ python -m ashare_monitor.main backfill_indicators --report
 # 增速：净利/营收同比（1995 年报起）→ growth_history 表
 # 估值：年末交易日 PE/PB（2018 起，东财可得期）→ valuation_history 表
 # 真实（比亚迪）：增速 23 条（2002-2025，最新 -19%）；估值 8 条（2018-2025，PE 23.2）
+
+# 资产画像统一接口（AssetProfile）——跨领域通用化 Phase 1
+# 五维抽象：市值/总供给/增长/收益/估值；build_profile(code, market) 按市场分发
+# 股票实现：财报(ROE/增速) + 估值(PE/PB) + 股息率；crypto 占位待 Phase 2
+# check 命令的基本面/估值维度已改走统一接口（股票行为零变化，回归验证）
