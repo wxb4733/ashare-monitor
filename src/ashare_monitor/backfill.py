@@ -26,6 +26,9 @@ KNOWN_IPO_DATES = {
     ("ashare", "002594"): "2011-06-30",
     ("hk", "01211"): "2002-07-31",
     ("hk", "01810"): "2018-07-09",   # 小米集团
+    # 币安交易对（币安 2017-08 上线 BTCUSDT；更早数据币安无）
+    ("crypto", "BTCUSDT"): "2017-08-01",
+    ("crypto", "ETHUSDT"): "2017-08-01",
 }
 
 
@@ -42,36 +45,72 @@ def backfill_kline(code: str, market: str) -> tuple[int, int]:
 
     start = _start_date(code, market)
     end = datetime.now().strftime("%Y%m%d")
-    try:
-        if market == "hk":
-            df = ak.stock_hk_hist(
-                symbol=code[-5:], period="daily",
-                start_date=start.replace("-", ""), end_date=end,
-                adjust="qfq",
-            )
-        else:
-            df = ak.stock_zh_a_hist(
-                symbol=code[-6:], period="daily",
-                start_date=start.replace("-", ""), end_date=end,
-                adjust="qfq",
-            )
-        if df is None or df.empty:
-            raise RuntimeError(f"{code} K 线回填无数据（起点 {start}）")
+    if market == "crypto":
+        # 币：Binance 双域回退直拉，独立分支（不降级 akshare/腾讯）
+        rows = _backfill_kline_binance(code, start)
+    else:
+        try:
+            if market == "hk":
+                df = ak.stock_hk_hist(
+                    symbol=code[-5:], period="daily",
+                    start_date=start.replace("-", ""), end_date=end,
+                    adjust="qfq",
+                )
+            else:
+                df = ak.stock_zh_a_hist(
+                    symbol=code[-6:], period="daily",
+                    start_date=start.replace("-", ""), end_date=end,
+                    adjust="qfq",
+                )
+            if df is None or df.empty:
+                raise RuntimeError(f"{code} K 线回填无数据（起点 {start}）")
 
-        date_col = "日期" if "日期" in df.columns else "date"
-        rows = [
-            (str(r[date_col])[:10], float(r["开盘"]), float(r["收盘"]),
-             float(r["最高"]), float(r["最低"]), float(r["成交量"]))
-            for _, r in df.iterrows()
-        ]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("akshare K 线回填失败，降级腾讯分段拉取: %s", exc)
-        rows = _backfill_kline_tencent(code, market, start)
+            date_col = "日期" if "日期" in df.columns else "date"
+            rows = [
+                (str(r[date_col])[:10], float(r["开盘"]), float(r["收盘"]),
+                 float(r["最高"]), float(r["最低"]), float(r["成交量"]))
+                for _, r in df.iterrows()
+            ]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("akshare K 线回填失败，降级腾讯分段拉取: %s", exc)
+            rows = _backfill_kline_tencent(code, market, start)
 
     new = record_klines(rows, market, code)
     from .storage import count_klines
 
     return new, count_klines(code, market)
+
+
+def _backfill_kline_binance(code: str, start: str) -> list[tuple]:
+    """币安日 K 全量分段回填（每段 1000 根，startTime 推进；双域回退）。"""
+    from datetime import timezone as _tz
+
+    from .providers.binance import _get
+
+    base_ts = int(datetime.strptime(start, "%Y-%m-%d")
+                  .replace(tzinfo=_tz.utc).timestamp() * 1000)
+    end_ts = int(datetime.now().timestamp() * 1000)
+    all_rows: list[tuple] = []
+    cur = base_ts
+    guard = 0
+    while cur < end_ts and guard < 20:
+        guard += 1
+        resp = _get("/api/v3/klines", {
+            "symbol": code.upper(), "interval": "1d",
+            "startTime": cur, "endTime": end_ts, "limit": 1000,
+        })
+        batch = resp.json()
+        if not batch:
+            break
+        for k in batch:
+            d = datetime.fromtimestamp(int(k[0]) / 1000,
+                                       tz=_tz.utc).strftime("%Y-%m-%d")
+            all_rows.append((d, float(k[1]), float(k[4]), float(k[2]),
+                             float(k[3]), float(k[5])))
+        cur = int(batch[-1][0]) + 1
+        if len(batch) < 1000:
+            break
+    return all_rows
 
 
 def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:

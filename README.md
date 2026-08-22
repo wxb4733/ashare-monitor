@@ -520,3 +520,10 @@ python -m ashare_monitor.main period --period daily
 # watchlist 加 market: crypto 条目（如 BTCUSDT）→ 日报/雷达自动包含
 # 币 K 线走 Binance 直拉（7×24）；买方/基金/大股东维度对币为"数据缺失"（如实）
 # 真实：比特币 77,028 USDT（-1.67%）K线 2026-08-22 正常
+
+# 回填数字货币历史 K 线（Binance 分段）
+python -m ashare_monitor.main backfill BTCUSDT --market crypto
+python -m ashare_monitor.main backfill ETHUSDT --market crypto
+# 真实：BTC/ETH 各 3293 根（2017-08-17 币安上线 ~ 2026-08-22，接近 10 年上限）
+# 币安 2017-08 前无 BTCUSDT 数据（BTC 更早价格需其他源，如实）
+# 修复：load_klines code[-6:] 截断对 7 位交易对错误（BTCUSDT→TCUSDT）→ 数字代码才截断

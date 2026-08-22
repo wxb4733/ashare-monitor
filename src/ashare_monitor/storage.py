@@ -471,10 +471,12 @@ def load_klines(
     """查询某标的全部入库日 K（按日期升序）。"""
     conn = _connect(db_path)
     try:
+        # A 股 6 位代码截断；crypto 交易对（BTCUSDT）用完整代码
+        query_code = code[-6:] if code.isdigit() else code
         rows = conn.execute(
             "SELECT date, open, close, high, low, volume FROM klines "
             "WHERE market=? AND code=? ORDER BY date",
-            (market, code[-6:]),
+            (market, query_code),
         ).fetchall()
         return [
             {"date": r[0], "open": r[1], "close": r[2], "high": r[3],
