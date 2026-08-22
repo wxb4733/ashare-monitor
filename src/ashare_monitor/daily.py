@@ -37,15 +37,28 @@ def build_daily_data(cfg, codes: list[str] | None = None) -> dict:
     health = []
     for it in cfg.watchlist:
         market = str(it.get("market", "ashare"))
-        if market == "crypto":
-            continue
         c = str(it["code"])
         if codes and c not in codes:
             continue
         name = str(it.get("name", c))
         rows = []
         try:
-            rows = load_klines(c, market)
+            if market == "crypto":
+                # 币 K 线：Binance 直拉（open_time 为 int 毫秒时间戳）
+                from datetime import datetime as _dt, timezone as _tz
+
+                from .providers.binance import fetch_klines
+
+                raw = fetch_klines(c, days=400)
+                rows = [{
+                    "date": _dt.fromtimestamp(int(k[0]) / 1000,
+                                              tz=_tz.utc).strftime("%Y-%m-%d"),
+                    "open": float(k[1]), "close": float(k[4]),
+                    "high": float(k[2]), "low": float(k[3]),
+                    "volume": float(k[5]),
+                } for k in raw]
+            else:
+                rows = load_klines(c, market)
         except Exception:  # noqa: BLE001
             pass
         fresh, fnote = _freshness(rows)

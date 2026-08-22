@@ -514,3 +514,9 @@ python -m ashare_monitor.main backfill_indicators --report
 # 五维抽象：市值/总供给/增长/收益/估值；build_profile(code, market) 按市场分发
 # 股票实现：财报(ROE/增速) + 估值(PE/PB) + 股息率；crypto 占位待 Phase 2
 # check 命令的基本面/估值维度已改走统一接口（股票行为零变化，回归验证）
+
+# 数字货币进入多视角日报（跨领域打通）
+python -m ashare_monitor.main period --period daily
+# watchlist 加 market: crypto 条目（如 BTCUSDT）→ 日报/雷达自动包含
+# 币 K 线走 Binance 直拉（7×24）；买方/基金/大股东维度对币为"数据缺失"（如实）
+# 真实：比特币 77,028 USDT（-1.67%）K线 2026-08-22 正常
