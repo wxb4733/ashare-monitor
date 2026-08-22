@@ -1966,42 +1966,67 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     """A 股市场扫描选股（首个指标：高股息率）。"""
     from pathlib import Path
 
-    from .screen import build_screen_report, screen_dividend
+    from .screen import (
+        build_screen_report,
+        screen_dividend,
+        screen_sgr,
+    )
 
     cfg = load_config(config_path)
     console.print(f"[cyan]正在扫描 A 股市场（{metric}，TOP {top_n}）…[/cyan]")
     try:
-        hits = screen_dividend(top_n=top_n, min_yield=min_yield,
-                               min_mv=min_mv, max_mv=max_mv)
+        if metric == "sgr":
+            hits = screen_sgr(top_n=top_n, min_sgr=min_yield)
+            title = f"持续增长率选股（SGR ≥ {min_yield}%）"
+        else:
+            hits = screen_dividend(top_n=top_n, min_yield=min_yield,
+                                   min_mv=min_mv, max_mv=max_mv)
+            title = f"高股息率选股（股息率 ≥ {min_yield}%）"
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]{exc}[/red]")
         return
     if not hits:
         console.print("[yellow]无结果（可降低阈值）[/yellow]")
         return
-    table = Table(title=f"高股息率选股（股息率 ≥ {min_yield}%）")
-    table.add_column("#", justify="right")
-    table.add_column("名称", justify="left")
-    table.add_column("代码", justify="left")
-    table.add_column("现价", justify="right")
-    table.add_column("股息率%", justify="right")
-    table.add_column("PE", justify="right")
-    table.add_column("PB", justify="right")
-    table.add_column("总市值", justify="right")
-    for i, h in enumerate(hits, 1):
-        table.add_row(str(i), h.name, h.code,
-                      f"{h.price:.2f}" if h.price is not None else "-",
-                      f"[red]{h.dividend_yield:.2f}[/red]",
-                      f"{h.pe:.1f}" if h.pe is not None else "-",
-                      f"{h.pb:.2f}" if h.pb is not None else "-",
-                      f"{h.market_value / 1e8:.0f} 亿"
-                      if h.market_value else "-")
-    console.print(table)
+    if metric == "sgr":
+        table = Table(title=title)
+        table.add_column("#", justify="right")
+        table.add_column("名称", justify="left")
+        table.add_column("代码", justify="left")
+        table.add_column("SGR%", justify="right")
+        table.add_column("ROE%", justify="right")
+        table.add_column("支付率%", justify="right")
+        for i, h in enumerate(hits, 1):
+            table.add_row(str(i), h.name, h.code,
+                          f"[red]{h._sgr:.1f}[/red]",
+                          f"{h._roe:.1f}",
+                          f"{h.dividend_yield:.0f}")
+        console.print(table)
+    else:
+        table = Table(title=title)
+        table.add_column("#", justify="right")
+        table.add_column("名称", justify="left")
+        table.add_column("代码", justify="left")
+        table.add_column("现价", justify="right")
+        table.add_column("股息率%", justify="right")
+        table.add_column("PE", justify="right")
+        table.add_column("PB", justify="right")
+        table.add_column("总市值", justify="right")
+        for i, h in enumerate(hits, 1):
+            table.add_row(str(i), h.name, h.code,
+                          f"{h.price:.2f}" if h.price is not None else "-",
+                          f"[red]{h.dividend_yield:.2f}[/red]",
+                          f"{h.pe:.1f}" if h.pe is not None else "-",
+                          f"{h.pb:.2f}" if h.pb is not None else "-",
+                          f"{h.market_value / 1e8:.0f} 亿"
+                          if h.market_value else "-")
+        console.print(table)
     print_disclaimer()
     if report:
         params = {"top": top_n, "min_yield%": min_yield,
                   "min_mv亿": min_mv or "-", "max_mv亿": max_mv or "-"}
-        html, md = build_screen_report(hits, "高股息率", params)
+        metric_name = "持续增长率" if metric == "sgr" else "高股息率"
+        html, md = build_screen_report(hits, metric_name, params)
         out_dir = Path("output")
         out_dir.mkdir(parents=True, exist_ok=True)
         today = datetime.now().strftime("%Y-%m-%d")
@@ -3578,7 +3603,7 @@ def main() -> None:
     p_check.add_argument("--report", action="store_true", help="生成体检报告")
     p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")
     p_screen.add_argument("--metric", default="dividend",
-                          help="指标（当前支持 dividend 高股息率）")
+                          help="指标：dividend 高股息率 / sgr 持续增长率")
     p_screen.add_argument("--top", type=int, default=60, help="返回 TOP N")
     p_screen.add_argument("--min-yield", type=float, default=3.0,
                           help="最低股息率 %（默认 3）")

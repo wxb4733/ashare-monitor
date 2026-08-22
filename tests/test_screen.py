@@ -68,6 +68,41 @@ def test_screen_raises_when_source_down(monkeypatch):
         screen_dividend()
 
 
+def test_screen_sgr(monkeypatch):
+    import pandas as pd
+
+    from ashare_monitor.screen import screen_sgr
+
+    report = {
+        "600502": {"SECURITY_CODE": "600502", "SECURITY_NAME_ABBR": "新易盛",
+                   "WEIGHTAVG_ROE": 72.8, "BASIC_EPS": 2.5},
+        "002052": {"SECURITY_CODE": "002052", "SECURITY_NAME_ABBR": "同洲电子",
+                   "WEIGHTAVG_ROE": 99.8, "BASIC_EPS": 0.1},
+        "430282": {"SECURITY_CODE": "430282", "SECURITY_NAME_ABBR": "土友生物",
+                   "WEIGHTAVG_ROE": 348.1, "BASIC_EPS": 1.0},  # 北交所排除
+        "600519": {"SECURITY_CODE": "600519", "SECURITY_NAME_ABBR": "贵州茅台",
+                   "WEIGHTAVG_ROE": 33.0, "BASIC_EPS": 60.0},
+    }
+    monkeypatch.setattr("ashare_monitor.screen._fetch_report_all",
+                        lambda d: report)
+    div_df = pd.DataFrame([
+        {"代码": "600502", "名称": "新易盛", "现金分红-现金分红比例": 5.0},  # 每股 0.5
+        {"代码": "600519", "名称": "贵州茅台", "现金分红-现金分红比例": 300.0},  # 每股 30
+    ])
+    monkeypatch.setattr("ashare_monitor.screen.ak.stock_fhps_em",
+                        lambda date: div_df)
+    hits = screen_sgr(top_n=10, min_sgr=10.0, min_roe=8.0)
+    codes = {h.code for h in hits}
+    assert "430282" not in codes          # 北交所排除
+    # 新易盛：ROE 72.8，支付率 0.5/2.5=20% → SGR 58.2
+    xe = next(h for h in hits if h.code == "600502")
+    assert xe._sgr == pytest.approx(58.24, abs=0.1)
+    # 茅台：支付率 30/60=50% → SGR 16.5 < 阈值 10 → 入选（>10）
+    assert "600519" in codes
+    # 同洲电子 ROE 99.8 <100 保留（数据源如实）
+    assert "002052" in codes
+
+
 def test_build_screen_report():
     hits = [
         ScreenHit("601088", "中国神华", 38.9, 5.21, 12.5, 1.8, 7.73e11),

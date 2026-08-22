@@ -475,3 +475,9 @@ python -m ashare_monitor.main dividend_rank --years 10 --top-k 20 --report
 python -m ashare_monitor.main dividend_rank --sort cum-yield --report
 # 真实结果（2017-2026）：三钢闽光 146%、方大特钢 132%、冀中能源 77%
 # 口径：上榜年份累计每股派息 / 现价（datacenter 逐只取价，降级本地 K 线）
+
+# 指标 2：持续增长率 SGR（ROE × 留存率）
+python -m ashare_monitor.main screen --metric sgr --top 30 --min-yield 15 --report
+# SGR = 2025年报加权ROE × (1-支付率)；支付率=2025年度每股派息/EPS(clamp 0~1)
+# 真实结果：新易盛 65%（ROE 72.8 支付率 10%）、华图山鼎 83%
+# 过滤：剔除北交所（小票 ROE 极端值）/ROE>100 异常/ST

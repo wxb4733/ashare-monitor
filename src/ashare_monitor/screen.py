@@ -226,3 +226,114 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 > 高股息不代表低风险，不构成投资建议。
 """
     return html, md
+
+
+# ===================== 指标 2：持续增长率（SGR） =====================
+
+# SGR = ROE × (1 - 股利支付率)。衡量内生可持续增长（不靠外部融资/杠杆）。
+# 口径（如实）：2025 年报加权 ROE × 留存率；
+# 支付率 = 2025 年度每股派息 / 2025 年报 EPS（clamp 0~1，EPS≤0 排除）。
+# 数据源：东财业绩报表（RPT_LICO_FN_CPD）+ 东财分红送配报表（stock_fhps_em）。
+
+_REPORT_API = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+_REPORT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Referer": "https://data.eastmoney.com/",
+}
+
+
+def _fetch_report_page(report_date: str, page: int,
+                       page_size: int = 500) -> tuple[list[dict], int]:
+    """拉一页业绩报表。返回 (rows, count)。"""
+    import requests
+
+    d = requests.get(
+        _REPORT_API,
+        params={
+            "reportName": "RPT_LICO_FN_CPD", "columns": "ALL",
+            "pageSize": page_size, "pageNumber": page,
+            "filter": f"(REPORTDATE='{report_date}')",
+            "sortColumns": "UPDATE_DATE", "sortTypes": -1,
+            "source": "WEB", "client": "WEB",
+        },
+        headers=_REPORT_HEADERS, timeout=20,
+    ).json()
+    res = d.get("result") or {}
+    return (res.get("data") or []), (res.get("count") or 0)
+
+
+def _fetch_report_all(report_date: str) -> dict[str, dict]:
+    """分页拉全市场业绩报表，按代码去重（取最新更新）。"""
+    rows, count = _fetch_report_page(report_date, 1)
+    result: dict[str, dict] = {}
+    for r in rows:
+        result.setdefault(str(r.get("SECURITY_CODE") or ""), r)
+    if count > 500:
+        import math
+
+        pages = math.ceil(count / 500)
+        for p in range(2, min(pages + 1, 30)):
+            try:
+                more, _ = _fetch_report_page(report_date, p)
+            except Exception:  # noqa: BLE001
+                continue
+            if not more:
+                break
+            for r in more:
+                result.setdefault(str(r.get("SECURITY_CODE") or ""), r)
+    return result
+
+
+def screen_sgr(top_n: int = 60, min_sgr: float = 10.0,
+               min_roe: float = 8.0, exclude_st: bool = True) -> list[ScreenHit]:
+    """持续增长率选股：ROE × (1 - 支付率)。"""
+    import akshare as ak
+
+    # 1. 2025 年报 ROE + EPS（全市场分页）
+    report = _fetch_report_all("2025-12-31")
+    # 2. 2025 年度分红每股派息
+    try:
+        div_df = ak.stock_fhps_em(date="20251231")
+    except Exception as exc:  # noqa: BLE001
+        div_df = None
+        logger.warning("分红报表失败: %s", exc)
+    dps_map: dict[str, float] = {}
+    if div_df is not None and not div_df.empty:
+        code_col = div_df.columns[0]
+        dps_col = next((c for c in div_df.columns
+                        if "现金分红比例" in c or "现金分红-现金分红" in c), None)
+        for _, r in div_df.iterrows():
+            code = str(r.get(code_col) or "")
+            dps10 = _f(r.get(dps_col)) if dps_col else None
+            if dps10 is not None:
+                dps_map[code] = dps_map.get(code, 0.0) + dps10 / 10.0
+
+    hits = []
+    for code, r in report.items():
+        name = str(r.get("SECURITY_NAME_ABBR") or "")
+        if exclude_st and ("ST" in name.upper() or "退" in name):
+            continue
+        # 排除北交所/新三板（43/83/87/92 开头）——小票 ROE 数据异常值多
+        if code.startswith(("43", "83", "87", "92")):
+            continue
+        roe = _f(r.get("WEIGHTAVG_ROE"))
+        eps = _f(r.get("BASIC_EPS"))
+        if roe is None or eps is None or roe <= 0 or eps <= 0:
+            continue
+        if roe > 100:      # 极端值视为数据异常
+            continue
+        if roe < min_roe:
+            continue
+        dps = dps_map.get(code, 0.0)
+        pay = min(dps / eps, 1.0)   # 支付率 clamp
+        sgr = roe * (1 - pay)
+        if sgr < min_sgr:
+            continue
+        hits.append(ScreenHit(
+            code=code, name=name, price=None, dividend_yield=pay * 100,
+            pe=None, pb=None, market_value=None,
+        ))
+        hits[-1]._sgr = round(sgr, 2)
+        hits[-1]._roe = round(roe, 2)
+    hits.sort(key=lambda x: x._sgr, reverse=True)
+    return hits[:top_n]
