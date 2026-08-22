@@ -89,7 +89,7 @@ def test_screen_sgr(monkeypatch):
         {"代码": "600502", "名称": "新易盛", "现金分红-现金分红比例": 5.0},  # 每股 0.5
         {"代码": "600519", "名称": "贵州茅台", "现金分红-现金分红比例": 300.0},  # 每股 30
     ])
-    monkeypatch.setattr("ashare_monitor.screen.ak.stock_fhps_em",
+    monkeypatch.setattr("akshare.stock_fhps_em",
                         lambda date: div_df)
     hits = screen_sgr(top_n=10, min_sgr=10.0, min_roe=8.0)
     codes = {h.code for h in hits}
