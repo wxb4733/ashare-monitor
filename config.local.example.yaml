@@ -15,6 +15,9 @@ watchlist:
   - {code: "002594", market: "ashare", name: "比亚迪"}
   - {code: "01211", market: "hk", name: "比亚迪股份"}
   - {code: "01810", market: "hk", name: "小米集团"}  # 港股（内置官网映射）
+  # --- 数字货币（Binance 交易对，7×24；多视角日报自动包含） ---
+  - {code: "BTCUSDT", market: "crypto", name: "比特币"}
+  - {code: "ETHUSDT", market: "crypto", name: "以太坊"}
 
 # ---------- 持仓（重要！填入后 position/portfolio/risk 才真正工作） ----------
 # cost: 成本价；shares: 持股数量（股）；港股按股，crypto 按币
