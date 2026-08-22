@@ -465,3 +465,9 @@ python -m ashare_monitor.main backfill_dividend --report
 # 历史股息率：自 1990 年开市以来全历史（A 股 <40 年，如实）
 python -m ashare_monitor.main backfill_dividend --report
 # 按年循环东财分红报表（1990~今年）；报告仅列有分红年份 + 分红年数/均值
+
+# 股息率榜单时长（占据高股息榜单最久的股票）
+python -m ashare_monitor.main dividend_rank --years 10 --top-k 20 --report
+# 逐年拉东财分红报表 → 每年 TOP K（或 ≥3%）→ 累计上榜年数排名
+# 真实结果（2017-2026）：冀中能源 5/9 年居首（煤炭钢铁周期高股息）
+# 口径：东财"现金分红-股息率"字段为小数（0.026=2.61%，实测验证）

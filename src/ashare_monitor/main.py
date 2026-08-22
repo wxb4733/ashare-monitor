@@ -1825,6 +1825,71 @@ def run_insider_view(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_dividend_rank(config_path: str | None, years: int,
+                     min_yield: float, top_k: int,
+                     report: bool = False) -> None:
+    """股息率榜单时长：占据高股息榜单最久的股票。"""
+    from pathlib import Path
+
+    from .dividend_rank import (
+        _fill_names,
+        build_rank_report,
+        name_by_code,
+        rank_dividend_persistence,
+    )
+
+    cfg = load_config(config_path)
+    y_start = datetime.now().year - years + 1
+    console.print(f"[cyan]正在统计 {y_start}~{datetime.now().year} 年股息率榜单…"
+                  "（逐年拉取，约 1-3 分钟）[/cyan]")
+    try:
+        stats = rank_dividend_persistence(
+            years=list(range(y_start, datetime.now().year + 1)),
+            min_yield=min_yield,
+            top_k=top_k if top_k > 0 else None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]统计失败：{exc}[/red]")
+        return
+    _fill_names(stats)
+    if not stats:
+        console.print("[yellow]无数据（数据源不可达，请本机运行）[/yellow]")
+        return
+    table = Table(title=f"股息率榜单时长 TOP{min(30, len(stats))}（{y_start}~{datetime.now().year}）")
+    table.add_column("#", justify="right")
+    table.add_column("名称", justify="left")
+    table.add_column("代码", justify="left")
+    table.add_column("上榜年数", justify="right")
+    table.add_column("上榜年份", justify="left", overflow="fold")
+    table.add_column("最高股息率", justify="right")
+    for i, s in enumerate(stats[:30], 1):
+        y = "、".join(str(x) for x in s.years_detail[:10])
+        if len(s.years_detail) > 10:
+            y += "…"
+        table.add_row(str(i), s.name, s.code,
+                      f"[red]{s.years_on_list}/{s.total_years}[/red]",
+                      y, f"{s.best_yield:.2f}%")
+    console.print(table)
+    print_disclaimer()
+    if report:
+        html, md = build_rank_report(
+            stats, (y_start, datetime.now().year), min_yield,
+            top_k if top_k > 0 else None)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"dividend-rank-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]榜单时长报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "股息率"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"dividend-rank-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_backfill_dividend(code: str | None, config_path: str | None,
                           report: bool = False) -> None:
     """回填历史股息率（自 1990 年开市以来；A 股历史 <40 年）。"""
@@ -3514,6 +3579,15 @@ def main() -> None:
                           help="回填历史股息率（自 1990 年开市以来）")
     p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bd.add_argument("--report", action="store_true", help="生成报告")
+    p_dr = sub.add_parser("dividend_rank",
+                          help="股息率榜单时长（占据高股息榜最久的股票）")
+    p_dr.add_argument("--years", type=int, default=15,
+                      help="统计年数（默认 15）")
+    p_dr.add_argument("--min-yield", type=float, default=3.0,
+                      help="上榜阈值 %（默认 3）")
+    p_dr.add_argument("--top-k", type=int, default=50,
+                      help="每年按排名取 TOP K（0=用阈值）")
+    p_dr.add_argument("--report", action="store_true", help="生成报告")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3654,6 +3728,9 @@ def main() -> None:
     elif args.command == "backfill_dividend":
         run_backfill_dividend(args.code or None, args.config,
                               report=args.report)
+    elif args.command == "dividend_rank":
+        run_dividend_rank(args.config, args.years, args.min_yield,
+                          args.top_k, report=args.report)
     else:
         run_monitor(args.config)
 
