@@ -381,3 +381,62 @@ def screen_margin(top_n: int = 60, min_margin: float = 15.0,
         hits[-1]._net_profit = npf / 1e8   # 亿
     hits.sort(key=lambda x: x._net_margin, reverse=True)
     return hits[:top_n]
+
+
+# ===================== 指标 3：市场占有率 =====================
+
+# 市占率 = 公司营收 / 所属行业（东财 BOARD_NAME）总营收 × 100。
+# 行业总营收 = 该行业全部已披露成分股营收之和（2026H1 口径，如实标注近似）。
+# 数据源：东财业绩报表 RPT_LICO_FN_CPD（TOTAL_OPERATE_INCOME + BOARD_NAME）。
+
+
+def screen_share(top_n: int = 60, min_share: float = 15.0,
+                 min_rev: float = 10.0, exclude_st: bool = True,
+                 report_date: str | None = None) -> list[ScreenHit]:
+    """市场占有率选股：营收 / 行业总营收。"""
+    report_date = report_date or f"{datetime.now().year}-06-30"
+    report = _fetch_report_all(report_date)
+
+    # 行业营收汇总（仅统计已披露成分，如实近似）
+    ind_rev: dict[str, float] = {}
+    ind_count: dict[str, int] = {}
+    rows: list[tuple[str, str, float, float, str]] = []  # code,name,rev,npf,industry
+    for code, r in report.items():
+        name = str(r.get("SECURITY_NAME_ABBR") or "")
+        if exclude_st and ("ST" in name.upper() or "退" in name):
+            continue
+        if code.startswith(("43", "83", "87", "92")):
+            continue
+        rev = _f(r.get("TOTAL_OPERATE_INCOME"))
+        npf = _f(r.get("PARENT_NETPROFIT"))
+        if rev is None or rev <= 0 or npf is None:
+            continue
+        ind = str(r.get("BOARD_NAME") or "")
+        if not ind or ind == "其他":
+            continue   # 行业字段缺失，市占率无意义
+        ind_rev[ind] = ind_rev.get(ind, 0.0) + rev
+        ind_count[ind] = ind_count.get(ind, 0) + 1
+        rows.append((code, name, rev, npf, ind))
+
+    hits = []
+    for code, name, rev, npf, ind in rows:
+        # 行业披露样本 < 5 只时市占率失真（如单股行业恒为 100%）
+        if ind_count.get(ind, 0) < 5:
+            continue
+        total = ind_rev.get(ind, 0.0)
+        if total <= 0:
+            continue
+        share = rev / total * 100
+        if share < min_share:
+            continue
+        if rev < min_rev * 1e8:
+            continue
+        hits.append(ScreenHit(
+            code=code, name=name, price=None, dividend_yield=share,
+            pe=None, pb=None, market_value=rev,
+        ))
+        hits[-1]._share = round(share, 1)
+        hits[-1]._industry = ind
+        hits[-1]._net_profit = npf / 1e8
+    hits.sort(key=lambda x: x._share, reverse=True)
+    return hits[:top_n]

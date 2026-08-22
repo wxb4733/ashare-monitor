@@ -492,3 +492,8 @@ python -m ashare_monitor.main backfill_sgr --report
 python -m ashare_monitor.main screen --metric margin --top 30 --min-yield 20 --report
 # 真实（2026H1）：东方财富 76.8%、金山办公 76%（毛利率 84.9%）、兆易创新 59.3%
 # 过滤：净利率>100 异常/ST/北交所/营收<1亿
+
+# 指标 3：市场占有率（营收 / 行业已披露总营收）
+python -m ashare_monitor.main screen --metric share --top 30 --min-yield 20 --report
+# 真实（2026H1 样本）：贵州茅台 86.5% 白酒、大秦铁路 84.3%、工业富联 81.3%
+# 口径：东财 BOARD_NAME 行业分组；行业披露样本<5 跳过；缺失行业跳过（如实）

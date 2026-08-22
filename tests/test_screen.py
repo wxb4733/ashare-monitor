@@ -136,6 +136,39 @@ def test_screen_margin(monkeypatch):
     assert js._gross_margin == pytest.approx(84.9)
 
 
+def test_screen_share(monkeypatch):
+    from ashare_monitor.screen import screen_share
+
+    report = {
+        # 白酒行业：茅台 923 + 五粮液 500 = 1423
+        "600519": {"SECURITY_CODE": "600519", "SECURITY_NAME_ABBR": "贵州茅台",
+                   "TOTAL_OPERATE_INCOME": 923e8, "PARENT_NETPROFIT": 445e8,
+                   "BOARD_NAME": "白酒Ⅱ"},
+        "000858": {"SECURITY_CODE": "000858", "SECURITY_NAME_ABBR": "五粮液",
+                   "TOTAL_OPERATE_INCOME": 500e8, "PARENT_NETPROFIT": 200e8,
+                   "BOARD_NAME": "白酒Ⅱ"},
+        # 单股行业（样本<5 → 跳过）
+        "601789": {"SECURITY_CODE": "601789", "SECURITY_NAME_ABBR": "宁波建工",
+                   "TOTAL_OPERATE_INCOME": 97e8, "PARENT_NETPROFIT": 2.5e8,
+                   "BOARD_NAME": "房屋建设Ⅱ"},
+        # 行业字段缺失 → 跳过
+        "600000": {"SECURITY_CODE": "600000", "SECURITY_NAME_ABBR": "浦发银行",
+                   "TOTAL_OPERATE_INCOME": 1000e8, "PARENT_NETPROFIT": 300e8,
+                   "BOARD_NAME": ""},
+    }
+    monkeypatch.setattr("ashare_monitor.screen._fetch_report_all",
+                        lambda d: report)
+    hits = screen_share(top_n=10, min_share=20.0, min_rev=10.0)
+    codes = {h.code for h in hits}
+    assert "600519" in codes and "000858" in codes
+    assert "601789" not in codes     # 单股行业样本不足
+    assert "600000" not in codes     # 行业缺失
+    mt = next(h for h in hits if h.code == "600519")
+    # 923/1423 = 64.9%
+    assert mt._share == pytest.approx(64.9, abs=0.1)
+    assert mt._industry == "白酒Ⅱ"
+
+
 def test_build_screen_report():
     hits = [
         ScreenHit("601088", "中国神华", 38.9, 5.21, 12.5, 1.8, 7.73e11),
