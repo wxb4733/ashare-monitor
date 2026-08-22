@@ -1825,6 +1825,65 @@ def run_insider_view(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_backfill_sgr(code: str | None, config_path: str | None,
+                      report: bool = False) -> None:
+    """回填 SGR（持续增长率）历史（1995 年报起）。"""
+    from pathlib import Path
+
+    from .dividend import (
+        build_sgr_report,
+        fetch_sgr_history,
+        save_sgr_history,
+    )
+
+    cfg = load_config(config_path)
+    targets = []
+    for it in cfg.watchlist:
+        if str(it.get("market", "ashare")) != "ashare":
+            continue
+        c = str(it["code"])
+        if code and c != code:
+            continue
+        targets.append((c, str(it.get("name", c))))
+    if not targets:
+        console.print("[yellow]无 A 股自选股[/yellow]")
+        return
+    hist: dict[str, list] = {}
+    for c, n in targets:
+        console.print(f"[cyan]回填 {n}({c}) SGR 历史（1995 起，逐年约 30 次请求）…[/cyan]")
+        try:
+            rows = fetch_sgr_history(c, n)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[yellow]  {n} 回填失败：{str(exc)[:60]}[/yellow]")
+            continue
+        added = save_sgr_history(rows)
+        hist[c] = rows
+        valid = [r for r in rows if r.sgr is not None]
+        if valid:
+            latest = valid[-1].sgr
+            avg = sum(r.sgr for r in valid) / len(valid)
+            console.print(f"  新增 {added} 条（{rows[0].year}~{rows[-1].year}）"
+                          f" | 最新 SGR {latest:.1f}% / 均值 {avg:.1f}%")
+        else:
+            console.print(f"  新增 {added} 条 | SGR 数据缺失（如实）")
+    print_disclaimer()
+    if report and hist:
+        html, md = build_sgr_report(hist)
+        out_dir = Path("output")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        today = datetime.now().strftime("%Y-%m-%d")
+        out_path = out_dir / f"sgr-{today}.html"
+        out_path.write_text(html, encoding="utf-8")
+        console.print(f"[green]SGR 历史报告已生成: {out_path}[/green]")
+        vault = str(getattr(cfg.obsidian, "vault", "")).strip()
+        if vault:
+            vdir = Path(vault) / "SGR"
+            vdir.mkdir(parents=True, exist_ok=True)
+            md_path = vdir / f"sgr-{today}.md"
+            md_path.write_text(md, encoding="utf-8")
+            console.print(f"[dim]Obsidian: {md_path}[/dim]")
+
+
 def run_dividend_rank(config_path: str | None, years: int,
                      min_yield: float, top_k: int, sort_by: str,
                      report: bool = False) -> None:
@@ -3628,6 +3687,10 @@ def main() -> None:
                       default="years",
                       help="排序：years 上榜年数 / cum-yield 累计股息率")
     p_dr.add_argument("--report", action="store_true", help="生成报告")
+    p_bs = sub.add_parser("backfill_sgr",
+                          help="回填 SGR 持续增长率历史（1995 年报起）")
+    p_bs.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
+    p_bs.add_argument("--report", action="store_true", help="生成报告")
 
     args = parser.parse_args()
     if args.command == "once":
@@ -3771,6 +3834,8 @@ def main() -> None:
     elif args.command == "dividend_rank":
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
+    elif args.command == "backfill_sgr":
+        run_backfill_sgr(args.code or None, args.config, report=args.report)
     else:
         run_monitor(args.config)
 

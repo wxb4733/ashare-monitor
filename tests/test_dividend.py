@@ -74,6 +74,50 @@ def test_save_load(tmp_path, monkeypatch):
     assert loaded[0].yield_pct == pytest.approx(0.3333)
 
 
+def test_fetch_sgr_history(monkeypatch):
+    import pandas as pd
+
+    from ashare_monitor import dividend
+
+    # 3 年业绩报表：ROE + EPS
+    report_2020 = {"002594": {"SECURITY_CODE": "002594",
+                              "SECURITY_NAME_ABBR": "比亚迪",
+                              "WEIGHTAVG_ROE": 20.0, "BASIC_EPS": 1.5}}
+    report_2021 = {"002594": {"SECURITY_CODE": "002594",
+                              "SECURITY_NAME_ABBR": "比亚迪",
+                              "WEIGHTAVG_ROE": 30.0, "BASIC_EPS": 3.0}}
+
+    def fake_report(rd):
+        if rd == "2020-12-31":
+            return report_2020
+        if rd == "2021-12-31":
+            return report_2021
+        return {}
+
+    monkeypatch.setattr("ashare_monitor.dividend._fetch_report_year",
+                        fake_report)
+    div_map = {
+        "20201231": pd.DataFrame([{"代码": "002594", "名称": "比亚迪",
+                                   "现金分红-现金分红比例": 10.0}]),  # 每股 1.0
+        "20211231": pd.DataFrame([{"代码": "002594", "名称": "比亚迪",
+                                   "现金分红-现金分红比例": 30.0}]),  # 每股 3.0
+    }
+
+    def fake_fhps(date):
+        return div_map.get(date, pd.DataFrame())
+
+    monkeypatch.setattr("akshare.stock_fhps_em",
+                        fake_fhps)
+    monkeypatch.setattr("ashare_monitor.dividend.datetime", __import__("datetime").datetime)
+    rows = dividend.fetch_sgr_history("002594", "比亚迪")
+    by = {r.year: r for r in rows}
+    # 2020: 支付率 1.0/1.5=66.7% → SGR 20×(1-0.667)=6.67
+    assert by[2020].sgr == pytest.approx(6.67, abs=0.05)
+    # 2021: 支付率 3.0/3.0=100% → SGR 0（全分光）
+    assert by[2021].sgr == pytest.approx(0.0)
+    assert by[2021].payout_pct == pytest.approx(100.0)
+
+
 def test_build_dividend_report():
     from ashare_monitor.dividend import DividendYear, build_dividend_report
 

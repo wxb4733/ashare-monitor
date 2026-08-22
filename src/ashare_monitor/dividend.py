@@ -251,3 +251,259 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 > 不构成投资建议。
 """
     return html, md
+
+
+# ===================== SGR 历史回填（持续增长率） =====================
+
+# SGR_年 = 当年年报加权ROE × (1 - 当年股利支付率)
+# 数据：东财业绩报表（RPT_LICO_FN_CPD，REPORTDATE 需带横线）+ 分红报表（按年）。
+# 覆盖：1995 年报起（东财业绩数据可得期；A 股 1990 开市，40 年不可能，如实）。
+
+
+def _fetch_report_year(report_date: str) -> dict[str, dict]:
+    """拉单年业绩报表全市场（分页去重，按代码）。"""
+    import math
+    import requests
+
+    headers = {"User-Agent": "Mozilla/5.0",
+               "Referer": "https://data.eastmoney.com/"}
+    result: dict[str, dict] = {}
+
+    def one_page(page: int):
+        d = requests.get(
+            "https://datacenter-web.eastmoney.com/api/data/v1/get",
+            params={
+                "reportName": "RPT_LICO_FN_CPD", "columns": "ALL",
+                "pageSize": 500, "pageNumber": page,
+                "filter": f"(REPORTDATE='{report_date}')",
+                "sortColumns": "UPDATE_DATE", "sortTypes": -1,
+                "source": "WEB", "client": "WEB",
+            },
+            headers=headers, timeout=20,
+        ).json()
+        res = d.get("result") or {}
+        return (res.get("data") or []), (res.get("count") or 0)
+
+    rows, count = one_page(1)
+    for r in rows:
+        result.setdefault(str(r.get("SECURITY_CODE") or ""), r)
+    if count > 500:
+        for p in range(2, math.ceil(count / 500) + 1):
+            try:
+                more, _ = one_page(p)
+            except Exception:  # noqa: BLE001
+                continue
+            if not more:
+                break
+            for r in more:
+                result.setdefault(str(r.get("SECURITY_CODE") or ""), r)
+    return result
+
+
+@dataclass
+class SgrYear:
+    code: str
+    name: str
+    year: int
+    roe: float | None
+    eps: float | None
+    dps: float | None          # 年度每股派息
+    payout_pct: float | None   # 股利支付率 %
+    sgr: float | None          # 持续增长率 %
+
+    def to_dict(self) -> dict:
+        return {
+            "code": self.code, "name": self.name, "year": self.year,
+            "roe": self.roe, "eps": self.eps, "dps": self.dps,
+            "payout_pct": self.payout_pct, "sgr": self.sgr,
+        }
+
+
+def fetch_sgr_history(code: str, name: str = "") -> list[SgrYear]:
+    """回填单只 A 股 SGR 历史（1995 年报起，数据可得期）。"""
+    import akshare as ak
+
+    years = range(1995, datetime.now().year + 1)
+    result: list[SgrYear] = []
+    for year in years:
+        report_date = f"{year}-12-31"
+        try:
+            report = _fetch_report_year(report_date)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("业绩报表 %s 失败: %s", year, exc)
+            continue
+        r = report.get(code)
+        if not r:
+            continue
+        roe = _f(r.get("WEIGHTAVG_ROE"))
+        eps = _f(r.get("BASIC_EPS"))
+        # 年度分红每股派息
+        try:
+            div_df = ak.stock_fhps_em(date=f"{year}1231")
+        except Exception:  # noqa: BLE001
+            div_df = None
+        dps = None
+        if div_df is not None and not div_df.empty:
+            code_col = div_df.columns[0]
+            dps_col = next((c for c in div_df.columns
+                            if "现金分红比例" in c or "现金分红-现金分红" in c), None)
+            for _, dr in div_df.iterrows():
+                if str(dr.get(code_col) or "") == code and dps_col:
+                    d10 = _f(dr.get(dps_col))
+                    if d10 is not None:
+                        dps = (dps or 0.0) + d10 / 10.0
+        payout = (min(dps / eps, 1.0) * 100
+                  if dps is not None and eps not in (None, 0) else None)
+        sgr = (roe * (1 - payout / 100)
+               if roe is not None and payout is not None else None)
+        result.append(SgrYear(
+            code=code, name=name, year=year, roe=roe, eps=eps, dps=dps,
+            payout_pct=payout, sgr=sgr,
+        ))
+    return result
+
+
+def save_sgr_history(rows: list[SgrYear]) -> int:
+    """入库（code+year 唯一）。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    added = 0
+    with conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS sgr_history (
+                code TEXT, name TEXT, year INTEGER,
+                roe REAL, eps REAL, dps REAL, payout_pct REAL, sgr REAL,
+                PRIMARY KEY (code, year))"""
+        )
+        for r in rows:
+            cur = conn.execute(
+                "INSERT OR REPLACE INTO sgr_history "
+                "(code, name, year, roe, eps, dps, payout_pct, sgr) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (r.code, r.name, r.year, r.roe, r.eps, r.dps,
+                 r.payout_pct, r.sgr),
+            )
+            added += cur.rowcount
+    return added
+
+
+def load_sgr_history(code: str) -> list[SgrYear]:
+    """读取 SGR 历史。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    rows = []
+    for r in conn.execute(
+        "SELECT * FROM sgr_history WHERE code=? ORDER BY year", (code,),
+    ).fetchall():
+        rows.append(SgrYear(
+            code=r["code"], name=r["name"], year=r["year"], roe=r["roe"],
+            eps=r["eps"], dps=r["dps"], payout_pct=r["payout_pct"],
+            sgr=r["sgr"],
+        ))
+    return rows
+
+
+def build_sgr_report(hist: dict[str, list[SgrYear]],
+                     as_of: str | None = None) -> tuple[str, str]:
+    """生成 SGR 历史报告（HTML, Markdown）。"""
+    as_of = as_of or datetime.now().strftime("%Y-%m-%d")
+
+    tr = []
+    md_rows = ["| 标的 | 年份 | ROE% | EPS | 每股派息 | 支付率% | SGR% |",
+               "| --- | --- | --- | --- | --- | --- | --- |"]
+    for code, rows in hist.items():
+        name = rows[0].name if rows else code
+        valid = [r for r in rows if r.sgr is not None]
+        latest = valid[-1].sgr if valid else None
+        avg = sum(r.sgr for r in valid) / len(valid) if valid else None
+        paid = [r for r in rows if r.dps is not None]
+        display = paid if paid else (rows[-5:] if rows else [])
+        span = max(len(display), 1)
+        summary = (f"<br/><span style='color:#86909c;font-size:11px'>"
+                   f"最新 SGR {latest:.1f}% / 均值 {avg:.1f}% / 分红 {len(paid)} 年"
+                   f"</span>")
+        for i, r in enumerate(display):
+            roe_s = f"{r.roe:.1f}" if r.roe is not None else "-"
+            eps_s = f"{r.eps:.2f}" if r.eps is not None else "-"
+            dps_s = f"{r.dps:.2f}" if r.dps is not None else "-"
+            pay_s = f"{r.payout_pct:.0f}" if r.payout_pct is not None else "-"
+            sgr_s = (f'<span style="color:#e02e24;font-weight:600">'
+                     f"{r.sgr:.1f}</span>" if r.sgr is not None else "-")
+            row = f"<tr><td>{r.year}</td><td>{roe_s}</td><td>{eps_s}</td>" \
+                  f"<td>{dps_s}</td><td>{pay_s}</td><td>{sgr_s}</td></tr>"
+            if i == 0:
+                row = (f"<tr><td rowspan='{span}'>{name}({code}){summary}</td>"
+                       f"<td>{r.year}</td><td>{roe_s}</td><td>{eps_s}</td>"
+                       f"<td>{dps_s}</td><td>{pay_s}</td><td>{sgr_s}</td></tr>")
+            tr.append(row)
+        if not display:
+            tr.append(f"<tr><td>{name}({code})</td><td colspan='6' "
+                      f"style='text-align:center;color:#86909c'>无数据</td></tr>")
+        md_rows.append(
+            f"| {name}({code}) | 最新 {latest:.1f}% / 均值 {avg:.1f}% / "
+            f"分红 {len(paid)} 年 |" if valid else
+            f"| {name}({code}) | 无数据 |")
+        for r in display:
+            md_rows.append(
+                f"| {name}({code}) | {r.year} | {r.roe:.1f}" if r.roe is not None else "| -"
+                f" | {r.eps:.2f}" if r.eps is not None else " | -"
+                f" | {r.dps:.2f}" if r.dps is not None else " | -"
+                f" | {r.payout_pct:.0f}" if r.payout_pct is not None else " | -"
+                f" | {r.sgr:.1f} |" if r.sgr is not None else " | - |")
+
+    css = """
+body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f7f8fa; color: #1f2329; margin: 0; }
+.container { max-width: 1150px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.meta { color: #86909c; font-size: 12px; margin-bottom: 16px; }
+.card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid #f0f0f0; }
+th { background: #fafafa; color: #666; font-weight: 600; }
+th:first-child, td:first-child { text-align: left; }
+.footer { color: #86909c; font-size: 12px; text-align: center; padding: 16px 0 8px; }
+"""
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SGR 历史回填 {as_of}</title>
+<style>{css}</style>
+</head>
+<body>
+<div class="container">
+<h1>持续增长率（SGR）历史回填</h1>
+<div class="meta">{as_of} · 1995 年报起（东财业绩数据可得期；A 股 1990 开市，40 年不可能）·
+SGR = 当年 ROE × (1 − 支付率)</div>
+<div class="card"><table>
+<tr><th>标的</th><th>年份</th><th>ROE%</th><th>EPS</th><th>每股派息</th><th>支付率%</th><th>SGR%</th></tr>
+{''.join(tr) if tr else '<tr><td colspan="7" style="text-align:center;color:#86909c">无数据</td></tr>'}
+</table></div>
+<div class="footer">支付率 clamp 0~100%；高 ROE 高留存 = 内生成长；不构成投资建议。</div>
+</div>
+</body>
+</html>"""
+
+    md = f"""---
+title: SGR 历史回填 {as_of}
+date: {as_of}
+tags: [SGR, 持续增长率, 分红]
+generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
+---
+# 持续增长率（SGR）历史回填
+
+1995 年报起（东财数据可得期；A 股 1990 开市，40 年不可能）
+
+{chr(10).join(md_rows) if md_rows else "无数据。"}
+
+> 不构成投资建议。
+"""
+    return html, md

@@ -481,3 +481,9 @@ python -m ashare_monitor.main screen --metric sgr --top 30 --min-yield 15 --repo
 # SGR = 2025年报加权ROE × (1-支付率)；支付率=2025年度每股派息/EPS(clamp 0~1)
 # 真实结果：新易盛 65%（ROE 72.8 支付率 10%）、华图山鼎 83%
 # 过滤：剔除北交所（小票 ROE 极端值）/ROE>100 异常/ST
+
+# 回填 SGR 持续增长率历史（1995 年报起）
+python -m ashare_monitor.main backfill_sgr --report
+# 逐年：业绩报表(REPORTDATE 带横线) ROE/EPS + 分红报表 每股派息 → SGR=ROE×(1-支付率)
+# 真实：比亚迪 最新 SGR 13.8% / 均值 8.0% / 分红 10 年
+# 覆盖说明：东财业绩数据 1995 起；A 股 1990 开市，40 年不可能（如实）
