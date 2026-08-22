@@ -487,3 +487,8 @@ python -m ashare_monitor.main backfill_sgr --report
 # 逐年：业绩报表(REPORTDATE 带横线) ROE/EPS + 分红报表 每股派息 → SGR=ROE×(1-支付率)
 # 真实：比亚迪 最新 SGR 13.8% / 均值 8.0% / 分红 10 年
 # 覆盖说明：东财业绩数据 1995 起；A 股 1990 开市，40 年不可能（如实）
+
+# 指标 3：高利润率（净利率 = 归母净利/营收）
+python -m ashare_monitor.main screen --metric margin --top 30 --min-yield 20 --report
+# 真实（2026H1）：东方财富 76.8%、金山办公 76%（毛利率 84.9%）、兆易创新 59.3%
+# 过滤：净利率>100 异常/ST/北交所/营收<1亿

@@ -2028,6 +2028,7 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     from .screen import (
         build_screen_report,
         screen_dividend,
+        screen_margin,
         screen_sgr,
     )
 
@@ -2037,6 +2038,9 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
         if metric == "sgr":
             hits = screen_sgr(top_n=top_n, min_sgr=min_yield)
             title = f"持续增长率选股（SGR ≥ {min_yield}%）"
+        elif metric == "margin":
+            hits = screen_margin(top_n=top_n, min_margin=min_yield)
+            title = f"高利润率选股（净利率 ≥ {min_yield}%）"
         else:
             hits = screen_dividend(top_n=top_n, min_yield=min_yield,
                                    min_mv=min_mv, max_mv=max_mv)
@@ -2047,7 +2051,23 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     if not hits:
         console.print("[yellow]无结果（可降低阈值）[/yellow]")
         return
-    if metric == "sgr":
+    if metric == "margin":
+        table = Table(title=title)
+        table.add_column("#", justify="right")
+        table.add_column("名称", justify="left")
+        table.add_column("代码", justify="left")
+        table.add_column("净利率%", justify="right")
+        table.add_column("毛利率%", justify="right")
+        table.add_column("归母净利(亿)", justify="right")
+        table.add_column("营收(亿)", justify="right")
+        for i, h in enumerate(hits, 1):
+            table.add_row(str(i), h.name, h.code,
+                          f"[red]{h._net_margin:.1f}[/red]",
+                          f"{h._gross_margin:.1f}" if h._gross_margin is not None else "-",
+                          f"{h._net_profit:.1f}",
+                          f"{h.market_value / 1e8:.0f}")
+        console.print(table)
+    elif metric == "sgr":
         table = Table(title=title)
         table.add_column("#", justify="right")
         table.add_column("名称", justify="left")
@@ -2084,7 +2104,8 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     if report:
         params = {"top": top_n, "min_yield%": min_yield,
                   "min_mv亿": min_mv or "-", "max_mv亿": max_mv or "-"}
-        metric_name = "持续增长率" if metric == "sgr" else "高股息率"
+        metric_name = {"sgr": "持续增长率", "margin": "高利润率"}.get(
+            metric, "高股息率")
         html, md = build_screen_report(hits, metric_name, params)
         out_dir = Path("output")
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -3662,7 +3683,7 @@ def main() -> None:
     p_check.add_argument("--report", action="store_true", help="生成体检报告")
     p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")
     p_screen.add_argument("--metric", default="dividend",
-                          help="指标：dividend 高股息率 / sgr 持续增长率")
+                          help="指标：dividend 高股息率 / sgr 持续增长率 / margin 高利润率")
     p_screen.add_argument("--top", type=int, default=60, help="返回 TOP N")
     p_screen.add_argument("--min-yield", type=float, default=3.0,
                           help="最低股息率 %（默认 3）")

@@ -103,6 +103,39 @@ def test_screen_sgr(monkeypatch):
     assert "002052" in codes
 
 
+def test_screen_margin(monkeypatch):
+    from ashare_monitor.screen import screen_margin
+
+    report = {
+        "688111": {"SECURITY_CODE": "688111", "SECURITY_NAME_ABBR": "金山办公",
+                   "TOTAL_OPERATE_INCOME": 33e8, "PARENT_NETPROFIT": 25.2e8,
+                   "XSMLL": 84.9},
+        "600519": {"SECURITY_CODE": "600519", "SECURITY_NAME_ABBR": "贵州茅台",
+                   "TOTAL_OPERATE_INCOME": 1741e8, "PARENT_NETPROFIT": 862e8,
+                   "XSMLL": 91.8},
+        "600519X": {"SECURITY_CODE": "600519X", "SECURITY_NAME_ABBR": "ST测试",
+                    "TOTAL_OPERATE_INCOME": 10e8, "PARENT_NETPROFIT": 5e8,
+                    "XSMLL": 50.0},
+        "000001": {"SECURITY_CODE": "000001", "SECURITY_NAME_ABBR": "平安银行",
+                   "TOTAL_OPERATE_INCOME": 5000e8, "PARENT_NETPROFIT": 300e8,
+                   "XSMLL": 30.0},   # 净利率 6% < 20 过滤
+        "430282": {"SECURITY_CODE": "430282", "SECURITY_NAME_ABBR": "土友生物",
+                   "TOTAL_OPERATE_INCOME": 1e8, "PARENT_NETPROFIT": 0.9e8,
+                   "XSMLL": 90.0},   # 北交所排除
+    }
+    monkeypatch.setattr("ashare_monitor.screen._fetch_report_all",
+                        lambda d: report)
+    hits = screen_margin(top_n=10, min_margin=20.0, min_rev=1.0)
+    codes = {h.code for h in hits}
+    assert "688111" in codes and "600519" in codes
+    assert "000001" not in codes          # 净利率低
+    assert "600519X" not in codes         # ST 剔除
+    assert "430282" not in codes          # 北交所剔除
+    js = next(h for h in hits if h.code == "688111")
+    assert js._net_margin == pytest.approx(76.36, abs=0.1)
+    assert js._gross_margin == pytest.approx(84.9)
+
+
 def test_build_screen_report():
     hits = [
         ScreenHit("601088", "中国神华", 38.9, 5.21, 12.5, 1.8, 7.73e11),

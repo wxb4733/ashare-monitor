@@ -337,3 +337,47 @@ def screen_sgr(top_n: int = 60, min_sgr: float = 10.0,
         hits[-1]._roe = round(roe, 2)
     hits.sort(key=lambda x: x._sgr, reverse=True)
     return hits[:top_n]
+
+
+# ===================== 指标 3：高利润率 =====================
+
+# 净利率 = 归母净利润 / 营业总收入 × 100（最新报告期）。
+# 过滤：净利率 ≥ min_margin、毛利率 > 0、净利率 < 100%（异常）、营收 ≥ min_rev（剔除微盘噪音）。
+# 数据源：东财业绩报表 RPT_LICO_FN_CPD（TOTAL_OPERATE_INCOME/PARENT_NETPROFIT/XSMLL）。
+
+
+def screen_margin(top_n: int = 60, min_margin: float = 15.0,
+                  min_rev: float = 1.0, exclude_st: bool = True,
+                  report_date: str | None = None) -> list[ScreenHit]:
+    """高利润率选股：净利率 = 归母净利/营收。"""
+    report_date = report_date or f"{datetime.now().year}-06-30"
+    report = _fetch_report_all(report_date)
+
+    hits = []
+    for code, r in report.items():
+        name = str(r.get("SECURITY_NAME_ABBR") or "")
+        if exclude_st and ("ST" in name.upper() or "退" in name):
+            continue
+        if code.startswith(("43", "83", "87", "92")):
+            continue
+        rev = _f(r.get("TOTAL_OPERATE_INCOME"))
+        npf = _f(r.get("PARENT_NETPROFIT"))
+        gm = _f(r.get("XSMLL"))
+        if rev is None or npf is None or rev <= 0 or npf <= 0:
+            continue
+        if rev < min_rev * 1e8:
+            continue
+        nm = npf / rev * 100          # 净利率 %
+        if nm > 100:                  # 极端值视为异常
+            continue
+        if nm < min_margin:
+            continue
+        hits.append(ScreenHit(
+            code=code, name=name, price=None, dividend_yield=nm,
+            pe=None, pb=None, market_value=rev,
+        ))
+        hits[-1]._net_margin = round(nm, 2)
+        hits[-1]._gross_margin = round(gm, 2) if gm is not None else None
+        hits[-1]._net_profit = npf / 1e8   # 亿
+    hits.sort(key=lambda x: x._net_margin, reverse=True)
+    return hits[:top_n]
