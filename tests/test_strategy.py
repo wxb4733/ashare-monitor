@@ -70,3 +70,36 @@ def test_execute_paper_trade_reject(tmp_path, monkeypatch):
     result = strategy.execute_paper_trade(targets, dry_run=True)
     assert not result["fills"]
     assert result["rejected"][0]["reason"].startswith("资金不足一手")
+
+
+def test_portfolio_backtest(tmp_path, monkeypatch):
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    # mock 本地 K 线：两只标的（一涨一跌）+ 沪深 300 指数
+    def fake_load(code, market):
+        dates = [f"2024-0{i}-0{j}" for i in range(1, 3) for j in range(1, 3)]
+        rows = [{"date": d, "close": 10.0 + i * 0.5} for i, d in enumerate(dates)]
+        return rows
+
+    monkeypatch.setattr("ashare_monitor.strategy.load_klines", fake_load)
+
+    import pandas as pd
+
+    idx_df = pd.DataFrame({
+        "date": [f"2024-0{i}-0{j}" for i in range(1, 3) for j in range(1, 3)],
+        "open": [100.0] * 4, "high": [101.0] * 4, "low": [99.0] * 4,
+        "close": [100.0 + i for i in range(4)],
+        "volume": [1.0] * 4,
+    })
+
+    def fake_index(symbol):
+        return idx_df
+
+    monkeypatch.setattr("akshare.stock_zh_index_daily", fake_index)
+    result = strategy.portfolio_backtest(
+        ["600519", "000001"], names={"600519": "茅台", "000001": "平安"})
+    assert result["portfolio"]["days"] == 3
+    assert result["portfolio"]["total"] > 0
+    assert result["benchmark"]["total"] > 0
+    assert "excess_annual" in result

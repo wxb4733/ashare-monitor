@@ -1947,6 +1947,41 @@ def run_backfill_indicators(code: str | None, config_path: str | None,
         console.print(f"[green]指标历史报告已生成: {out_path}[/green]")
 
 
+def run_strategy_backtest(codes: str, config_path: str | None,
+                          start: str | None) -> None:
+    """组合回测：等权组合 vs 沪深 300。"""
+    from .strategy import portfolio_backtest
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    cfg = load_config(config_path)
+    names = {str(it["code"]): str(it.get("name", "")) for it in cfg.watchlist}
+    console.print(f"[cyan]组合回测 {len(code_list)} 只等权 vs 沪深 300…[/cyan]")
+    try:
+        result = portfolio_backtest(code_list, names=names, start=start)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{exc}[/red]")
+        return
+    table = Table(title=f"组合回测 {result['start']} ~ {result['end']}（{result['portfolio']['days']} 交易日）")
+    table.add_column("组合", justify="left")
+    table.add_column("区间收益%", justify="right")
+    table.add_column("年化%", justify="right")
+    table.add_column("最大回撤%", justify="right")
+    table.add_column("夏普", justify="right")
+    table.add_row("等权组合", f"[red]{result['portfolio']['total']:.2f}[/red]",
+                  f"{result['portfolio']['annual']:.2f}",
+                  f"{result['portfolio']['max_dd']:.2f}",
+                  f"{result['portfolio']['sharpe']:.2f}")
+    table.add_row("沪深300", f"{result['benchmark']['total']:.2f}",
+                  f"{result['benchmark']['annual']:.2f}",
+                  f"{result['benchmark']['max_dd']:.2f}",
+                  f"{result['benchmark']['sharpe']:.2f}")
+    console.print(table)
+    ex = result["excess_annual"]
+    tag = "跑赢" if ex > 0 else "跑输"
+    console.print(f"[bold]{'组合' if ex >= 0 else '组合'}年化{'跑赢' if ex>0 else '跑输'}基准 {abs(ex):.2f} 个百分点[/bold]")
+    print_disclaimer()
+
+
 def run_strategy(strategy: str, config_path: str | None, capital: float,
                top_n: int, min_yield: float, paper: bool,
                dry_run: bool = False) -> None:
@@ -3895,8 +3930,12 @@ def main() -> None:
     p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bd.add_argument("--report", action="store_true", help="生成报告")
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
-    p_st.add_argument("strategy", choices=["dividend"],
-                      help="策略：dividend 高股息轮动")
+    p_st.add_argument("strategy", choices=["dividend", "backtest"],
+                      help="策略：dividend 高股息轮动 / backtest 组合回测")
+    p_st.add_argument("--codes", default="",
+                      help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
+    p_st.add_argument("--start", default=None,
+                      help="backtest：起始日期 YYYY-MM-DD（默认全历史）")
     p_st.add_argument("--capital", type=float, default=100000.0,
                       help="资金（默认 10 万）")
     p_st.add_argument("--top", type=int, default=10, help="持仓数量")
@@ -4072,9 +4111,12 @@ def main() -> None:
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
     elif args.command == "strategy":
-        run_strategy(args.strategy, args.config, args.capital, args.top,
-                     args.min_yield, args.paper, getattr(args, "dry_run",
-                                                         False))
+        if args.strategy == "backtest":
+            run_strategy_backtest(args.codes, args.config, args.start)
+        else:
+            run_strategy(args.strategy, args.config, args.capital, args.top,
+                         args.min_yield, args.paper,
+                         getattr(args, "dry_run", False))
     elif args.command == "backfill_indicators":
         run_backfill_indicators(args.code or None, args.config,
                                 report=args.report)

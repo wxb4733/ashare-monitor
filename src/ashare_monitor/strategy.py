@@ -127,3 +127,96 @@ def load_paper_positions() -> list[dict]:
     except sqlite3.OperationalError:
         return []
     return [dict(r) for r in rows]
+
+
+# ===================== 组合回测（策略历史验证） =====================
+
+# 给定标的列表（A 股）等权组合 vs 沪深 300 基准。
+# 数据：标的用本地 K 线（load_klines），基准用 akshare 沪深 300 日 K。
+# 统计：区间收益 / 年化 / 最大回撤 / 夏普 / 超额收益。
+
+
+def _daily_returns(rows: list[dict]) -> list[tuple[str, float]]:
+    """(date, 日收益率%) 序列。"""
+    out = []
+    for i in range(1, len(rows)):
+        prev = rows[i - 1]["close"]
+        if prev:
+            out.append((rows[i]["date"],
+                        (rows[i]["close"] / prev - 1) * 100))
+    return out
+
+
+def portfolio_backtest(codes: list[str], names: dict[str, str] | None = None,
+                       start: str | None = None,
+                       end: str | None = None) -> dict:
+    """等权组合回测 vs 沪深 300。返回统计 dict。"""
+    from .storage import load_klines
+
+    names = names or {}
+    # 标的日收益
+    series: dict[str, list[tuple[str, float]]] = {}
+    for c in codes:
+        try:
+            rows = load_klines(c, "ashare")
+        except Exception:  # noqa: BLE001
+            continue
+        if len(rows) < 60:
+            continue
+        series[c] = _daily_returns(rows)
+    if len(series) < 2:
+        raise RuntimeError("本地 K 线不足（请先 backfill）")
+
+    # 基准沪深 300
+    import akshare as ak
+
+    idx = ak.stock_zh_index_daily(symbol="sh000300")
+    idx_rows = [{"date": str(r["date"])[:10], "close": float(r["close"])}
+                for _, r in idx.iterrows()]
+    idx_ret = _daily_returns(idx_rows)
+    idx_map = dict(idx_ret)
+
+    # 按日期合并（标的交集 + 基准）
+    dates: dict[str, dict[str, float]] = {}
+    for c, rets in series.items():
+        for d, r in rets:
+            dates.setdefault(d, {})[c] = r
+    common = [d for d, _ in idx_ret if d in dates]
+    if start:
+        common = [d for d in common if d >= start]
+    if end:
+        common = [d for d in common if d <= end]
+    if len(common) < 30:
+        raise RuntimeError(f"有效交易日过少（{len(common)}），请调整区间")
+
+    # 等权组合日收益 = 各标日收益均值
+    port_ret = [sum(dates[d].values()) / len(dates[d]) for d in common]
+    bench_ret = [idx_map[d] for d in common]
+    dates_use = common
+
+    # 统计
+    def _stats(rets: list[float]) -> dict:
+        nav = 1.0
+        peak = 1.0
+        max_dd = 0.0
+        for r in rets:
+            nav *= (1 + r / 100)
+            peak = max(peak, nav)
+            max_dd = max(max_dd, (peak - nav) / peak)
+        total = (nav - 1) * 100
+        n_days = len(rets)
+        annual = ((1 + total / 100) ** (365 / n_days) - 1) * 100 if n_days > 0 else 0.0
+        mean = sum(rets) / n_days if n_days else 0.0
+        var = sum((r - mean) ** 2 for r in rets) / n_days if n_days else 0.0
+        sharpe = (mean / (var ** 0.5) * (252 ** 0.5)
+                  if var > 0 else 0.0)
+        return {"total": round(total, 2), "annual": round(annual, 2),
+                "max_dd": round(max_dd * 100, 2), "sharpe": round(sharpe, 2),
+                "days": n_days}
+
+    return {
+        "codes": codes, "start": dates_use[0], "end": dates_use[-1],
+        "portfolio": _stats(port_ret), "benchmark": _stats(bench_ret),
+        "excess_annual": round(
+            _stats(port_ret)["annual"] - _stats(bench_ret)["annual"], 2),
+    }

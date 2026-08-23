@@ -33,7 +33,7 @@ KNOWN_IPO_DATES = {
 
 
 def _start_date(code: str, market: str) -> str:
-    return KNOWN_IPO_DATES.get((market, code), "19900101")
+    return KNOWN_IPO_DATES.get((market, code), "1990-01-01")
 
 
 def backfill_kline(code: str, market: str) -> tuple[int, int]:
@@ -206,9 +206,15 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
         resp.raise_for_status()
         from .analysis import _parse_tencent_kline
 
-        df = _parse_tencent_kline(resp.json(), symbol, code)
+        try:
+            df = _parse_tencent_kline(resp.json(), symbol, code)
+        except RuntimeError:
+            # 窗口无数据（如起点早于上市日）→ 推进窗口继续，不终止
+            win_start = win_end + timedelta(days=1)
+            continue
         if df.empty:
-            break
+            win_start = win_end + timedelta(days=1)
+            continue
         batch = [
             (str(r["日期"])[:10], float(r["开盘"]), float(r["收盘"]),
              float(r["最高"]), float(r["最低"]), float(r["成交量"]))
