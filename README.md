@@ -585,3 +585,11 @@ python -m ashare_monitor.main strategy breaker   # 组合熔断检查（-20% 停
 # 调度建议（本机 crontab/任务计划）：
 #   每月 1 日 09:30  strategy rebalance --capital 100000 --top 10 --paper
 #   每周日 20:00   strategy risk + strategy track
+
+# 模拟运行（2026-08-24 启动）
+# 模拟仓（沙箱真实行情撮合，10 万资金）：
+#   平安银行 2100 股 @ 11.41 / 比亚迪 200 股 @ 90.47 / 宁德时代 100 股 @ 391.15
+#   总投入 81,170 元（茅台一手 12.7 万资金不足未纳入，如实）
+# 每日跟踪：strategy track（paper_history 净值）
+# 风控：周日 strategy risk（-15% 止损）+ strategy breaker（-20% 熔断）
+# 月度：strategy rebalance（差额调仓，自动过熔断）
