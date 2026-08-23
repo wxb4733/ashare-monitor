@@ -2048,6 +2048,16 @@ def run_strategy(strategy: str, config_path: str | None, capital: float,
         try:
             targets = dividend_strategy(top_n=top_n, capital=capital,
                                         min_yield=min_yield)
+            from .strategy import apply_risk_rules
+
+            risk = apply_risk_rules(targets)
+            targets = risk["accepted"]
+            if risk["rejected"]:
+                console.print("[yellow]风控剔除："
+                              + "；".join(f"{r['name']}({r['reason']})"
+                                         for r in risk["rejected"]) + "[/yellow]")
+            for note in risk["notes"]:
+                console.print(f"[dim]风控：{note}[/dim]")
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]{exc}[/red]")
             return
@@ -3980,9 +3990,10 @@ def main() -> None:
     p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bd.add_argument("--report", action="store_true", help="生成报告")
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
-    p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance"],
+    p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance",
+                                            "status"],
                       help="策略：dividend 高股息轮动 / backtest 组合回测 / "
-                           "rebalance 月度再平衡")
+                           "rebalance 月度再平衡 / status 模拟持仓报告")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
@@ -4162,6 +4173,37 @@ def main() -> None:
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
     elif args.command == "strategy":
+        if args.strategy == "status":
+            from .strategy import paper_report
+
+            rep = paper_report()
+            if not rep["positions"]:
+                console.print("[yellow]无模拟持仓（先 strategy dividend --paper）[/yellow]")
+                return
+            table = Table(title=f"模拟持仓报告（成本 {rep['total_cost']:,.0f} 元）")
+            table.add_column("代码", justify="left")
+            table.add_column("名称", justify="left")
+            table.add_column("股数", justify="right")
+            table.add_column("成本价", justify="right")
+            table.add_column("现价", justify="right")
+            table.add_column("市值(元)", justify="right")
+            table.add_column("盈亏%", justify="right")
+            for p_ in rep["positions"]:
+                pnl = p_["pnl_pct"]
+                pnl_s = (f"[red]{pnl:+.2f}%[/red]" if pnl and pnl > 0 else
+                         f"[green]{pnl:+.2f}%[/green]" if pnl else "-")
+                table.add_row(p_["code"], p_["name"], str(p_["shares"]),
+                              f"{p_['avg_cost']:.2f}",
+                              f"{p_['price']:.2f}" if p_["price"] else "-",
+                              f"{p_['value']:,.0f}" if p_["value"] else "-",
+                              pnl_s)
+            console.print(table)
+            pnl = rep["pnl_pct"]
+            color = "red" if pnl > 0 else "green"
+            console.print(f"[bold]组合总盈亏 [{color}]{rep['pnl']:+,.0f} 元"
+                          f"（{pnl:+.2f}%）[/{color}][/bold]")
+            print_disclaimer()
+            return
         if args.strategy == "backtest":
             run_strategy_backtest(args.codes, args.config, args.start)
         elif args.strategy == "rebalance":

@@ -132,3 +132,50 @@ def test_rebalance_orders(monkeypatch):
     assert by["000001"]["shares"] == 5400
     # 长电行情缺失 → hold（如实）
     assert by["600900"]["reason"] == "行情缺失"
+
+
+def test_apply_risk_rules(monkeypatch):
+    from ashare_monitor.strategy import apply_risk_rules, TargetPosition
+
+    monkeypatch.setattr("ashare_monitor.strategy._try_market_cap",
+                        lambda code: {"600519": 20000.0,
+                                      "600000": 3000.0,
+                                      "000001": 8.0,
+                                      "300999": 5.0}.get(code))
+    targets = [
+        TargetPosition("600519", "贵州茅台", 25.0, 25_000.0),   # 权重超限
+        TargetPosition("600000", "浦发银行", 15.0, 15_000.0),   # 正常
+        TargetPosition("000001", "ST测试", 10.0, 10_000.0),     # ST 剔除
+        TargetPosition("300999", "小市值", 10.0, 10_000.0),     # 市值不足
+    ]
+    risk = apply_risk_rules(targets, max_weight=20.0,
+                            min_market_cap=20.0)
+    codes = {t.code for t in risk["accepted"]}
+    assert "600519" in codes          # 权重调降但保留
+    assert "600000" in codes
+    assert "000001" not in codes      # ST 剔除
+    assert "300999" not in codes      # 市值不足
+    assert any("调降至上限" in n for n in risk["notes"])
+    rejected = {r["code"] for r in risk["rejected"]}
+    assert "000001" in rejected and "300999" in rejected
+
+
+def test_paper_report(monkeypatch):
+    from ashare_monitor.strategy import paper_report
+
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.load_paper_positions",
+        lambda: [{"code": "000001", "name": "平安银行", "shares": 10000,
+                  "avg_cost": 10.0, "updated": "2026-08-01"}])
+
+    class _Q:
+        code = "000001"
+        price = 11.0
+
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare": ([_Q()], "tencent"))
+    rep = paper_report()
+    assert rep["total_cost"] == pytest.approx(100_000.0)
+    assert rep["total_value"] == pytest.approx(110_000.0)
+    assert rep["pnl_pct"] == pytest.approx(10.0)

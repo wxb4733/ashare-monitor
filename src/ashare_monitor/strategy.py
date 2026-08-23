@@ -322,3 +322,100 @@ def execute_rebalance(orders: list[dict]) -> dict:
                  o["value"], datetime.now().strftime("%Y-%m-%d")))
             sold.append(o)
     return {"buy": buy_result, "sell": sold}
+
+
+# ===================== 风控层（低频交易生命线） =====================
+
+# 规则：单标的上限 / ST 退市黑名单 / 最小市值过滤。
+# 风控优先于策略：目标持仓与再平衡指令先过风控再执行。
+
+
+def apply_risk_rules(targets: list[TargetPosition],
+                     max_weight: float = 20.0,
+                     min_market_cap: float | None = 20.0,
+                     exclude_st: bool = True) -> dict:
+    """对目标持仓应用风控规则。返回 {accepted, rejected, notes}。
+
+    :param max_weight: 单标的最大权重 %（默认 20）
+    :param min_market_cap: 最小市值（亿），None 不启用
+    """
+    accepted, rejected = [], []
+    notes = []
+    for t in targets:
+        # ST/退市黑名单（名称启发式）
+        if exclude_st and ("ST" in t.name.upper() or "退" in t.name):
+            rejected.append({"code": t.code, "name": t.name,
+                             "reason": "ST/退市黑名单"})
+            continue
+        # 单标的上限
+        if t.weight > max_weight:
+            notes.append(f"{t.name} 权重 {t.weight:.0f}% > 上限 {max_weight:.0f}%"
+                         f"（调降至上限）")
+            t = TargetPosition(t.code, t.name, max_weight,
+                               round(t.target_value, 2))
+        # 最小市值（东财行情市值，沙箱可能不可达 → 跳过如实）
+        if min_market_cap is not None:
+            mv = _try_market_cap(t.code)
+            if mv is None:
+                notes.append(f"{t.name} 市值数据不可得（风控跳过市值检查）")
+            elif mv < min_market_cap:
+                rejected.append({"code": t.code, "name": t.name,
+                                 "reason": f"市值 {mv:.0f} 亿 < {min_market_cap:.0f} 亿"})
+                continue
+        accepted.append(t)
+    return {"accepted": accepted, "rejected": rejected, "notes": notes}
+
+
+def _try_market_cap(code: str) -> float | None:
+    """尝试取市值（亿）。东财行情接口不可用时返回 None。"""
+    try:
+        import akshare as ak
+
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return None
+        row = df[df["代码"] == code]
+        if len(row):
+            return float(row.iloc[0].get("总市值", 0)) / 1e8
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+# ===================== 模拟持仓报告（跟踪） =====================
+
+def paper_report() -> dict:
+    """模拟持仓市值/盈亏报告（现价×股数 vs 成本）。"""
+    from .quotes import fetch_spot_quotes
+
+    pos = load_paper_positions()
+    if not pos:
+        return {"positions": [], "total_cost": 0.0, "total_value": 0.0,
+                "pnl": 0.0, "pnl_pct": 0.0}
+    quotes = {}
+    try:
+        qs, _ = fetch_spot_quotes([p["code"] for p in pos], market="ashare")
+        quotes = {q.code: q for q in qs}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("持仓报告行情失败: %s", exc)
+    rows = []
+    total_cost = total_value = 0.0
+    for p in pos:
+        q = quotes.get(p["code"])
+        price = q.price if q else None
+        cost = p["shares"] * p["avg_cost"]
+        value = p["shares"] * price if price else None
+        rows.append({"code": p["code"], "name": p["name"],
+                     "shares": p["shares"], "avg_cost": p["avg_cost"],
+                     "price": price, "cost": round(cost, 2),
+                     "value": round(value, 2) if value else None,
+                     "pnl_pct": round((value / cost - 1) * 100, 2)
+                     if value and cost else None})
+        total_cost += cost
+        if value:
+            total_value += value
+    return {"positions": rows, "total_cost": round(total_cost, 2),
+            "total_value": round(total_value, 2),
+            "pnl": round(total_value - total_cost, 2),
+            "pnl_pct": round((total_value / total_cost - 1) * 100, 2)
+            if total_cost else 0.0}

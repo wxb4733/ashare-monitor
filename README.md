@@ -564,3 +564,9 @@ python -m ashare_monitor.main strategy rebalance --capital 100000 --top 10 --pap
 # 新目标持仓 vs 当前持仓（paper_positions）→ 差额指令（加仓/减仓/清仓/新进）
 # 整手差额；小额漂移(<500)忽略；行情缺失标 hold（如实）
 # 整手限制：高股价标的差额不足一手时跳过（合理，如茅台 65 股差额）
+
+# 风控层 + 模拟持仓报告 + 实盘通道占位
+python -m ashare_monitor.main strategy status              # 模拟持仓盈亏报告
+python -m ashare_monitor.main strategy dividend --paper     # 已自动过风控
+# 风控：单标的上限 20%（超限调降）/ ST退市黑名单剔除 / 最小市值 20 亿过滤
+# 实盘通道：executor/qmt.py + ptrade.py 占位（券商开通后接入，合规报备）
