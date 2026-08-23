@@ -64,9 +64,9 @@ def build_report_data(cfg, period: str = "daily",
         except Exception:  # noqa: BLE001
             item["insider"] = "缺失"
             item["insider_gates"] = []
-        # 卖方：行业（月度渗透率/份额）
+        # 卖方：行业（月度渗透率/份额；乘联会汽车数据——仅汽车厂商标的适用）
         item["industry"] = None
-        if period in ("weekly", "monthly"):
+        if period in ("weekly", "monthly") and "比亚迪" in str(name):
             try:
                 from .industry import fetch_industry
 
