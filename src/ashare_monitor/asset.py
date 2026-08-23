@@ -169,8 +169,8 @@ def crypto_profile(code: str, name: str = "") -> AssetProfile:
             p.valuation["nvt_approx"] = round(p.market_cap / vol, 2)
         p.valuation["ath"] = c.get("ath")
         p.valuation["ath_change_pct"] = c.get("ath_change_percentage")
-        p.note = ("质押收益率/通胀率需链上数据，CoinGecko 基础接口无（如实）；"
-                  "增长维=流通/总量比例")
+        p.note = ("质押收益率/通胀率需链上数据（fetch_onchain_profile 占位，"
+                  "Phase 3 接入）；增长维=流通/总量比例")
     except Exception as exc:  # noqa: BLE001
         p.status = "WARN"
         p.note = f"CoinGecko 获取失败：{str(exc)[:60]}（境外 API 沙箱可能不可达，本机直连通常可用）"
@@ -220,3 +220,27 @@ def build_profile(code: str, name: str = "", market: str = "ashare",
     if market == "us":
         return us_profile(code, name)
     return stock_profile(code, name, market, cfg)
+
+
+# ===================== 链上数据占位（Phase 3 预留） =====================
+
+# 币质押收益率/通胀率需链上数据。免费源探测记录（如实）：
+# - CryptoCompare blockchain/latest：沙箱不可达且接口覆盖有限（无质押数据）
+# - beaconcha.in（ETH 质押率）：境外 API，沙箱不可达
+# - 链上 RPC（eth 供应量等）：需节点或公共 RPC，未接入
+# 结论：质押收益/通胀率暂无免费可靠源，字段保持 None（不硬凑）。
+# 本机可用源（待验证）：Lido/DefiLlama 质押数据、公共 RPC。
+
+
+def fetch_onchain_profile(code: str) -> dict:
+    """链上画像占位（Phase 3 预留接口）。
+
+    返回：{"staking_yield_pct": None, "inflation_pct": None,
+           "note": "链上数据源待接入（Phase 3）"}
+    """
+    return {
+        "staking_yield_pct": None,
+        "inflation_pct": None,
+        "note": "链上数据源待接入（Phase 3）：质押收益需 beaconcha/Lido，"
+                "通胀率需链上 RPC（沙箱境外 API 不可达，如实）",
+    }

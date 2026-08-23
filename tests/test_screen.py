@@ -286,3 +286,26 @@ def test_build_screen_report():
     assert "中国神华" in html and "5.21" in html
     assert "不构成投资建议" in html
     assert md.startswith("---\ntitle: 高股息率选股")
+
+
+def test_screen_us_momentum(monkeypatch):
+    import pandas as pd
+
+    from ashare_monitor.screen import screen_us_momentum
+
+    df = pd.DataFrame([
+        {"代码": "NVDA", "名称": "英伟达", "最新价": 214.72, "涨跌幅": 3.2,
+         "成交额": 9.9e7},
+        {"代码": "AAPL", "名称": "苹果", "最新价": 230.0, "涨跌幅": 1.5,
+         "成交额": 6.0e7},
+        {"代码": "PENNY", "名称": "仙股", "最新价": 0.5, "涨跌幅": 50.0,
+         "成交额": 1.0e5},   # 低价+小额过滤
+        {"代码": "FALL", "名称": "下跌股", "最新价": 10.0, "涨跌幅": -5.0,
+         "成交额": 1.0e8},   # 下跌排除
+    ])
+    monkeypatch.setattr("akshare.stock_us_spot_em",
+                        lambda: df)
+    hits = screen_us_momentum(top_n=5, min_turnover=1000.0, min_price=5.0)
+    assert len(hits) == 2
+    assert hits[0].code == "NVDA"
+    assert hits[0].dividend_yield == pytest.approx(3.2)

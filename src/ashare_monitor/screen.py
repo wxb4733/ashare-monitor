@@ -819,3 +819,40 @@ generated_at: {datetime.now():%Y-%m-%d %H:%M:%S}
 > 不构成投资建议。
 """
     return html, md
+
+
+# ===================== 美股选股（momentum 动量） =====================
+
+# 美股全市场估值源缺失（东财美股行情无 PE/市值字段，如实）——第一期实现
+# 动量因子：东财美股全市场实时行情，当日涨跌幅排序 + 成交额过滤流动性。
+
+
+def screen_us_momentum(top_n: int = 30, min_turnover: float = 1000.0,
+                       min_price: float = 5.0) -> list[ScreenHit]:
+    """美股动量选股：当日涨幅榜（成交额 > min_turnover 万美元）。"""
+    import akshare as ak
+
+    df = ak.stock_us_spot_em()
+    if df is None or df.empty:
+        raise RuntimeError("东财美股行情无数据（沙箱受限时本机直连可用）")
+    code_col = "代码" if "代码" in df.columns else "编码"
+    hits = []
+    for _, r in df.iterrows():
+        chg = _f(r.get("涨跌幅"))
+        price = _f(r.get("最新价"))
+        amt = _f(r.get("成交额"))
+        if chg is None or price is None or chg <= 0:
+            continue
+        if amt is not None and amt < min_turnover * 1e4:
+            continue
+        if price < min_price:
+            continue
+        hits.append(ScreenHit(
+            code=str(r.get(code_col) or ""),
+            name=str(r.get("名称") or r.get("简称") or ""),
+            price=price, dividend_yield=chg, pe=None, pb=None,
+            market_value=None,
+        ))
+        hits[-1]._turnover = amt
+    hits.sort(key=lambda x: x.dividend_yield or 0, reverse=True)
+    return hits[:top_n]

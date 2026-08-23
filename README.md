@@ -547,3 +547,8 @@ python -m ashare_monitor.main period --period daily        # 四市场同屏日�
 python -m ashare_monitor.main check NVDA
 # 真实：英伟达 ROE 101.5% / 净利同比 +64.7% / 毛利率 71.1%（2026 年报）
 # 估值：市值需东财美股行情接口（沙箱 RemoteDisconnected，本机直连可用）
+
+# 美股选股（momentum 动量）+ 链上数据占位
+python -m ashare_monitor.main screen --market us --top 30   # 美股当日涨幅榜
+# 美股低估待估值源（东财美股行情无 PE/市值，如实）；百度估值为单只接口
+# 链上（质押收益/通胀率）：fetch_onchain_profile 占位，免费源沙箱不可达（Phase 3）

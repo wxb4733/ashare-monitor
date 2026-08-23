@@ -2084,8 +2084,9 @@ def run_backfill_dividend(code: str | None, config_path: str | None,
 
 def run_screen(metric: str, config_path: str | None, top_n: int,
                min_yield: float, min_mv: float | None,
-               max_mv: float | None, report: bool = False) -> None:
-    """A 股市场扫描选股（首个指标：高股息率）。"""
+               max_mv: float | None, market: str = "ashare",
+               report: bool = False) -> None:
+    """市场扫描选股（ashare 六因子 / us 动量）。"""
     from pathlib import Path
 
     from .screen import (
@@ -2096,12 +2097,16 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
         screen_margin,
         screen_share,
         screen_sgr,
+        screen_us_momentum,
     )
 
     cfg = load_config(config_path)
-    console.print(f"[cyan]正在扫描 A 股市场（{metric}，TOP {top_n}）…[/cyan]")
+    console.print(f"[cyan]正在扫描 {market} 市场（{metric}，TOP {top_n}）…[/cyan]")
     try:
-        if metric == "sgr":
+        if market == "us":
+            hits = screen_us_momentum(top_n=top_n)
+            title = f"美股动量选股（当日涨幅 TOP {top_n}）"
+        elif metric == "sgr":
             hits = screen_sgr(top_n=top_n, min_sgr=min_yield)
             title = f"持续增长率选股（SGR ≥ {min_yield}%）"
         elif metric == "margin":
@@ -3815,6 +3820,8 @@ def main() -> None:
     p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")
     p_screen.add_argument("--metric", default="dividend",
                           help="指标：dividend/sgr/margin/share/lowval/growth")
+    p_screen.add_argument("--market", choices=["ashare", "us"], default="ashare",
+                          help="市场（us 仅支持 momentum 动量）")
     p_screen.add_argument("--top", type=int, default=60, help="返回 TOP N")
     p_screen.add_argument("--min-yield", type=float, default=3.0,
                           help="最低股息率 %（默认 3）")
@@ -3984,7 +3991,8 @@ def main() -> None:
                   market=getattr(args, "market", None))
     elif args.command == "screen":
         run_screen(args.metric, args.config, args.top, args.min_yield,
-                   args.min_mv, args.max_mv, report=args.report)
+                   args.min_mv, args.max_mv, args.market,
+                   report=args.report)
     elif args.command == "backfill_dividend":
         run_backfill_dividend(args.code or None, args.config,
                               report=args.report)
