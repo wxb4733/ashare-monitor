@@ -534,3 +534,11 @@ python -m ashare_monitor.main backfill ETHUSDT --market crypto
 # 流程：Binance（2017-08 起真实 OHLC）+ CoinGecko 补 2017 前（BTC 2010 起/ETH 2015 起）
 # 如实：CoinGecko market_chart 仅收盘价 → 补充段 OHLC 用收盘近似、volume=0
 # 沙箱境外 API 不可达（已知）→ 本机直连跑一次即可补全
+
+# 美股接入（英伟达 NVDA）
+python -m ashare_monitor.main backfill NVDA --market us    # 5748 根（1999 起）
+python -m ashare_monitor.main check NVDA                   # 行情/K线/择时
+python -m ashare_monitor.main period --period daily        # 四市场同屏日报
+# 行情：新浪/腾讯美股双源（sina_us/tencent_us）；K线：akshare stock_us_daily
+# 美股财务/估值需境外源（yfinance）暂不接入（如实）
+# 性能修复：timing 逐 i 重算 EMA/RSI O(n²) → 预计算 O(n)，5748 根 47s→0.06s

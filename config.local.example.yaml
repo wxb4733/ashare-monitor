@@ -18,6 +18,8 @@ watchlist:
   # --- 数字货币（Binance 交易对，7×24；多视角日报自动包含） ---
   - {code: "BTCUSDT", market: "crypto", name: "比特币"}
   - {code: "ETHUSDT", market: "crypto", name: "以太坊"}
+  # --- 美股 ---
+  - {code: "NVDA", market: "us", name: "英伟达"}
 
 # ---------- 持仓（重要！填入后 position/portfolio/risk 才真正工作） ----------
 # cost: 成本价；shares: 持股数量（股）；港股按股，crypto 按币

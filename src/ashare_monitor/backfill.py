@@ -59,27 +59,43 @@ def backfill_kline(code: str, market: str) -> tuple[int, int]:
                 logger.warning("CoinGecko 补充失败（境外 API 可能不可达）: %s", exc)
     else:
         try:
-            if market == "hk":
+            if market == "us":
+                df = ak.stock_us_daily(symbol=code, adjust="qfq")
+                if df is None or df.empty:
+                    raise RuntimeError(f"{code} 美股 K 线无数据")
+                rows = [
+                    (str(r["date"])[:10], float(r["open"]), float(r["close"]),
+                     float(r["high"]), float(r["low"]), float(r["volume"]))
+                    for _, r in df.iterrows()
+                ]
+            elif market == "hk":
                 df = ak.stock_hk_hist(
                     symbol=code[-5:], period="daily",
                     start_date=start.replace("-", ""), end_date=end,
                     adjust="qfq",
                 )
+                if df is None or df.empty:
+                    raise RuntimeError(f"{code} K 线回填无数据（起点 {start}）")
+                date_col = "日期" if "日期" in df.columns else "date"
+                rows = [
+                    (str(r[date_col])[:10], float(r["开盘"]), float(r["收盘"]),
+                     float(r["最高"]), float(r["最低"]), float(r["成交量"]))
+                    for _, r in df.iterrows()
+                ]
             else:
                 df = ak.stock_zh_a_hist(
                     symbol=code[-6:], period="daily",
                     start_date=start.replace("-", ""), end_date=end,
                     adjust="qfq",
                 )
-            if df is None or df.empty:
-                raise RuntimeError(f"{code} K 线回填无数据（起点 {start}）")
-
-            date_col = "日期" if "日期" in df.columns else "date"
-            rows = [
-                (str(r[date_col])[:10], float(r["开盘"]), float(r["收盘"]),
-                 float(r["最高"]), float(r["最低"]), float(r["成交量"]))
-                for _, r in df.iterrows()
-            ]
+                if df is None or df.empty:
+                    raise RuntimeError(f"{code} K 线回填无数据（起点 {start}）")
+                date_col = "日期" if "日期" in df.columns else "date"
+                rows = [
+                    (str(r[date_col])[:10], float(r["开盘"]), float(r["收盘"]),
+                     float(r["最高"]), float(r["最低"]), float(r["成交量"]))
+                    for _, r in df.iterrows()
+                ]
         except Exception as exc:  # noqa: BLE001
             logger.warning("akshare K 线回填失败，降级腾讯分段拉取: %s", exc)
             rows = _backfill_kline_tencent(code, market, start)

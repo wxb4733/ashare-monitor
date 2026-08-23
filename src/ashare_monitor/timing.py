@@ -122,30 +122,36 @@ def _rsi_series(closes: list[float], n: int = 14) -> list[float | None]:
 
 
 def _history_signal_idxs(rows: list[dict], rule: str) -> list[int]:
-    """扫描全部历史信号索引（日期升序）。"""
+    """扫描全部历史信号索引（日期升序）。
+
+    预计算 EMA/RSI/MA 序列，避免逐 i 重算全历史（O(n²) → O(n)）。
+    """
     s = _series(rows)
     closes, opens, highs, volumes = s["close"], s["open"], s["high"], s["volume"]
     n = len(closes)
+    # 预计算（每条规则只算一次）
+    ema12 = _ema(closes, 12) if rule == "macd_golden" else None
+    dea = _ema(ema12, 9) if ema12 is not None else None
+    rsi_s = _rsi_series(closes) if rule == "rsi_oversold" else None
+    ma20 = ([None] * 20 + [_sma(closes, 20, i) for i in range(20, n)]
+            if rule == "ma_pullback" else None)
     idxs: list[int] = []
     for i in range(26, n):
         hit = False
         if rule == "ma_pullback":
-            ma_t = _sma(closes, 20, i)
-            ma_p = _sma(closes, 20, i - 1)
-            if ma_t and ma_p and ma_t > ma_p and ma_t > _sma(closes, 20, i - 2):
+            ma_t = ma20[i]
+            ma_p = ma20[i - 1]
+            if ma_t and ma_p and ma_t > ma_p and ma_t > ma20[i - 2]:
                 hit = ma_t * 0.97 <= closes[i] <= ma_t * 1.03
         elif rule == "deep_pullback":
             base = closes[i - 5]
             if base and closes[i] / base - 1 < -0.08:
                 hit = closes[i] > opens[i] or closes[i] > closes[i - 1]
         elif rule == "macd_golden":
-            dif = _ema(closes, 12)
-            dea = _ema(dif, 9)
-            if i >= 1:
-                hit = dif[i - 1] <= dea[i - 1] and dif[i] > dea[i]
+            if i >= 1 and ema12 and dea:
+                hit = ema12[i - 1] <= dea[i - 1] and ema12[i] > dea[i]
         elif rule == "rsi_oversold":
-            rsi_s = _rsi_series(closes)
-            if rsi_s[i - 1] is not None:
+            if rsi_s and rsi_s[i - 1] is not None:
                 hit = rsi_s[i - 1] < 30 and rsi_s[i] is not None and rsi_s[i] > 30
         elif rule == "volume_break":
             if i >= 5:

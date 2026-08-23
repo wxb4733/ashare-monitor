@@ -3544,7 +3544,7 @@ def main() -> None:
     p_analyze = sub.add_parser("analyze", help="拉取个股历史数据并分析")
     p_analyze.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
     p_analyze.add_argument("--market", default="ashare",
-                           choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
+                           choices=["ashare", "hk", "crypto", "us"], help="市场（默认 ashare）")
     p_analyze.add_argument("--days", type=int, default=250, help="回看K线数（默认 250）")
     p_analyze.add_argument("--adjust", default="qfq",
                            choices=["qfq", "hfq", ""], help="复权方式（默认 qfq 前复权）")
@@ -3554,12 +3554,12 @@ def main() -> None:
     p_advice = sub.add_parser("advice", help="规则化交易信号（结合实时行情）")
     p_advice.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
     p_advice.add_argument("--market", default="ashare",
-                          choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
+                          choices=["ashare", "hk", "crypto", "us"], help="市场（默认 ashare）")
     p_advice.add_argument("--days", type=int, default=120, help="回看交易日数（默认 120）")
     p_ind = sub.add_parser("indicator", help="技术指标（MACD/RSI/KDJ/BOLL）")
     p_ind.add_argument("code", help="证券代码，如 600519 / 00700 / BTCUSDT")
     p_ind.add_argument("--market", default="ashare",
-                       choices=["ashare", "hk", "crypto"], help="市场（默认 ashare）")
+                       choices=["ashare", "hk", "crypto", "us"], help="市场（默认 ashare）")
     p_ind.add_argument("--days", type=int, default=120, help="回看K线数（默认 120）")
     p_ind.add_argument("--period", default="daily",
                        choices=["daily", "weekly", "monthly"],
@@ -3572,7 +3572,7 @@ def main() -> None:
     p_fin = sub.add_parser("financial", help="财报分析（A 股人民币 / 港股港元，东财接口）")
     p_fin.add_argument("code", help="证券代码，如 600519 / 01211")
     p_fin.add_argument("--periods", type=int, default=6, help="回看报告期数（默认 6）")
-    p_fin.add_argument("--market", default="ashare", choices=["ashare", "hk", "crypto"],
+    p_fin.add_argument("--market", default="ashare", choices=["ashare", "hk", "crypto", "us"],
                        help="市场（默认 ashare）")
     p_ipo = sub.add_parser("ipo", help="IPO 公司分析（近期新股列表 / 单只详情 / --report 报告）")
     p_ipo.add_argument("keyword", nargs="?", default="", help="新股代码或名称（缺省显示列表）")
@@ -3591,18 +3591,18 @@ def main() -> None:
     p_ob.add_argument("--vault", help="vault 路径（默认取 config.obsidian.vault）")
     p_backfill = sub.add_parser("backfill", help="回填上市以来全量数据（行情/公告/研报/财报）")
     p_backfill.add_argument("code", help="证券代码，如 002594 / 01211")
-    p_backfill.add_argument("--market", choices=["ashare", "hk", "crypto"],
+    p_backfill.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                             help="市场（缺省按代码位数推断）")
     p_backfill.add_argument("--kline", action="store_true", help="仅回填日 K")
     p_backfill.add_argument("--news", action="store_true", help="仅回填公告/研报")
     p_backfill.add_argument("--financial", action="store_true", help="仅回填财报")
     p_history = sub.add_parser("history", help="上市以来统计（需先 backfill）")
     p_history.add_argument("code", help="证券代码，如 002594 / 01211")
-    p_history.add_argument("--market", choices=["ashare", "hk", "crypto"],
+    p_history.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                            help="市场（缺省按代码位数推断）")
     p_bt = sub.add_parser("backtest", help="持有期回测（买入日/金额/持有交易日数）")
     p_bt.add_argument("code", help="证券代码，如 002594 / 01211 / BTCUSDT")
-    p_bt.add_argument("--market", choices=["ashare", "hk", "crypto"],
+    p_bt.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                       help="市场（缺省按代码位数推断）")
     p_bt.add_argument("--buy-date", default="", help="买入日期 YYYY-MM-DD（默认最近交易日）")
     p_bt.add_argument("--amount", type=float, default=100000.0, help="买入金额（元，默认 100000）")
@@ -3640,7 +3640,7 @@ def main() -> None:
     p_report.add_argument("--date", help="周期结束日期 YYYY-MM-DD，默认今天")
     p_verify = sub.add_parser("verify", help="信号命中率验证（基于回填 K 线回测）")
     p_verify.add_argument("code", help="证券代码，如 002594 / 01211")
-    p_verify.add_argument("--market", choices=["ashare", "hk", "crypto"],
+    p_verify.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                           help="市场（缺省按代码位数推断）")
     p_verify.add_argument("--rule", help="指定规则（缺省全部），如 up_break")
     p_verify.add_argument("--days", type=int, default=500, help="回看交易日数（默认 500）")
@@ -3809,7 +3809,7 @@ def main() -> None:
     p_period.add_argument("--push", action="store_true", help="推送 webhook")
     p_check = sub.add_parser("check", help="标的资料完整性体检（股票/港股/数字货币）")
     p_check.add_argument("code", help="代码，如 002594 / BTCUSDT")
-    p_check.add_argument("--market", choices=["ashare", "hk", "crypto"],
+    p_check.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                          default=None, help="市场（缺省按 watchlist/代码推断）")
     p_check.add_argument("--report", action="store_true", help="生成体检报告")
     p_screen = sub.add_parser("screen", help="A 股市场扫描选股（高股息率）")

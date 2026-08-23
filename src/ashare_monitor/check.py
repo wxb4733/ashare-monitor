@@ -45,6 +45,8 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
 
     if market == "crypto":
         return _check_crypto(code, name, checks)
+    if market == "us":
+        return _check_us(code, name, checks)
 
     # 1. K 线历史（本地）
     try:
@@ -539,4 +541,45 @@ def _check_crypto(code: str, name: str, checks: list) -> list:
             checks.append(_miss("K线(币安)", "无数据"))
     except Exception as exc:  # noqa: BLE001
         checks.append(_miss("K线(币安)", f"获取失败：{str(exc)[:40]}"))
+    return checks
+
+
+def _check_us(code: str, name: str, checks: list) -> list:
+    """美股体检：行情 / K线历史 / 技术面 / 基本面（受限如实）。"""
+    # 1. 实时行情
+    try:
+        from .quotes import fetch_spot_quotes
+
+        qs, src = fetch_spot_quotes([code], market="us")
+        if qs:
+            q = qs[0]
+            checks.append(_ok("实时行情",
+                              f"${q.price:,.2f}（{q.change_pct:+.2f}%）"
+                              f"｜源 {src}"))
+        else:
+            checks.append(_miss("实时行情", "无数据"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("实时行情", f"获取失败：{str(exc)[:40]}"))
+    # 2. K 线历史（本地）
+    try:
+        from .storage import load_klines
+
+        rows = load_klines(code, "us")
+        if rows:
+            last = rows[-1]["date"]
+            checks.append(_ok("K线历史",
+                              f"{len(rows)} 根（{rows[0]['date']} ~ {last}）"))
+            from .timing import scan_timing
+
+            sigs = scan_timing(rows, code, name, "us")
+            checks.append(_ok("择时信号",
+                              "；".join(s.label for s in sigs[:3]) if sigs
+                              else "无信号"))
+        else:
+            checks.append(_warn("K线历史", "未回填（backfill NVDA --market us）"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("K线历史", f"获取失败：{str(exc)[:40]}"))
+    # 3. 基本面/估值（美股免费源受限，如实）
+    checks.append(_warn("基本面", "美股财务需境外源（yfinance），暂不接入（如实）"))
+    checks.append(_warn("估值", "美股估值需境外源，暂不接入（如实）"))
     return checks

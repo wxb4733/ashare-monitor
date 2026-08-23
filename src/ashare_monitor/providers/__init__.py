@@ -15,6 +15,7 @@ from .eastmoney import EastMoneyProvider
 from .hk import TencentHKProvider
 from .sina import SinaProvider
 from .tencent import TencentProvider
+from .us import SinaUSProvider, TencentUSProvider
 
 PROVIDERS: dict[str, type[QuoteProvider]] = {
     "sina": SinaProvider,
@@ -22,12 +23,15 @@ PROVIDERS: dict[str, type[QuoteProvider]] = {
     "tencent_hk": TencentHKProvider,
     "eastmoney": EastMoneyProvider,
     "binance": BinanceProvider,
+    "tencent_us": TencentUSProvider,
+    "sina_us": SinaUSProvider,
 }
 
 # 各市场默认数据源链（按顺序降级）
 MARKET_SOURCES: dict[str, list[str]] = {
     "ashare": ["sina", "tencent", "eastmoney"],
     "hk": ["tencent_hk"],
+    "us": ["sina_us", "tencent_us"],
     "crypto": ["binance"],
 }
 

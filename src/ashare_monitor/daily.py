@@ -90,14 +90,16 @@ def build_daily_data(cfg, codes: list[str] | None = None) -> dict:
         except Exception:  # noqa: BLE001
             pass
 
-        # 事件（未来 7 天）
+        # 事件（未来 7 天；仅 A 股/港股——美股/币无东财事件源）
         events = []
-        try:
-            from .events import fetch_events
+        if market in ("ashare", "hk"):
+            try:
+                from .events import fetch_events
 
-            events = [f"{e.kind} {e.date}" for e in fetch_events(c, market, days=7)]
-        except Exception:  # noqa: BLE001
-            pass
+                events = [f"{e.kind} {e.date}"
+                          for e in fetch_events(c, market, days=7)]
+            except Exception:  # noqa: BLE001
+                pass
 
         # 估值分位
         valuation = None
@@ -123,17 +125,18 @@ def build_daily_data(cfg, codes: list[str] | None = None) -> dict:
         except Exception:  # noqa: BLE001
             pass
 
-        # 增减持/回购
+        # 增减持/回购（仅 A 股）
         corp = []
-        try:
-            from .announcements import fetch_announcements
+        if market == "ashare":
+            try:
+                from .announcements import fetch_announcements
 
-            for a in fetch_announcements(c, limit=30):
-                cls = classify_event(a["title"])
-                if cls:
-                    corp.append(f"{cls[0]}:{a['date']}")
-        except Exception:  # noqa: BLE001
-            pass
+                for a in fetch_announcements(c, limit=30):
+                    cls = classify_event(a["title"])
+                    if cls:
+                        corp.append(f"{cls[0]}:{a['date']}")
+            except Exception:  # noqa: BLE001
+                pass
 
         items.append({
             "code": c, "name": name, "market": market, "quote": quote,

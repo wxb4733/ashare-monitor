@@ -246,7 +246,7 @@ def score_stock(code: str, name: str, market: str,
 
     rows = []
     try:
-        rows = load_klines(code, market) if market == "ashare" else load_klines(code, "hk")
+        rows = load_klines(code, market)   # 按市场查本地 K 线（ashare/hk/us/crypto）
     except Exception:  # noqa: BLE001
         pass
     signals = [_technical_score(code, market, rows)]
