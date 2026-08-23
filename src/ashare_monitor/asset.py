@@ -177,9 +177,46 @@ def crypto_profile(code: str, name: str = "") -> AssetProfile:
     return p
 
 
+def us_profile(code: str, name: str = "") -> AssetProfile:
+    """美股画像（东财美股财务指标：ROE/毛利率/净利增速/EPS）。"""
+    import akshare as ak
+
+    p = AssetProfile(code=code, name=name, market="us")
+    try:
+        df = ak.stock_financial_us_analysis_indicator_em(
+            symbol=code, indicator="年报")
+        if df is None or df.empty:
+            raise RuntimeError("美股财务无数据")
+        # 按报告期降序，取最新有 ROE 的行
+        df = df.copy()
+        if "REPORT_DATE" in df.columns:
+            df = df.sort_values("REPORT_DATE", ascending=False)
+        r = None
+        for _, row in df.iterrows():
+            if _f(row.get("ROE_AVG")) is not None:
+                r = row
+                break
+        if r is None:
+            r = df.iloc[0]
+        p.growth_rate = _f(r.get("PARENT_HOLDER_NETPROFIT_YOY"))
+        p.extra["roe"] = _f(r.get("ROE_AVG"))
+        p.extra["gross_margin"] = _f(r.get("GROSS_PROFIT_RATIO"))
+        p.extra["eps"] = _f(r.get("BASIC_EPS"))
+        p.extra["report_date"] = str(r.get("REPORT_DATE"))[:10]
+        p.extra["revenue"] = _f(r.get("OPERATE_INCOME"))
+        p.extra["net_profit"] = _f(r.get("PARENT_HOLDER_NETPROFIT"))
+        p.note = "东财美股财务（年报口径）"
+    except Exception as exc:  # noqa: BLE001
+        p.status = "WARN"
+        p.note = f"美股财务获取失败：{str(exc)[:50]}"
+    return p
+
+
 def build_profile(code: str, name: str = "", market: str = "ashare",
                   cfg=None) -> AssetProfile:
     """按市场分发画像实现（通用入口）。"""
     if market == "crypto":
         return crypto_profile(code, name)
+    if market == "us":
+        return us_profile(code, name)
     return stock_profile(code, name, market, cfg)

@@ -542,3 +542,8 @@ python -m ashare_monitor.main period --period daily        # 四市场同屏日�
 # 行情：新浪/腾讯美股双源（sina_us/tencent_us）；K线：akshare stock_us_daily
 # 美股财务/估值需境外源（yfinance）暂不接入（如实）
 # 性能修复：timing 逐 i 重算 EMA/RSI O(n²) → 预计算 O(n)，5748 根 47s→0.06s
+
+# 美股财务接入（东财美股财务指标）
+python -m ashare_monitor.main check NVDA
+# 真实：英伟达 ROE 101.5% / 净利同比 +64.7% / 毛利率 71.1%（2026 年报）
+# 估值：市值需东财美股行情接口（沙箱 RemoteDisconnected，本机直连可用）

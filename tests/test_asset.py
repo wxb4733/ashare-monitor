@@ -94,3 +94,41 @@ def test_build_profile_dispatch(monkeypatch):
                         lambda code, name: "CRYPTO")
     assert build_profile("600519", "茅台", "ashare") == "STOCK"
     assert build_profile("BTC", "Bitcoin", "crypto") == "CRYPTO"
+
+
+def test_us_profile(monkeypatch):
+    import pandas as pd
+
+    from ashare_monitor.asset import us_profile
+
+    df = pd.DataFrame([{
+        "REPORT_DATE": "2026-01-31", "ROE_AVG": 101.5,
+        "PARENT_HOLDER_NETPROFIT_YOY": 64.7,
+        "GROSS_PROFIT_RATIO": 71.1, "BASIC_EPS": 3.6,
+        "OPERATE_INCOME": 1.3e11, "PARENT_HOLDER_NETPROFIT": 6.0e10,
+    }, {
+        "REPORT_DATE": "2025-01-31", "ROE_AVG": 88.0,
+        "PARENT_HOLDER_NETPROFIT_YOY": 120.0,
+        "GROSS_PROFIT_RATIO": 70.0, "BASIC_EPS": 2.1,
+        "OPERATE_INCOME": 6.0e10, "PARENT_HOLDER_NETPROFIT": 3.5e10,
+    }])
+    monkeypatch.setattr(
+        "akshare.stock_financial_us_analysis_indicator_em",
+        lambda symbol, indicator="年报": df)
+    p = us_profile("NVDA", "英伟达")
+    assert p.status == "OK"
+    assert p.extra["roe"] == pytest.approx(101.5)
+    assert p.growth_rate == pytest.approx(64.7)
+    assert p.extra["gross_margin"] == pytest.approx(71.1)
+    assert p.extra["net_profit"] == pytest.approx(6.0e10)
+
+
+def test_us_profile_fallback(monkeypatch):
+    from ashare_monitor.asset import us_profile
+
+    monkeypatch.setattr(
+        "akshare.stock_financial_us_analysis_indicator_em",
+        lambda symbol, indicator="年报": (_ for _ in ()).throw(
+            RuntimeError("net down")))
+    p = us_profile("NVDA")
+    assert p.status == "WARN"

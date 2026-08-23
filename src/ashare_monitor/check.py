@@ -579,7 +579,44 @@ def _check_us(code: str, name: str, checks: list) -> list:
             checks.append(_warn("K线历史", "未回填（backfill NVDA --market us）"))
     except Exception as exc:  # noqa: BLE001
         checks.append(_miss("K线历史", f"获取失败：{str(exc)[:40]}"))
-    # 3. 基本面/估值（美股免费源受限，如实）
-    checks.append(_warn("基本面", "美股财务需境外源（yfinance），暂不接入（如实）"))
-    checks.append(_warn("估值", "美股估值需境外源，暂不接入（如实）"))
+    # 3. 基本面（东财美股财务指标）
+    try:
+        from .asset import build_profile
+
+        prof = build_profile(code, name, "us")
+        if prof.extra.get("roe") is not None:
+            detail = f"ROE {prof.extra['roe']:.1f}%"
+            if prof.growth_rate is not None:
+                detail += f" 净利同比 {prof.growth_rate:+.1f}%"
+            if prof.extra.get("gross_margin") is not None:
+                detail += f" 毛利率 {prof.extra['gross_margin']:.1f}%"
+            checks.append(_ok("基本面", detail))
+        else:
+            checks.append(_warn("基本面", prof.note or "美股财务缺失"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_miss("基本面", f"获取失败：{str(exc)[:40]}"))
+    # 4. 估值（PE = 市值/年度净利；市值取东财美股行情，沙箱可能不可达）
+    try:
+        from .asset import build_profile
+
+        prof = build_profile(code, name, "us")
+        npf = prof.extra.get("net_profit")
+        if npf:
+            import akshare as ak
+
+            spot = ak.stock_us_spot_em()
+            row = spot[spot["代码"] == code] if spot is not None else None
+            if row is not None and len(row):
+                mv = row.iloc[0].get("总市值")
+                if mv:
+                    checks.append(_ok(
+                        "估值(近似)",
+                        f"PE≈{mv / npf:.1f}（市值 ${mv / 1e12:.2f}T/年度净利）"))
+                    return checks
+            checks.append(_warn("估值(近似)",
+                                "市值需东财美股行情（本机直连通常可用）"))
+        else:
+            checks.append(_warn("估值(近似)", "净利缺失"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_warn("估值(近似)", f"市值获取失败：{str(exc)[:40]}（本机直连可用）"))
     return checks
