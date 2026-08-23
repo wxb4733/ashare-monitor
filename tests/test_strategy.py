@@ -179,3 +179,35 @@ def test_paper_report(monkeypatch):
     assert rep["total_cost"] == pytest.approx(100_000.0)
     assert rep["total_value"] == pytest.approx(110_000.0)
     assert rep["pnl_pct"] == pytest.approx(10.0)
+
+
+def test_portfolio_backtest_rebalanced(tmp_path, monkeypatch):
+    from ashare_monitor import strategy
+    import pandas as pd
+
+    # 两只标的全历史对齐（100 天上涨 + 一涨一跌）
+    def fake_load(code, market):
+        rows = []
+        for i in range(120):
+            m = 1 + i // 30
+            d = i % 30 + 1
+            rows.append({"date": f"2024-{m:02d}-{d:02d}",
+                         "close": 10.0 + i * (0.3 if code == "600519" else -0.1)})
+        return rows
+
+    monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
+    idx_df = pd.DataFrame({
+        "date": [f"2024-{1 + i // 30:02d}-{i % 30 + 1:02d}" for i in range(120)],
+        "open": [100.0] * 100, "high": [101.0] * 100, "low": [99.0] * 100,
+        "close": [100.0 + i * 0.1 for i in range(100)],
+        "volume": [1.0] * 100,
+    })
+    monkeypatch.setattr("akshare.stock_zh_index_daily",
+                        lambda symbol="sh000300": idx_df)
+    result = strategy.portfolio_backtest_rebalanced(
+        ["600519", "000001"])
+    assert result["buy_hold"]["days"] > 50
+    assert result["monthly"]["days"] > 50
+    assert result["benchmark"]["days"] > 50
+    # 一涨一跌 + 月度再平衡 → 两策略都有数据
+    assert "total" in result["buy_hold"] and "total" in result["monthly"]

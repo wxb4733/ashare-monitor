@@ -419,3 +419,170 @@ def paper_report() -> dict:
             "pnl": round(total_value - total_cost, 2),
             "pnl_pct": round((total_value / total_cost - 1) * 100, 2)
             if total_cost else 0.0}
+
+
+# ===================== 止损风控（单标的止损检查） =====================
+
+def stop_loss_check(stop_pct: float = 15.0) -> dict:
+    """检查模拟持仓止损：现价 vs 成本，亏损 > stop_pct 标记止损卖出建议。"""
+    from .quotes import fetch_spot_quotes
+
+    pos = load_paper_positions()
+    if not pos:
+        return {"triggers": [], "total": 0}
+    quotes = {}
+    try:
+        qs, _ = fetch_spot_quotes([p["code"] for p in pos], market="ashare")
+        quotes = {q.code: q for q in qs}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("止损检查行情失败: %s", exc)
+    triggers = []
+    for p in pos:
+        q = quotes.get(p["code"])
+        if not q or not q.price:
+            continue
+        loss = (q.price / p["avg_cost"] - 1) * 100
+        if loss <= -stop_pct:
+            triggers.append({"code": p["code"], "name": p["name"],
+                             "shares": p["shares"], "cost": p["avg_cost"],
+                             "price": q.price, "loss_pct": round(loss, 2)})
+    triggers.sort(key=lambda x: x["loss_pct"])
+    return {"triggers": triggers, "total": len(pos)}
+
+
+# ===================== 月度换仓回测（动态再平衡） =====================
+
+# 与静态等权回测对比：每月末按等权重新平衡（模拟真实月度调仓）。
+# 静态：买入持有；动态：每月再平衡一次（跟踪误差/超额对比）。
+
+
+def portfolio_backtest_rebalanced(codes: list[str],
+                                  start: str | None = None,
+                                  end: str | None = None) -> dict:
+    """月度再平衡回测 vs 静态等权 vs 沪深 300。"""
+    from .storage import load_klines
+
+    series: dict[str, list[dict]] = {}
+    for c in codes:
+        try:
+            rows = load_klines(c, "ashare")
+        except Exception:  # noqa: BLE001
+            continue
+        if len(rows) < 60:
+            continue
+        series[c] = rows
+    if len(series) < 2:
+        raise RuntimeError("本地 K 线不足（请先 backfill）")
+
+    import akshare as ak
+
+    idx = ak.stock_zh_index_daily(symbol="sh000300")
+    idx_rows = [{"date": str(r["date"])[:10], "close": float(r["close"])}
+                for _, r in idx.iterrows()]
+    idx_map = {r["date"]: r["close"] for r in idx_rows}
+
+    # 按日期合并所有标的收盘
+    dates = sorted({r["date"] for rows in series.values() for r in rows})
+    if start:
+        dates = [d for d in dates if d >= start]
+    if end:
+        dates = [d for d in dates if d <= end]
+    # 只保留所有标的有数据的日期（上市时间差对齐）
+    close_at = {}
+    for d in dates:
+        vals = {c: _close_on(series[c], d) for c in series}
+        if all(v is not None for v in vals.values()):
+            close_at[d] = vals
+    dates = [d for d in dates if d in close_at]
+
+    # 静态等权：买入持有
+    def _buy_hold():
+        first = close_at[dates[0]]
+        units = {c: 1.0 / first[c] if first[c] else 0.0 for c in series}
+        nav = 1.0
+        navs = []
+        for d in dates:
+            val = sum(units[c] * close_at[d][c] for c in series)
+            nav = val / sum(units[c] * first[c] for c in series)
+            navs.append((nav - 1) * 100)
+        return _ret_stats(navs, dates)
+
+    # 月度再平衡：每月末重置等权（1 份/标的）
+    def _monthly():
+        nav = 1.0
+        navs = []
+        cur_month = None
+        last_val = {c: close_at[dates[0]][c] for c in series}
+        for d in dates:
+            m = d[:7]
+            if cur_month is None or m != cur_month:
+                cur_month = m
+                # 月初等权重置：每标的 1 单位
+                last_val = {c: close_at[d][c] for c in series}
+            day_ret = sum((close_at[d][c] / last_val[c] - 1)
+                          for c in series if last_val[c]) / len(series)
+            nav *= (1 + day_ret)
+            last_val = {c: close_at[d][c] for c in series}
+            navs.append((nav - 1) * 100)
+        return _ret_stats(navs, dates)
+
+    # 基准
+    bench_nav = []
+    base = idx_map.get(dates[0])
+    if base:
+        for d in dates:
+            v = idx_map.get(d)
+            if v:
+                bench_nav.append((v / base - 1) * 100)
+
+    def _bench_stats():
+        nav = 1.0
+        navs = []
+        prev = None
+        for d in dates:
+            v = idx_map.get(d)
+            if v and prev:
+                nav *= (1 + (v / prev - 1))
+            if v:
+                prev = v
+                navs.append((nav - 1) * 100)
+        return _ret_stats(navs, dates)
+
+    return {
+        "dates": dates,
+        "buy_hold": _buy_hold(),
+        "monthly": _monthly(),
+        "benchmark": _bench_stats(),
+    }
+
+
+def _close_on(rows: list[dict], date: str) -> float | None:
+    for r in rows:
+        if r["date"] == date:
+            return float(r["close"])
+    return None
+
+
+def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
+    """从累计收益序列算统计。"""
+    nav = 1.0
+    peak = 1.0
+    max_dd = 0.0
+    rets = []
+    prev = 1.0
+    for pct in nav_pcts:
+        cur = 1 + pct / 100
+        rets.append((cur / prev - 1) * 100)
+        prev = cur
+        nav = cur
+        peak = max(peak, nav)
+        max_dd = max(max_dd, (peak - nav) / peak)
+    total = (nav - 1) * 100
+    n = len(nav_pcts)
+    annual = ((1 + total / 100) ** (365 / n) - 1) * 100 if n > 0 else 0.0
+    mean = sum(rets) / n if n else 0.0
+    var = sum((r - mean) ** 2 for r in rets) / n if n else 0.0
+    sharpe = (mean / (var ** 0.5) * (252 ** 0.5) if var > 0 else 0.0)
+    return {"total": round(total, 2), "annual": round(annual, 2),
+            "max_dd": round(max_dd * 100, 2), "sharpe": round(sharpe, 2),
+            "days": n}

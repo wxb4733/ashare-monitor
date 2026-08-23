@@ -1998,13 +1998,42 @@ def run_strategy_rebalance(strategy_name: str, config_path: str | None,
 
 
 def run_strategy_backtest(codes: str, config_path: str | None,
-                          start: str | None) -> None:
-    """组合回测：等权组合 vs 沪深 300。"""
-    from .strategy import portfolio_backtest
+                          start: str | None,
+                          rebalance: bool = False) -> None:
+    """组合回测：等权/月度再平衡 vs 沪深 300。"""
+    from .strategy import (
+        portfolio_backtest,
+        portfolio_backtest_rebalanced,
+    )
 
     code_list = [c.strip() for c in codes.split(",") if c.strip()]
     cfg = load_config(config_path)
     names = {str(it["code"]): str(it.get("name", "")) for it in cfg.watchlist}
+    if rebalance:
+        console.print(f"[cyan]组合回测 {len(code_list)} 只（静态 vs 月度再平衡）vs 沪深 300…[/cyan]")
+        try:
+            result = portfolio_backtest_rebalanced(code_list, start=start)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]{exc}[/red]")
+            return
+        table = Table(title=f"组合回测 {result['dates'][0]} ~ {result['dates'][-1]}")
+        table.add_column("组合", justify="left")
+        table.add_column("区间收益%", justify="right")
+        table.add_column("年化%", justify="right")
+        table.add_column("最大回撤%", justify="right")
+        table.add_column("夏普", justify="right")
+        for label, key in [("静态等权", "buy_hold"), ("月度再平衡", "monthly"),
+                           ("沪深300", "benchmark")]:
+            s_ = result[key]
+            table.add_row(label, f"[red]{s_['total']:.2f}[/red]",
+                          f"{s_['annual']:.2f}", f"{s_['max_dd']:.2f}",
+                          f"{s_['sharpe']:.2f}")
+        console.print(table)
+        ex = result["monthly"]["annual"] - result["benchmark"]["annual"]
+        console.print(f"[bold]月度再平衡年化{'跑赢' if ex>0 else '跑输'}基准 "
+                      f"{abs(ex):.2f} 个百分点[/bold]")
+        print_disclaimer()
+        return
     console.print(f"[cyan]组合回测 {len(code_list)} 只等权 vs 沪深 300…[/cyan]")
     try:
         result = portfolio_backtest(code_list, names=names, start=start)
@@ -2027,7 +2056,6 @@ def run_strategy_backtest(codes: str, config_path: str | None,
                   f"{result['benchmark']['sharpe']:.2f}")
     console.print(table)
     ex = result["excess_annual"]
-    tag = "跑赢" if ex > 0 else "跑输"
     console.print(f"[bold]{'组合' if ex >= 0 else '组合'}年化{'跑赢' if ex>0 else '跑输'}基准 {abs(ex):.2f} 个百分点[/bold]")
     print_disclaimer()
 
@@ -3993,11 +4021,14 @@ def main() -> None:
     p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance",
                                             "status"],
                       help="策略：dividend 高股息轮动 / backtest 组合回测 / "
-                           "rebalance 月度再平衡 / status 模拟持仓报告")
+                           "rebalance 月度再平衡 / status 持仓报告 / "
+                           "risk 止损检查")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
                       help="backtest：起始日期 YYYY-MM-DD（默认全历史）")
+    p_st.add_argument("--rebalance", action="store_true",
+                      help="backtest：静态 vs 月度再平衡对比")
     p_st.add_argument("--capital", type=float, default=100000.0,
                       help="资金（默认 10 万）")
     p_st.add_argument("--top", type=int, default=10, help="持仓数量")
@@ -4173,6 +4204,28 @@ def main() -> None:
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
     elif args.command == "strategy":
+        if args.strategy == "risk":
+            from .strategy import stop_loss_check
+
+            rep = stop_loss_check()
+            console.print(f"[cyan]止损检查（{rep['total']} 只持仓，阈值 -15%）…[/cyan]")
+            if not rep["triggers"]:
+                console.print("[green]无止损触发（全部持仓在 -15% 内）[/green]")
+            else:
+                table = Table(title=f"止损触发 {len(rep['triggers'])} 只（建议卖出）")
+                table.add_column("代码", justify="left")
+                table.add_column("名称", justify="left")
+                table.add_column("股数", justify="right")
+                table.add_column("成本价", justify="right")
+                table.add_column("现价", justify="right")
+                table.add_column("亏损%", justify="right")
+                for t in rep["triggers"]:
+                    table.add_row(t["code"], t["name"], str(t["shares"]),
+                                  f"{t['cost']:.2f}", f"{t['price']:.2f}",
+                                  f"[green]{t['loss_pct']:.2f}[/green]")
+                console.print(table)
+            print_disclaimer()
+            return
         if args.strategy == "status":
             from .strategy import paper_report
 
@@ -4205,7 +4258,8 @@ def main() -> None:
             print_disclaimer()
             return
         if args.strategy == "backtest":
-            run_strategy_backtest(args.codes, args.config, args.start)
+            run_strategy_backtest(args.codes, args.config, args.start,
+                                  getattr(args, "rebalance", False))
         elif args.strategy == "rebalance":
             run_strategy_rebalance("dividend", args.config, args.capital,
                                    args.top, args.min_yield, args.paper)
