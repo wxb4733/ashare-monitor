@@ -82,7 +82,7 @@ def test_portfolio_backtest(tmp_path, monkeypatch):
         rows = [{"date": d, "close": 10.0 + i * 0.5} for i, d in enumerate(dates)]
         return rows
 
-    monkeypatch.setattr("ashare_monitor.strategy.load_klines", fake_load)
+    monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
 
     import pandas as pd
 
