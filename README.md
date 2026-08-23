@@ -552,3 +552,9 @@ python -m ashare_monitor.main check NVDA
 python -m ashare_monitor.main screen --market us --top 30   # 美股当日涨幅榜
 # 美股低估待估值源（东财美股行情无 PE/市值，如实）；百度估值为单只接口
 # 链上（质押收益/通胀率）：fetch_onchain_profile 占位，免费源沙箱不可达（Phase 3）
+
+# 低频策略引擎 + 模拟交易（Phase A：股息轮动）
+python -m ashare_monitor.main strategy dividend --capital 100000 --top 10 --paper
+# 选股器 TOP N 等权 → 目标持仓 → 模拟买入（整手/现价撮合）→ 落库 paper_positions
+# 纯模拟（paper trading）不产生真实交易；合规：低频月度再平衡需券商通道（QMT 等）
+# 沙箱东财 push2 不可达（已知）→ 本机直连跑策略

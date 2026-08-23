@@ -1947,6 +1947,66 @@ def run_backfill_indicators(code: str | None, config_path: str | None,
         console.print(f"[green]指标历史报告已生成: {out_path}[/green]")
 
 
+def run_strategy(strategy: str, config_path: str | None, capital: float,
+               top_n: int, min_yield: float, paper: bool,
+               dry_run: bool = False) -> None:
+    """低频策略：选股器输出 → 目标持仓 → 模拟交易。"""
+    from .strategy import (
+        dividend_strategy,
+        execute_paper_trade,
+        load_paper_positions,
+    )
+
+    cfg = load_config(config_path)
+    console.print(f"[cyan]策略 {strategy}：目标持仓生成中…[/cyan]")
+    if strategy == "dividend":
+        try:
+            targets = dividend_strategy(top_n=top_n, capital=capital,
+                                        min_yield=min_yield)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]{exc}[/red]")
+            return
+    else:
+        console.print("[red]暂只支持 dividend（高股息轮动）[/red]")
+        return
+    table = Table(title=f"股息轮动策略目标持仓（{len(targets)} 只等权）")
+    table.add_column("代码", justify="left")
+    table.add_column("名称", justify="left")
+    table.add_column("权重%", justify="right")
+    table.add_column("目标市值(元)", justify="right")
+    for t in targets:
+        table.add_row(t.code, t.name, f"{t.weight:.1f}",
+                      f"{t.target_value:,.0f}")
+    console.print(table)
+    print_disclaimer()
+    if paper:
+        console.print("[cyan]模拟执行（paper trading）…[/cyan]")
+        result = execute_paper_trade(targets, dry_run=dry_run)
+        if result["fills"]:
+            ft = Table(title=f"模拟成交 {len(result['fills'])} 笔（成本 {result['total_cost']:,.0f} 元）")
+            ft.add_column("代码", justify="left")
+            ft.add_column("名称", justify="left")
+            ft.add_column("股数", justify="right")
+            ft.add_column("成交价", justify="right")
+            ft.add_column("成本(元)", justify="right")
+            for f in result["fills"]:
+                ft.add_row(f["code"], f["name"], str(f["shares"]),
+                           f"{f['price']:.2f}", f"{f['cost']:,.0f}")
+            console.print(ft)
+        if result["rejected"]:
+            console.print("[yellow]未成交："
+                          + "；".join(f"{r['name']}({r['reason']})"
+                                     for r in result["rejected"]) + "[/yellow]")
+        if not dry_run:
+            pos = load_paper_positions()
+            console.print(f"[green]模拟持仓 {len(pos)} 只[/green]")
+            for p_ in pos:
+                console.print(f"  {p_['code']} {p_['name']}: "
+                              f"{p_['shares']} 股 @ {p_['avg_cost']:.2f}")
+    else:
+        console.print("[dim]加 --paper 执行模拟买入[/dim]")
+
+
 def run_dividend_rank(config_path: str | None, years: int,
                      min_yield: float, top_k: int, sort_by: str,
                      report: bool = False) -> None:
@@ -3834,6 +3894,18 @@ def main() -> None:
                           help="回填历史股息率（自 1990 年开市以来）")
     p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bd.add_argument("--report", action="store_true", help="生成报告")
+    p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
+    p_st.add_argument("strategy", choices=["dividend"],
+                      help="策略：dividend 高股息轮动")
+    p_st.add_argument("--capital", type=float, default=100000.0,
+                      help="资金（默认 10 万）")
+    p_st.add_argument("--top", type=int, default=10, help="持仓数量")
+    p_st.add_argument("--min-yield", type=float, default=3.0,
+                      help="最低股息率 %")
+    p_st.add_argument("--paper", action="store_true",
+                      help="执行模拟买入（paper trading）")
+    p_st.add_argument("--dry-run", action="store_true",
+                      help="只算成交不落库（配合 --paper）")
     p_dr = sub.add_parser("dividend_rank",
                           help="股息率榜单时长（占据高股息榜最久的股票）")
     p_dr.add_argument("--years", type=int, default=15,
@@ -3999,6 +4071,10 @@ def main() -> None:
     elif args.command == "dividend_rank":
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
+    elif args.command == "strategy":
+        run_strategy(args.strategy, args.config, args.capital, args.top,
+                     args.min_yield, args.paper, getattr(args, "dry_run",
+                                                         False))
     elif args.command == "backfill_indicators":
         run_backfill_indicators(args.code or None, args.config,
                                 report=args.report)
