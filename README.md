@@ -570,3 +570,10 @@ python -m ashare_monitor.main strategy status              # 模拟持仓盈亏�
 python -m ashare_monitor.main strategy dividend --paper     # 已自动过风控
 # 风控：单标的上限 20%（超限调降）/ ST退市黑名单剔除 / 最小市值 20 亿过滤
 # 实盘通道：executor/qmt.py + ptrade.py 占位（券商开通后接入，合规报备）
+
+# 回测增强：交易成本 + 再平衡频率 + 多策略对比
+python -m ashare_monitor.main strategy backtest --codes 600519,000001,300750,002594 \
+  --start 2024-01-01 --rebalance --frequency quarterly --cost 5
+# 成本模型：单边 bp（佣金+印花税+滑点综合）；频率 monthly/quarterly/semi_annual
+# 多策略对比：--codes 分别传不同策略标的池（如 dividend 清单 vs lowval 清单）对比
+# 真实：季度再平衡含成本年化 24.97%（成本惩罚小）；静态等权 34% 仍最优

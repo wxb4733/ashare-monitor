@@ -207,7 +207,48 @@ def test_portfolio_backtest_rebalanced(tmp_path, monkeypatch):
     result = strategy.portfolio_backtest_rebalanced(
         ["600519", "000001"])
     assert result["buy_hold"]["days"] > 50
-    assert result["monthly"]["days"] > 50
+    assert result["periodic"]["days"] > 50
     assert result["benchmark"]["days"] > 50
     # 一涨一跌 + 月度再平衡 → 两策略都有数据
-    assert "total" in result["buy_hold"] and "total" in result["monthly"]
+    assert "total" in result["buy_hold"] and "total" in result["periodic"]
+
+
+def test_period_key():
+    from ashare_monitor.strategy import _period_key
+
+    assert _period_key("2024-03-15", "monthly") == "2024-03"
+    assert _period_key("2024-04-01", "quarterly") == "2024Q2"
+    assert _period_key("2024-07-01", "semi_annual") == "2024S2"
+
+
+def test_rebalanced_cost_penalty(tmp_path, monkeypatch):
+    from ashare_monitor import strategy
+    import pandas as pd
+
+    def fake_load(code, market):
+        rows = []
+        for i in range(120):
+            m = 1 + i // 30
+            d = i % 30 + 1
+            rows.append({"date": f"2024-{m:02d}-{d:02d}",
+                         "close": 10.0 + i * 0.2})
+        return rows
+
+    monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
+    idx_df = pd.DataFrame({
+        "date": [f"2024-{1 + i // 30:02d}-{i % 30 + 1:02d}" for i in range(120)],
+        "open": [100.0] * 120, "high": [101.0] * 120, "low": [99.0] * 120,
+        "close": [100.0 + i * 0.1 for i in range(120)],
+        "volume": [1.0] * 120,
+    })
+    monkeypatch.setattr("akshare.stock_zh_index_daily",
+                        lambda symbol="sh000300": idx_df)
+    # 高成本（每期 50bp）显著惩罚再平衡
+    r_cheap = strategy.portfolio_backtest_rebalanced(
+        ["600519", "000001"], frequency="monthly", cost_bps=5.0)
+    r_costly = strategy.portfolio_backtest_rebalanced(
+        ["600519", "000001"], frequency="monthly", cost_bps=50.0)
+    assert (r_costly["periodic"]["annual"]
+            < r_cheap["periodic"]["annual"])
+    # 静态含成本略低于不含成本
+    assert r_cheap["buy_hold_cost"]["total"] < r_cheap["buy_hold"]["total"]

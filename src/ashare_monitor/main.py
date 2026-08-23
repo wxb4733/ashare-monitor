@@ -1999,8 +1999,10 @@ def run_strategy_rebalance(strategy_name: str, config_path: str | None,
 
 def run_strategy_backtest(codes: str, config_path: str | None,
                           start: str | None,
-                          rebalance: bool = False) -> None:
-    """组合回测：等权/月度再平衡 vs 沪深 300。"""
+                          rebalance: bool = False,
+                          frequency: str = "monthly",
+                          cost: float = 5.0) -> None:
+    """组合回测：等权/周期再平衡（含成本）vs 沪深 300。"""
     from .strategy import (
         portfolio_backtest,
         portfolio_backtest_rebalanced,
@@ -2010,27 +2012,33 @@ def run_strategy_backtest(codes: str, config_path: str | None,
     cfg = load_config(config_path)
     names = {str(it["code"]): str(it.get("name", "")) for it in cfg.watchlist}
     if rebalance:
-        console.print(f"[cyan]组合回测 {len(code_list)} 只（静态 vs 月度再平衡）vs 沪深 300…[/cyan]")
+        fname = {"monthly": "月度", "quarterly": "季度", "semi_annual": "半年"}.get(
+            frequency, frequency)
+        console.print(f"[cyan]组合回测 {len(code_list)} 只（静态 vs {fname}再平衡，"
+                      f"成本 {cost}bp）vs 沪深 300…[/cyan]")
         try:
-            result = portfolio_backtest_rebalanced(code_list, start=start)
+            result = portfolio_backtest_rebalanced(
+                code_list, start=start, frequency=frequency, cost_bps=cost)
         except Exception as exc:  # noqa: BLE001
             console.print(f"[red]{exc}[/red]")
             return
-        table = Table(title=f"组合回测 {result['dates'][0]} ~ {result['dates'][-1]}")
+        table = Table(title=f"组合回测 {result['dates'][0]} ~ {result['dates'][-1]}"
+                             f"（{fname}再平衡，单边成本 {cost}bp）")
         table.add_column("组合", justify="left")
         table.add_column("区间收益%", justify="right")
         table.add_column("年化%", justify="right")
         table.add_column("最大回撤%", justify="right")
         table.add_column("夏普", justify="right")
-        for label, key in [("静态等权", "buy_hold"), ("月度再平衡", "monthly"),
+        for label, key in [("静态等权(含成本)", "buy_hold_cost"),
+                           (f"{fname}再平衡", "periodic"),
                            ("沪深300", "benchmark")]:
             s_ = result[key]
             table.add_row(label, f"[red]{s_['total']:.2f}[/red]",
                           f"{s_['annual']:.2f}", f"{s_['max_dd']:.2f}",
                           f"{s_['sharpe']:.2f}")
         console.print(table)
-        ex = result["monthly"]["annual"] - result["benchmark"]["annual"]
-        console.print(f"[bold]月度再平衡年化{'跑赢' if ex>0 else '跑输'}基准 "
+        ex = result["periodic"]["annual"] - result["benchmark"]["annual"]
+        console.print(f"[bold]{fname}再平衡年化{'跑赢' if ex>0 else '跑输'}基准 "
                       f"{abs(ex):.2f} 个百分点[/bold]")
         print_disclaimer()
         return
@@ -4028,7 +4036,12 @@ def main() -> None:
     p_st.add_argument("--start", default=None,
                       help="backtest：起始日期 YYYY-MM-DD（默认全历史）")
     p_st.add_argument("--rebalance", action="store_true",
-                      help="backtest：静态 vs 月度再平衡对比")
+                      help="backtest：静态 vs 周期再平衡对比（含成本）")
+    p_st.add_argument("--frequency", choices=["monthly", "quarterly",
+                                              "semi_annual"],
+                      default="monthly", help="再平衡频率（默认月度）")
+    p_st.add_argument("--cost", type=float, default=5.0,
+                      help="单边交易成本 bp（佣金+印花税+滑点，默认 5）")
     p_st.add_argument("--capital", type=float, default=100000.0,
                       help="资金（默认 10 万）")
     p_st.add_argument("--top", type=int, default=10, help="持仓数量")
@@ -4259,7 +4272,9 @@ def main() -> None:
             return
         if args.strategy == "backtest":
             run_strategy_backtest(args.codes, args.config, args.start,
-                                  getattr(args, "rebalance", False))
+                                  getattr(args, "rebalance", False),
+                                  getattr(args, "frequency", "monthly"),
+                                  getattr(args, "cost", 5.0))
         elif args.strategy == "rebalance":
             run_strategy_rebalance("dividend", args.config, args.capital,
                                    args.top, args.min_yield, args.paper)

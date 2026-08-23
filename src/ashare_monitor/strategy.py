@@ -458,8 +458,14 @@ def stop_loss_check(stop_pct: float = 15.0) -> dict:
 
 def portfolio_backtest_rebalanced(codes: list[str],
                                   start: str | None = None,
-                                  end: str | None = None) -> dict:
-    """月度再平衡回测 vs 静态等权 vs 沪深 300。"""
+                                  end: str | None = None,
+                                  frequency: str = "monthly",
+                                  cost_bps: float = 5.0) -> dict:
+    """再平衡回测（频率可调 + 交易成本）vs 静态等权 vs 沪深 300。
+
+    :param frequency: monthly / quarterly / semi_annual 再平衡周期
+    :param cost_bps: 单边综合交易成本（bp，含佣金+印花税+滑点，默认 5bp=0.05%）
+    """
     from .storage import load_klines
 
     series: dict[str, list[dict]] = {}
@@ -507,22 +513,36 @@ def portfolio_backtest_rebalanced(codes: list[str],
             navs.append((nav - 1) * 100)
         return _ret_stats(navs, dates)
 
-    # 月度再平衡：每月末重置等权（1 份/标的）
-    def _monthly():
+    # 周期再平衡：周期首日重置等权，按 cost_bps 扣除换仓成本
+    def _periodic():
         nav = 1.0
         navs = []
-        cur_month = None
+        cur_key = None
         last_val = {c: close_at[dates[0]][c] for c in series}
         for d in dates:
-            m = d[:7]
-            if cur_month is None or m != cur_month:
-                cur_month = m
-                # 月初等权重置：每标的 1 单位
+            key = _period_key(d, frequency)
+            if cur_key is None or key != cur_key:
+                cur_key = key
+                # 周期首日等权重置 + 扣换仓成本（按当时组合市值）
                 last_val = {c: close_at[d][c] for c in series}
+                nav *= (1 - cost_bps / 10000)
             day_ret = sum((close_at[d][c] / last_val[c] - 1)
                           for c in series if last_val[c]) / len(series)
             nav *= (1 + day_ret)
             last_val = {c: close_at[d][c] for c in series}
+            navs.append((nav - 1) * 100)
+        return _ret_stats(navs, dates)
+
+    def _buy_hold_cost():
+        # 静态等权：仅首日建仓成本
+        first = close_at[dates[0]]
+        units = {c: 1.0 / first[c] if first[c] else 0.0 for c in series}
+        nav = 1.0 - cost_bps / 10000
+        navs = []
+        for d in dates:
+            val = sum(units[c] * close_at[d][c] for c in series)
+            nav = (1 - cost_bps / 10000) * val / sum(
+                units[c] * first[c] for c in series)
             navs.append((nav - 1) * 100)
         return _ret_stats(navs, dates)
 
@@ -551,9 +571,21 @@ def portfolio_backtest_rebalanced(codes: list[str],
     return {
         "dates": dates,
         "buy_hold": _buy_hold(),
-        "monthly": _monthly(),
+        "buy_hold_cost": _buy_hold_cost(),
+        "periodic": _periodic(),
+        "frequency": frequency, "cost_bps": cost_bps,
         "benchmark": _bench_stats(),
     }
+
+
+def _period_key(date: str, frequency: str) -> str:
+    """再平衡周期键（月/季/半年）。"""
+    y, m = date[:4], int(date[5:7])
+    if frequency == "quarterly":
+        return f"{y}Q{(m - 1) // 3 + 1}"
+    if frequency == "semi_annual":
+        return f"{y}S{(m - 1) // 6 + 1}"
+    return f"{y}-{m:02d}"   # monthly
 
 
 def _close_on(rows: list[dict], date: str) -> float | None:
