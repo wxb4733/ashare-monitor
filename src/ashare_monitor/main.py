@@ -1947,6 +1947,56 @@ def run_backfill_indicators(code: str | None, config_path: str | None,
         console.print(f"[green]指标历史报告已生成: {out_path}[/green]")
 
 
+def run_strategy_rebalance(strategy_name: str, config_path: str | None,
+                           capital: float, top_n: int,
+                           min_yield: float, paper: bool) -> None:
+    """月度再平衡：新目标持仓 vs 当前持仓 → 差额指令 → 模拟执行。"""
+    from .strategy import (
+        dividend_strategy,
+        execute_rebalance,
+        rebalance_orders,
+    )
+
+    cfg = load_config(config_path)
+    console.print(f"[cyan]再平衡：生成新目标持仓…[/cyan]")
+    if strategy_name == "dividend":
+        try:
+            targets = dividend_strategy(top_n=top_n, capital=capital,
+                                        min_yield=min_yield)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]{exc}[/red]")
+            return
+    else:
+        console.print("[red]暂只支持 dividend[/red]")
+        return
+    orders = rebalance_orders(targets, capital)
+    if not orders:
+        console.print("[green]无需调仓（组合已在目标权重附近）[/green]")
+        return
+    table = Table(title=f"再平衡差额指令（{len(orders)} 条）")
+    table.add_column("代码", justify="left")
+    table.add_column("名称", justify="left")
+    table.add_column("方向", justify="left")
+    table.add_column("股数", justify="right")
+    table.add_column("参考价", justify="right")
+    table.add_column("金额(元)", justify="right")
+    table.add_column("原因", justify="left")
+    for o in orders:
+        color = "red" if o["side"] == "buy" else "green"
+        table.add_row(o["code"], o["name"],
+                      f"[{color}]{o['side']}[/{color}]",
+                      str(o["shares"]), f"{o['price']:.2f}",
+                      f"{o['value']:,.0f}", o["reason"])
+    console.print(table)
+    print_disclaimer()
+    if paper:
+        console.print("[cyan]执行再平衡（paper）…[/cyan]")
+        result = execute_rebalance(orders)
+        buys = result["buy"]["fills"]
+        console.print(f"[green]买入 {len(buys)} 笔（成本 {result['buy']['total_cost']:,.0f} 元）；"
+                      f"卖出 {len(result['sell'])} 笔[/green]")
+
+
 def run_strategy_backtest(codes: str, config_path: str | None,
                           start: str | None) -> None:
     """组合回测：等权组合 vs 沪深 300。"""
@@ -3930,8 +3980,9 @@ def main() -> None:
     p_bd.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bd.add_argument("--report", action="store_true", help="生成报告")
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
-    p_st.add_argument("strategy", choices=["dividend", "backtest"],
-                      help="策略：dividend 高股息轮动 / backtest 组合回测")
+    p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance"],
+                      help="策略：dividend 高股息轮动 / backtest 组合回测 / "
+                           "rebalance 月度再平衡")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
@@ -4113,6 +4164,9 @@ def main() -> None:
     elif args.command == "strategy":
         if args.strategy == "backtest":
             run_strategy_backtest(args.codes, args.config, args.start)
+        elif args.strategy == "rebalance":
+            run_strategy_rebalance("dividend", args.config, args.capital,
+                                   args.top, args.min_yield, args.paper)
         else:
             run_strategy(args.strategy, args.config, args.capital, args.top,
                          args.min_yield, args.paper,

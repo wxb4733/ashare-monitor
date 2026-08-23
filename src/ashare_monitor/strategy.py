@@ -220,3 +220,105 @@ def portfolio_backtest(codes: list[str], names: dict[str, str] | None = None,
         "excess_annual": round(
             _stats(port_ret)["annual"] - _stats(bench_ret)["annual"], 2),
     }
+
+
+# ===================== 月度再平衡（差额调仓） =====================
+
+# 目标持仓 vs 当前持仓（paper_positions）→ 差额指令（买入/卖出/清仓）。
+# 低频再平衡：月度执行，整手差额，权重漂移修正。
+
+
+def rebalance_orders(targets: list[TargetPosition],
+                     capital: float) -> list[dict]:
+    """计算差额指令：目标市值 vs 当前市值（现价×股数）。"""
+    from .quotes import fetch_spot_quotes
+
+    pos = {p["code"]: p for p in load_paper_positions()}
+    codes = list(dict.fromkeys(list(pos.keys()) + [t.code for t in targets]))
+    quotes = {}
+    try:
+        qs, _ = fetch_spot_quotes(codes, market="ashare")
+        quotes = {q.code: q for q in qs}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("再平衡行情获取失败: %s", exc)
+
+    target_map = {t.code: t for t in targets}
+    orders: list[dict] = []
+    for code in codes:
+        q = quotes.get(code)
+        price = q.price if q else None
+        cur = pos.get(code)
+        cur_value = (cur["shares"] * price if cur and price else 0.0)
+        t = target_map.get(code)
+        tgt_value = t.target_value if t else 0.0   # 不在新目标 → 清仓
+        diff = tgt_value - cur_value
+        if abs(diff) < 500:   # 小额漂移忽略（避免频繁微调）
+            continue
+        if not price:
+            orders.append({"code": code,
+                           "name": t.name if t else (cur["name"] if cur else code),
+                           "side": "hold", "shares": 0, "reason": "行情缺失"})
+            continue
+        shares = int(abs(diff) // price // 100) * 100  # 整手
+        if shares <= 0:
+            continue
+        side = "buy" if diff > 0 else "sell"
+        orders.append({"code": code,
+                       "name": t.name if t else (cur["name"] if cur else code),
+                       "side": side, "shares": shares,
+                       "price": round(price, 2),
+                       "value": round(shares * price, 2),
+                       "reason": ("新进" if (t and not cur) else
+                                  "清仓" if (cur and not t) else
+                                  "加仓" if side == "buy" else "减仓")})
+    return orders
+
+
+def execute_rebalance(orders: list[dict]) -> dict:
+    """执行差额指令：买入复用 execute_paper_trade；卖出更新持仓。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    buy_targets = [TargetPosition(o["code"], o["name"],
+                                  round(o["value"] / max(sum(
+                                      x["value"] for x in orders if x["side"] == "buy"
+                                      ), 1) * 100, 2), o["value"])
+                   for o in orders if o["side"] == "buy"]
+    buy_result = execute_paper_trade(buy_targets) if buy_targets else \
+        {"fills": [], "total_cost": 0.0, "rejected": []}
+
+    sells = [o for o in orders if o["side"] == "sell"]
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    sold = []
+    with conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS paper_trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT, name TEXT, side TEXT, shares INTEGER,
+                price REAL, cost REAL, trade_date TEXT)"""
+        )
+        for o in sells:
+            cur = conn.execute(
+                "SELECT * FROM paper_positions WHERE code=?",
+                (o["code"],)).fetchone()
+            if not cur:
+                continue
+            remaining = cur["shares"] - o["shares"]
+            if remaining <= 0:
+                conn.execute("DELETE FROM paper_positions WHERE code=?",
+                             (o["code"],))
+            else:
+                conn.execute(
+                    "UPDATE paper_positions SET shares=?, updated=? "
+                    "WHERE code=?",
+                    (remaining, o["reason"], o["code"]))
+            conn.execute(
+                "INSERT INTO paper_trades "
+                "(code, name, side, shares, price, cost, trade_date) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (o["code"], o["name"], "sell", o["shares"], o["price"],
+                 o["value"], datetime.now().strftime("%Y-%m-%d")))
+            sold.append(o)
+    return {"buy": buy_result, "sell": sold}

@@ -104,3 +104,31 @@ def test_portfolio_backtest(tmp_path, monkeypatch):
     assert result["portfolio"]["total"] > 0
     assert result["benchmark"]["total"] > 0
     assert "excess_annual" in result
+
+
+def test_rebalance_orders(monkeypatch):
+    from ashare_monitor import strategy
+
+    # 当前持仓：平安银行 10000 股 @ 11 元（股价低，整手差额可执行）
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.load_paper_positions",
+        lambda: [{"code": "000001", "name": "平安银行", "shares": 10000,
+                  "avg_cost": 11.0, "updated": "2026-08-01"}])
+
+    class _Q:
+        code = "000001"
+        price = 11.0
+
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare": ([_Q()], "tencent"))
+    targets = [strategy.TargetPosition("000001", "平安银行", 50.0, 50_000.0),
+               strategy.TargetPosition("600900", "长江电力", 50.0, 50_000.0)]
+    orders = strategy.rebalance_orders(targets, 100_000.0)
+    by = {o["code"]: o for o in orders}
+    # 平安当前市值 11 万 > 目标 5 万 → 卖出 60000//11//100*100=5400 股
+    assert by["000001"]["side"] == "sell"
+    assert by["000001"]["reason"] == "减仓"
+    assert by["000001"]["shares"] == 5400
+    # 长电行情缺失 → hold（如实）
+    assert by["600900"]["reason"] == "行情缺失"

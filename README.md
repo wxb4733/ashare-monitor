@@ -558,3 +558,9 @@ python -m ashare_monitor.main strategy dividend --capital 100000 --top 10 --pape
 # 选股器 TOP N 等权 → 目标持仓 → 模拟买入（整手/现价撮合）→ 落库 paper_positions
 # 纯模拟（paper trading）不产生真实交易；合规：低频月度再平衡需券商通道（QMT 等）
 # 沙箱东财 push2 不可达（已知）→ 本机直连跑策略
+
+# 月度再平衡（差额调仓闭环）
+python -m ashare_monitor.main strategy rebalance --capital 100000 --top 10 --paper
+# 新目标持仓 vs 当前持仓（paper_positions）→ 差额指令（加仓/减仓/清仓/新进）
+# 整手差额；小额漂移(<500)忽略；行情缺失标 hold（如实）
+# 整手限制：高股价标的差额不足一手时跳过（合理，如茅台 65 股差额）
