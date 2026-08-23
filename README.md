@@ -577,3 +577,11 @@ python -m ashare_monitor.main strategy backtest --codes 600519,000001,300750,002
 # 成本模型：单边 bp（佣金+印花税+滑点综合）；频率 monthly/quarterly/semi_annual
 # 多策略对比：--codes 分别传不同策略标的池（如 dividend 清单 vs lowval 清单）对比
 # 真实：季度再平衡含成本年化 24.97%（成本惩罚小）；静态等权 34% 仍最优
+
+# 净值跟踪 + 组合熔断 + 自动化调度
+python -m ashare_monitor.main strategy track     # 记录今日净值（paper_history）
+python -m ashare_monitor.main strategy breaker   # 组合熔断检查（-20% 停止新开仓）
+# rebalance 自动过熔断：组合亏损 ≥20% 时停止再平衡
+# 调度建议（本机 crontab/任务计划）：
+#   每月 1 日 09:30  strategy rebalance --capital 100000 --top 10 --paper
+#   每周日 20:00   strategy risk + strategy track

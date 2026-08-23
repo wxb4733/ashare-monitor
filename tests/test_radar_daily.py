@@ -64,11 +64,15 @@ def test_radar_build_report():
 
 
 def test_daily_freshness():
+    from datetime import datetime, timedelta
+
     from ashare_monitor.daily import _freshness
 
-    ok, note = _freshness([{"date": "2026-08-20"}])
+    today = datetime.now().strftime("%Y-%m-%d")
+    stale = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    ok, note = _freshness([{"date": today}])
     assert ok and "正常" in note
-    bad, note2 = _freshness([{"date": "2026-01-01"}])
+    bad, note2 = _freshness([{"date": stale}])
     assert not bad and "落后" in note2
     bad2, _ = _freshness([])
     assert not bad2

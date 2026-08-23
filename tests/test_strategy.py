@@ -252,3 +252,50 @@ def test_rebalanced_cost_penalty(tmp_path, monkeypatch):
             < r_cheap["periodic"]["annual"])
     # 静态含成本略低于不含成本
     assert r_cheap["buy_hold_cost"]["total"] < r_cheap["buy_hold"]["total"]
+
+
+def test_paper_nav_tracking(tmp_path, monkeypatch):
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "nav.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.load_paper_positions",
+        lambda: [{"code": "000001", "name": "平安银行", "shares": 10000,
+                  "avg_cost": 10.0, "updated": "2026-08-01"}])
+
+    class _Q:
+        code = "000001"
+        price = 11.0
+
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare": ([_Q()], "tencent"))
+    rec = strategy.record_paper_nav()
+    assert rec["total_value"] == pytest.approx(110_000.0)
+    assert rec["pnl_pct"] == pytest.approx(10.0)
+    navs = strategy.load_paper_nav()
+    assert len(navs) == 1
+    assert navs[0]["nav"] == pytest.approx(1.1)
+
+
+def test_portfolio_circuit_breaker(monkeypatch):
+    from ashare_monitor.strategy import portfolio_circuit_breaker
+
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.paper_report",
+        lambda: {"total_value": 80_000.0, "total_cost": 100_000.0,
+                 "pnl_pct": -20.0, "positions": []})
+    cb = portfolio_circuit_breaker(drawdown_pct=20.0)
+    assert cb["triggered"] is True
+    assert cb["loss_pct"] == pytest.approx(20.0)
+    # 未触发
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.paper_report",
+        lambda: {"total_value": 95_000.0, "total_cost": 100_000.0,
+                 "pnl_pct": -5.0, "positions": []})
+    cb2 = portfolio_circuit_breaker(drawdown_pct=20.0)
+    assert cb2["triggered"] is False

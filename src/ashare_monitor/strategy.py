@@ -618,3 +618,56 @@ def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
     return {"total": round(total, 2), "annual": round(annual, 2),
             "max_dd": round(max_dd * 100, 2), "sharpe": round(sharpe, 2),
             "days": n}
+
+
+# ===================== 模拟净值跟踪 + 组合熔断 =====================
+
+def record_paper_nav() -> dict:
+    """记录今日模拟组合净值（总市值/成本/累计收益%）到 paper_history。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    rep = paper_report()
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    with conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS paper_history (
+                date TEXT PRIMARY KEY, value REAL, cost REAL,
+                nav REAL, pnl_pct REAL)"""
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO paper_history (date, value, cost, nav, pnl_pct) "
+            "VALUES (?,?,?,?,?)",
+            (today, rep["total_value"], rep["total_cost"],
+             rep["total_value"] / rep["total_cost"]
+             if rep["total_cost"] else 1.0, rep["pnl_pct"]))
+    return {"date": today, **rep}
+
+
+def load_paper_nav() -> list[dict]:
+    """读取净值历史（升序）。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM paper_history ORDER BY date").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [dict(r) for r in rows]
+
+
+def portfolio_circuit_breaker(drawdown_pct: float = 20.0) -> dict:
+    """组合级熔断：现价市值 vs 成本亏损 > 阈值 → 停止新开仓。"""
+    rep = paper_report()
+    loss = -rep["pnl_pct"] if rep["pnl_pct"] < 0 else 0.0
+    triggered = loss >= drawdown_pct
+    return {"triggered": triggered, "loss_pct": round(loss, 2),
+            "threshold": drawdown_pct,
+            "total_value": rep["total_value"], "total_cost": rep["total_cost"]}

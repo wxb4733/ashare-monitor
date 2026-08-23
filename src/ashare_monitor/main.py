@@ -1969,6 +1969,13 @@ def run_strategy_rebalance(strategy_name: str, config_path: str | None,
     else:
         console.print("[red]暂只支持 dividend[/red]")
         return
+    from .strategy import portfolio_circuit_breaker
+
+    cb = portfolio_circuit_breaker()
+    if cb["triggered"]:
+        console.print(f"[red]组合熔断（亏损 {cb['loss_pct']:.1f}% ≥ "
+                      f"{cb['threshold']:.0f}%）——停止再平衡，先处理止损[/red]")
+        return
     orders = rebalance_orders(targets, capital)
     if not orders:
         console.print("[green]无需调仓（组合已在目标权重附近）[/green]")
@@ -4027,10 +4034,10 @@ def main() -> None:
     p_bd.add_argument("--report", action="store_true", help="生成报告")
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
     p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance",
-                                            "status"],
-                      help="策略：dividend 高股息轮动 / backtest 组合回测 / "
-                           "rebalance 月度再平衡 / status 持仓报告 / "
-                           "risk 止损检查")
+                                            "status", "risk", "track",
+                                            "breaker"],
+                      help="策略：dividend/backtest/rebalance/status/risk/"
+                           "track 净值跟踪/breaker 组合熔断")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
@@ -4217,6 +4224,42 @@ def main() -> None:
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
     elif args.command == "strategy":
+        if args.strategy == "track":
+            from .strategy import load_paper_nav, record_paper_nav
+
+            today = record_paper_nav()
+            console.print(f"[cyan]已记录 {today['date']} 净值："
+                          f"{today['total_value']:,.0f} 元"
+                          f"（{today['pnl_pct']:+.2f}%）[/cyan]")
+            navs = load_paper_nav()
+            table = Table(title=f"模拟组合净值跟踪（{len(navs)} 条）")
+            table.add_column("日期", justify="left")
+            table.add_column("市值(元)", justify="right")
+            table.add_column("成本(元)", justify="right")
+            table.add_column("累计收益%", justify="right")
+            for n in navs:
+                pnl = n["pnl_pct"]
+                color = "red" if pnl and pnl > 0 else "green"
+                table.add_row(n["date"], f"{n['value']:,.0f}",
+                              f"{n['cost']:,.0f}",
+                              f"[{color}]{pnl:+.2f}[/{color}]")
+            console.print(table)
+            print_disclaimer()
+            return
+        if args.strategy == "breaker":
+            from .strategy import portfolio_circuit_breaker
+
+            cb = portfolio_circuit_breaker()
+            if cb["triggered"]:
+                console.print(f"[red]熔断触发！组合亏损 {cb['loss_pct']:.1f}%"
+                              f" ≥ {cb['threshold']:.0f}% 阈值"
+                              f"（市值 {cb['total_value']:,.0f} / 成本 "
+                              f"{cb['total_cost']:,.0f}）——停止新开仓[/red]")
+            else:
+                console.print(f"[green]熔断未触发（亏损 {cb['loss_pct']:.1f}%"
+                              f" < {cb['threshold']:.0f}% 阈值）[/green]")
+            print_disclaimer()
+            return
         if args.strategy == "risk":
             from .strategy import stop_loss_check
 
