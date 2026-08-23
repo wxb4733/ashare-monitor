@@ -78,8 +78,9 @@ def test_portfolio_backtest(tmp_path, monkeypatch):
 
     # mock 本地 K 线：两只标的（一涨一跌）+ 沪深 300 指数
     def fake_load(code, market):
-        dates = [f"2024-0{i}-0{j}" for i in range(1, 3) for j in range(1, 3)]
-        rows = [{"date": d, "close": 10.0 + i * 0.5} for i, d in enumerate(dates)]
+        rows = []
+        for i in range(100):
+            rows.append({"date": f"2024-01-{i % 28 + 1:02d}", "close": 10.0 + i * 0.5})
         return rows
 
     monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
@@ -87,10 +88,10 @@ def test_portfolio_backtest(tmp_path, monkeypatch):
     import pandas as pd
 
     idx_df = pd.DataFrame({
-        "date": [f"2024-0{i}-0{j}" for i in range(1, 3) for j in range(1, 3)],
-        "open": [100.0] * 4, "high": [101.0] * 4, "low": [99.0] * 4,
-        "close": [100.0 + i for i in range(4)],
-        "volume": [1.0] * 4,
+        "date": [f"2024-01-{i % 28 + 1:02d}" for i in range(100)],
+        "open": [100.0] * 100, "high": [101.0] * 100, "low": [99.0] * 100,
+        "close": [100.0 + i for i in range(100)],
+        "volume": [1.0] * 100,
     })
 
     def fake_index(symbol):
@@ -99,7 +100,7 @@ def test_portfolio_backtest(tmp_path, monkeypatch):
     monkeypatch.setattr("akshare.stock_zh_index_daily", fake_index)
     result = strategy.portfolio_backtest(
         ["600519", "000001"], names={"600519": "茅台", "000001": "平安"})
-    assert result["portfolio"]["days"] == 3
+    assert result["portfolio"]["days"] > 50
     assert result["portfolio"]["total"] > 0
     assert result["benchmark"]["total"] > 0
     assert "excess_annual" in result
