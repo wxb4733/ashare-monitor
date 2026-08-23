@@ -198,9 +198,9 @@ def test_portfolio_backtest_rebalanced(tmp_path, monkeypatch):
     monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
     idx_df = pd.DataFrame({
         "date": [f"2024-{1 + i // 30:02d}-{i % 30 + 1:02d}" for i in range(120)],
-        "open": [100.0] * 100, "high": [101.0] * 100, "low": [99.0] * 100,
-        "close": [100.0 + i * 0.1 for i in range(100)],
-        "volume": [1.0] * 100,
+        "open": [100.0] * 120, "high": [101.0] * 120, "low": [99.0] * 120,
+        "close": [100.0 + i * 0.1 for i in range(120)],
+        "volume": [1.0] * 120,
     })
     monkeypatch.setattr("akshare.stock_zh_index_daily",
                         lambda symbol="sh000300": idx_df)
