@@ -653,3 +653,9 @@ python -c "import ashare_monitor.api as am; print(am.history('NVDA')['annualized
 # 市场自动识别：数字=A股/港股、USDT=币、其他=美股（detect_market）
 # 返回类型与 CLI 同源（Quote/ScreenHit/CheckItem/AssetProfile），零重复实现
 # 意义：任何脚本/AI Agent 可编程调用；MCP Server 只需在此之上再套一层注册表
+
+# 命令自动文档（akshare 模式：argparse 一键生成）
+python -m ashare_monitor.docs_gen            # 生成 docs/commands.md（53 命令）
+python -m ashare_monitor.docs_gen --stdout   # 打印不落盘
+# 文档从 build_parser() 自动提取（help/参数/默认值）——改命令不用改文档
+# main.py 重构：build_parser() 供 CLI 与文档生成共用（单源）

@@ -3960,7 +3960,8 @@ def run_report(period: str, date: str | None, config_path: str | None) -> None:
     console.print(f"[green]汇总报告已生成: {path}[/green]")
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """构造全部命令的 argparse parser（供 CLI 与文档生成共用）。"""
     parser = argparse.ArgumentParser(description="A 股交易信息监控")
     parser.add_argument("--config", help="配置文件路径（默认 config.yaml）")
     sub = parser.add_subparsers(dest="command")
@@ -4326,6 +4327,12 @@ def main() -> None:
     p_bs.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bs.add_argument("--report", action="store_true", help="生成报告")
 
+    return parser
+
+
+def main() -> None:
+    """CLI 入口。"""
+    parser = build_parser()
     args = parser.parse_args()
     if args.command == "once":
         run_once(args.config)
