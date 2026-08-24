@@ -1,7 +1,7 @@
 # ashare-monitor 命令参考
 
-> 自动生成于 2026-08-24 20:38（scripts/gen_docs.py），勿手改
-> 共 53 个命令；命令行 `--help` 与本文档始终一致
+> 自动生成于 2026-08-24 22:13（scripts/gen_docs.py），勿手改
+> 共 54 个命令；命令行 `--help` 与本文档始终一致
 
 ## 命令总览
 
@@ -18,6 +18,7 @@
 - `check` — 标的资料完整性体检（股票/港股/数字货币）
 ### 其他
 
+- `mcp` — 启动 MCP Server（stdio，AI Agent 查询接口）
 - `valuation` — 估值分位（PE/PB 历史百分位）
 - `sector` — 月度产销快报（行业景气先行指标）
 - `daily` — 一键日报（核心信号聚合）
@@ -179,6 +180,12 @@
 | code | 是 | — | 代码，如 002594 / BTCUSDT |
 | --market | 否 | — | 市场（缺省按 watchlist/代码推断） |
 | --report | 否 | — | 生成体检报告 |
+
+### mcp
+
+启动 MCP Server（stdio，AI Agent 查询接口）
+
+无参数
 
 ### valuation
 
@@ -607,7 +614,7 @@ HuggingFace 监测（模型 + 收录论文）
 
 | 参数 | 必填 | 默认 | 说明 |
 |---|---|---|---|
-| strategy | 是 | — | 策略：dividend/backtest/rebalance/status/orders 订单历史/risk/track/breaker/factor |
+| strategy | 是 | — | 策略：dividend/backtest/rebalance/status/orders/risk/track/navreport 净值报告/breaker/factor |
 | --codes | 否 |  | backtest：标的列表（逗号分隔，默认自选股 A 股） |
 | --start | 否 | — | backtest：起始日期 YYYY-MM-DD（默认全历史） |
 | --factor-name | 否 | momentum | factor：因子名（内置 momentum/rsi/volatility 或 factors.local.yaml 自定义，默认 momentum） |
@@ -617,6 +624,8 @@ HuggingFace 监测（模型 + 收录论文）
 | --rebalance | 否 | — | backtest：静态 vs 周期再平衡对比（含成本） |
 | --frequency | 否 | monthly | 再平衡频率（默认月度） |
 | --cost | 否 | 5.0 | 单边交易成本 bp（佣金+印花税+滑点，默认 5） |
+| --optimize | 否 | — | backtest：参数网格优化（频率×成本，最优按夏普） |
+| --report | 否 | — | backtest：生成 HTML 报告（净值曲线+月度热力图） |
 | --capital | 否 | 100000.0 | 资金（默认 10 万） |
 | --top | 否 | 10 | 持仓数量 |
 | --min-yield | 否 | 3.0 | 最低股息率 % |
