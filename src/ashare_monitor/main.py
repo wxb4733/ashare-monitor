@@ -2106,6 +2106,18 @@ def run_ad(sub: str, codes: str, config_path: str | None) -> None:
                         f"{k}: {v[:20]}" for k, v in r.items()
                         if k.lower() in ("年份", "年度", "均值", "每股收益",
                                          "预测机构数", "最小值", "最大值")))
+        elif sub == "news":
+            if not code_list:
+                console.print("[red]需指定代码：ad news 600519[/red]")
+                return
+            from .announcements import fetch_announcements
+
+            for code in code_list:
+                rows = fetch_announcements(code, limit=10)
+                console.print(f"[cyan]{code} 公告（{len(rows)} 条）[/cyan]")
+                for n in rows[:10]:
+                    console.print(f"  {n.get('date', '')[:10]} | "
+                                  f"{str(n.get('title', ''))[:50]}")
         elif sub == "fin":
             if not code_list:
                 console.print("[red]需指定代码：ad fin 600519 --report lrb[/red]")
@@ -4009,7 +4021,8 @@ def main() -> None:
     p_ad = sub.add_parser("ad", help="A 股全栈数据（融合 a-stock-data）")
     p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock",
                                       "margin", "block", "fundflow",
-                                      "fin", "announce", "reports", "eps"],
+                                      "fin", "announce", "reports", "eps",
+                                      "news"],
                       help="quote/hot/lhb/unlock/margin 两融/block 大宗/"
                            "fundflow 资金流120日")
     p_ad.add_argument("codes", nargs="?", default="", help="代码（逗号分隔）")

@@ -364,6 +364,41 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
     except Exception:  # noqa: BLE001
         checks.append(_warn("股权质押", "数据源受限"))
 
+    # 15b. 两融（融资余额与趋势）
+    try:
+        from .a_stock_data import margin_trading
+
+        rows = margin_trading(code)
+        if rows:
+            latest, prev = rows[0], (rows[1] if len(rows) > 1 else None)
+            rzye = (latest["rzye"] or 0) / 1e8
+            detail = f"融资余额 {rzye:.1f} 亿"
+            if prev and prev.get("rzye"):
+                chg = ((latest["rzye"] or 0) - (prev["rzye"] or 0)) / 1e8
+                detail += f"（较前日 {chg:+.1f} 亿）"
+            if latest.get("rzmre"):
+                detail += f" 买入 {latest['rzmre'] / 1e8:.1f} 亿"
+            checks.append(_ok("两融", detail))
+        else:
+            checks.append(_warn("两融", "数据源受限（如实）"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_warn("两融", f"获取失败：{str(exc)[:30]}"))
+    # 15c. 解禁（未来 90 天）
+    try:
+        from .a_stock_data import lockup_expiry
+
+        data = lockup_expiry(code)
+        upcoming = data.get("upcoming") or []
+        if upcoming:
+            first = upcoming[0]
+            detail = f"未来 90 天 {len(upcoming)} 批，最近 {first['date']}"
+            if first.get("ratio_pct"):
+                detail += f"（占比 {first['ratio_pct']}%）"
+            checks.append(_warn("解禁", detail))
+        else:
+            checks.append(_ok("解禁", "未来 90 天无解禁"))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_warn("解禁", f"获取失败：{str(exc)[:30]}"))
     # 16. 龙虎榜
     try:
         from .lhb import scan_lhb
