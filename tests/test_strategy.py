@@ -353,7 +353,7 @@ def test_factor_ic_test(tmp_path, monkeypatch):
     from ashare_monitor import strategy
 
     # 两只标的：一只趋势上行、一只横盘
-    drift_map = {"600519": 0.5, "000001": 0.0, "300750": -0.2}
+    drift_map = {"600519": 0.5, "000001": 0.0, "300750": -0.05}
 
     def fake_load(code, market):
         rows = []
