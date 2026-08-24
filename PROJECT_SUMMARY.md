@@ -1,103 +1,95 @@
-# ashare-monitor 项目总结（2026-08 四市场扩展版）
+# ashare-monitor 项目总结（v2：四市场投研 + 低频自动化交易）
 
-> 个人投研工作站：A 股 / 港股 / 美股 / 数字货币四市场一体化监控与选股。
-> 84 commits · 273 测试 · 59 命令
+> 个人投研工作站的完整进化：A 股 / 港股 / 美股 / 数字货币四市场一体化
+> 监控、选股、回测与低频自动化交易模拟。
+> **92 commits · 286 测试 · 60 命令**（2026-08-24）
+
+---
 
 ## 一、项目定位
 
-从"A 股自选股监控"发展为**跨市场个人投研平台**——统一架构承载四个市场：
-行情监控、技术信号、财务画像、多视角报告、全市场选股、历史回填。
+从"A 股自选股监控"进化为**跨市场个人投研平台 + 低频自动化交易系统**：
+- **研究侧**：四市场行情监控、技术信号、财务画像、多视角报告、全市场选股、历史回填
+- **交易侧**：策略引擎、模拟交易、组合回测、月度再平衡、风控（止损/熔断）、净值跟踪
+- **边界**：全部交易功能为模拟（paper trading），实盘通道占位待券商开通（合规）
 
 ## 二、四市场能力矩阵
 
 | 能力 | A 股 | 港股 | 美股 | 数字货币 |
 |---|---|---|---|---|
-| 实时行情 | 新浪/腾讯/东财 | 腾讯 | 新浪/腾讯 | Binance |
-| K 线历史 | 1990 起（东财/腾讯/新浪）| 2002 起 | 1999 起（东财）| 2017 起（币安）+ 2010 起（CoinGecko 补）|
-| 财务画像 | ✅ 18 维 | ⚠️ 部分 | ✅ ROE/毛利/增速 | ⚠️ 代币经济（CoinGecko，本机验证）|
+| 实时行情 | 新浪/腾讯/东财 | 腾讯 | 新浪/腾讯 | Binance 双域 |
+| K 线历史 | 1990 起 | 2002 起 | 1999 起（5748 根）| 2017 起（币安）+ 2010 起（CoinGecko 补）|
+| 财务画像 | ✅ 18 维 | ⚠️ 部分 | ✅ ROE/毛利/增速 | ⚠️ 代币经济（CoinGecko 本机验证）|
 | 体检维度 | 18 维 | 11 维 | 5 维 | 4 维 |
-| 选股因子 | 6 个（股息/SGR/利润率/市占率/低估/成长）| — | ⚠️ 待数据源 | — |
-| 历史回填 | 股息率/SGR/增速/估值 1995 起 | K 线 | K 线 | K 线 + CoinGecko 补段 |
+| 选股因子 | 6 个 | — | momentum | — |
 | 多视角报告 | ✅ | ✅ | ✅ | ✅ |
 
-## 三、架构（五层通用化）
+## 三、低频自动化交易平台（2026-08 新增）
 
 ```
-L5 应用层      monitor / radar / period(日/周/月) / check / history / screen
-L4 因子引擎    factor 注册表：dividend / sgr / margin / share / lowval / growth
-L3 画像层      AssetProfile 五维接口（市值/供给/增长/收益/估值）
-               └ 实现：stock_profile / hk / us_profile / crypto_profile
-L2 数据模型    Quote / Kline(OHLCV) 领域无关；SQLite 按 market 分桶
-L1 数据源      eastmoney / tencent / sina / tencent_hk / sina_us / tencent_us / binance
+L0 研究层    四市场行情/选股/体检（信号与候选）
+L1 策略层    strategy dividend：选股器 TOP N 等权目标持仓
+L2 组合层    paper_positions / rebalance 差额调仓（整手/漂移忽略）
+L3 执行层    execute_paper_trade（模拟撮合）/ executor/qmt+ptrade（占位）
+L4 风控层    apply_risk_rules（单标的上限 20%/ST 黑名单/市值过滤）
+             stop_loss_check（-15% 止损）/ circuit_breaker（-20% 熔断）
+L5 跟踪层    paper_history 净值跟踪（strategy track）
 ```
 
-**通用化关键**：领域差异被隔离在 L1（数据源适配）与 L3（画像实现），
-L2/L4/L5 跨市场零改动。`build_profile` 一个入口分发四个市场。
+**命令**：`strategy dividend`（建仓）/ `backtest`（含成本/频率/多策略）/
+`rebalance`（差额调仓）/ `status`（持仓盈亏）/ `risk`（止损）/ `breaker`（熔断）/
+`track`（净值）。
 
-## 四、主要命令
+**回测引擎**：静态等权 vs 月度/季度/半年再平衡 vs 沪深 300；交易成本模型
+（cost_bps 单边含佣金/印花税/滑点）。
 
-```bash
-# 监控
-python -m ashare_monitor.main monitor                 # 盘中异动监控
-python -m ashare_monitor.main radar 002594            # 信号雷达
-python -m ashare_monitor.main period --period daily   # 多视角日报（四市场）
-# 体检
-python -m ashare_monitor.main check 002594            # A 股 18 维
-python -m ashare_monitor.main check 01810             # 港股 11 维
-python -m ashare_monitor.main check NVDA              # 美股 5 维
-python -m ashare_monitor.main check BTCUSDT --market crypto  # 币 4 维
-# 选股（A 股全市场 6 因子）
-python -m ashare_monitor.main screen --metric dividend   # 高股息率
-python -m ashare_monitor.main screen --metric sgr        # 持续增长率
-python -m ashare_monitor.main screen --metric margin     # 高利润率
-python -m ashare_monitor.main screen --metric share      # 市场占有率
-python -m ashare_monitor.main screen --metric lowval     # 低估
-python -m ashare_monitor.main screen --metric growth     # 高成长
-# 历史回填
-python -m ashare_monitor.main backfill 002594            # K 线
-python -m ashare_monitor.main backfill_dividend          # 历史股息率（1995 起）
-python -m ashare_monitor.main backfill_sgr               # SGR 历史
-python -m ashare_monitor.main backfill_indicators        # 增速/估值历史
-python -m ashare_monitor.main backfill NVDA --market us  # 美股 K 线
-python -m ashare_monitor.main backfill BTCUSDT --market crypto  # 币 K 线（自动 CoinGecko 补段）
-python -m ashare_monitor.main dividend_rank --sort cum-yield  # 股息率榜单时长
-```
+## 四、关键验证记录（真实数据）
+
+**回测（2024-01 ~ 2026-08，茅台/平安/宁德/比亚迪等权）**：
+| 组合 | 年化 | 最大回撤 | 结论 |
+|---|---|---|---|
+| 静态等权（含成本）| **34.01%** | 16.61% | 强势组合最优 |
+| 季度再平衡 | 24.97% | 16.02% | 再平衡税 ~9pct |
+| 沪深 300 | 19.05% | 15.66% | 基准 |
+
+- **再平衡税发现**：分化市月度/季度再平衡跑输静态 8-9pct（卖强买弱损失动量）——
+  结论：**静态 + 基本面止损 > 机械再平衡**；5bp 成本对低频惩罚极小（-0.18pct）
+- **模拟运行**（2026-08-24 启动）：平安 2100 股/比亚迪 200 股/宁德 100 股，
+  真实撮合 81,170 元——暴露小资金整手限制（茅台一手 12.7 万买不起，效率损失 19%）
+- 个股体检：比亚迪 ROE 1.6%/净利 -55.4%（2026Q1）；英伟达 ROE 101.5%/
+  毛利率 71.1%/上市以来 +523,607%；小米 ROE 18.3%
+- 选股（2026H1）：低估榜=银行（平安 PE 5.1/PB 0.47）；成长榜=江波龙
+  71528%（存储周期）；茅台市占 86.5%
+- **性能优化**：timing 历史信号扫描 O(n²)→O(n)，5748 根 K 线 46.9s→0.06s（780 倍）
 
 ## 五、数据源与边界（如实）
 
-| 数据 | 源 | 沙箱状态 | 边界说明 |
+| 数据 | 源 | 沙箱 | 边界 |
 |---|---|---|---|
-| A 股行情/K 线 | 东财/腾讯/新浪 | 东财域不稳 | 多源降级已实现 |
-| 港股行情 | 腾讯 | ✅ | 财务/估值接口受限 |
-| 美股行情 | 新浪/腾讯 | ✅ | 财务用东财美股指标 |
-| 美股 K 线 | 东财 stock_us_daily | ✅（5748 根验证）| 前复权口径 |
-| 币行情/K 线 | Binance 双域 | ✅（vision 域）| api.binance.com 沙箱超时，自动降级 |
-| 币历史 | CoinGecko | ❌ 沙箱不可达 | 本机直连补全（收盘价近似 OHLC）|
-| 美股全市场估值 | 无免费源 | — | **缺口：美股选股器待数据源** |
-| 币质押收益/通胀率 | 链上数据 | — | 缺口：需链上 RPC |
+| A 股行情/K 线 | 东财/腾讯/新浪 | push2 受限 | 多源降级 |
+| 美股行情/财务 | 新浪/腾讯/东财美股指标 | ✅ | 估值市值需东财美股行情（本机）|
+| 币行情/K 线 | Binance 双域 | vision 域 ✅ | api.binance.com 超时自动降级 |
+| 币历史 | CoinGecko | ❌ | 本机补全（收盘近似 OHLC）|
+| 美股全市场估值 | 无免费源 | — | 选股 lowval 待数据源 |
+| 币质押/通胀 | 链上 RPC | — | fetch_onchain_profile 占位 |
 
-## 六、关键验证记录（真实数据）
+## 六、里程碑
 
-- 比亚迪体检：ROE 1.6% 净利 -55.4%（2026Q1）/ PE 29.9(PB 3% 分位)
-- 小米（按比亚迪标准）：K 线 2002 根 / ROE 18.3% / PE≈17.9 / MACD 金叉
-- 英伟达：5748 根（1999 起）上市以来 +523,607% 年化 45.1% / ROE 101.5% 毛利率 71.1%
-- 比特币：3293 根（币安）+ CoinGecko 补 2010 起 / 最新 7.7 万美元
-- 选股（2026H1 全市场）：茅台市占 86.5%（白酒）/ 新易盛 SGR 65% / 低估榜=银行 / 东方财富净利率 76.8%
-- 股息率榜单时长：冀中能源 5/9 年居首（周期高股息）；累计股息率：三钢闽光 146%（分红厚+股价深跌）
+- **73 commits**：A 股选股器 6 因子 + 股息率/SGR/增速/估值四类历史回填
+- **83 commits**：跨领域通用化（AssetProfile 五维画像：股票/港股/美股/币）
+- **90 commits**：低频交易（策略/回测/再平衡/风控/模拟）
+- **92 commits**：模拟运行启动 + 净值跟踪
 
-## 七、性能优化记录
+## 七、待办
 
-- timing 历史信号扫描：O(n²) → O(n)（预计算 EMA/RSI），5748 根 K 线 46.9s → 0.06s（**780 倍**）
-- 全平台受益：任何长历史标的的择时/雷达/回测
+1. 模拟运行 3 个月跟踪（每日 track → 净值曲线 vs 沪深 300）
+2. 美股选股 lowval（待美股全市场估值源）
+3. 链上数据接入（质押收益/通胀率，Phase 3）
+4. 实盘通道：券商 QMT/PTrade 开通后接入 executor（合规报备）
+5. 本机验证项：CoinGecko 代币经济 / 东财美股市值 / push2 选股器
 
-## 八、待办
+## 八、合规声明
 
-1. **美股选股器**：需全市场美股估值源（东财美股行情无 PE/市值字段；Yahoo 境外）——本机评估 stock_us_spot_em 完整字段后实现 lowval 变体
-2. 币质押收益/通胀率：链上数据接入（Phase 3）
-3. 美股财务历史回填（backfill_us_financial）
-4. 用户本机验证项：CoinGecko 代币经济 / 东财美股市值（沙箱境外/东财域受限，本机直连通常可用）
-
-## 九、合规声明
-
-平台仅用于行情监控与量化研究，不构成投资建议；国内使用注意
-数字货币数据源跨境访问的政策边界；所有投资决策需独立判断。
+平台仅用于行情监控、量化研究与**模拟交易**，不构成投资建议。
+实盘自动化需券商程序化交易通道（QMT/PTrade）并按 2024《程序化交易管理规定》
+报备；数字货币境内注意政策边界。所有投资决策需独立判断。
