@@ -220,3 +220,46 @@ def get_all_ip_assets(db_path: str | Path | None = None) -> dict:
         return {}
     finally:
         conn.close()
+
+
+# ── 元数据（新鲜度/血缘） ────────────────────────────
+
+def get_profile_meta(db_path: str | Path | None = None) -> dict:
+    """读取企业画像元数据：{name: {"updated": str, "source": str}}。
+
+    用于 check 体检展示「数据血缘 + 新鲜度」。
+    """
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn(db_path) if db_path else get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT name, updated FROM company_profiles").fetchall()
+        return {r["name"]: {"updated": r["updated"],
+                            "source": "天眼查"} for r in rows}
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
+
+
+def get_ip_meta(db_path: str | Path | None = None) -> dict:
+    """读取知识产权元数据：{company: {"updated": str, "source": str}}。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn(db_path) if db_path else get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT company, updated FROM ip_assets").fetchall()
+        return {r["company"]: {"updated": r["updated"],
+                               "source": "智慧芽"} for r in rows}
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()

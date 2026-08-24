@@ -63,7 +63,7 @@ def test_import_company_profile_roundtrip(tmp_path, monkeypatch):
 
 
 def test_check_company_profile_dim(monkeypatch):
-    """check 工商画像维度：有导入才显示。"""
+    """check 工商画像维度：有导入才显示（含来源/新鲜度）。"""
     from ashare_monitor.check import check_stock
 
     profiles = {
@@ -71,8 +71,11 @@ def test_check_company_profile_dim(monkeypatch):
                           "标签": ["A股(正常上市)", "港股(正常上市)"]},
         "贵州茅台酒股份有限公司": {"规模": "大型", "标签": []},
     }
+    meta = {"比亚迪股份有限公司": {"updated": "2026-08-25", "source": "天眼查"}}
     monkeypatch.setattr("ashare_monitor.import_data.get_all_company_profiles",
                         lambda db_path=None: profiles)
+    monkeypatch.setattr("ashare_monitor.import_data.get_profile_meta",
+                        lambda db_path=None: meta)
     checks = check_stock("002594", "比亚迪", "ashare")
     names = {c.name for c in checks}
     assert "工商画像" in names
@@ -80,6 +83,7 @@ def test_check_company_profile_dim(monkeypatch):
     assert item.status == "OK"
     assert "大型" in str(item.detail)
     assert "1995-02-10" in str(item.detail)
+    assert "来源 天眼查" in str(item.detail)
 
 
 def test_import_ip_assets(tmp_path, monkeypatch):
@@ -119,18 +123,57 @@ def test_import_ip_assets(tmp_path, monkeypatch):
 
 
 def test_check_ip_dim(monkeypatch):
-    """check 知识产权维度。"""
+    """check 知识产权维度（含质量/来源/新鲜度）。"""
     from ashare_monitor.check import check_stock
 
     ips = {"比亚迪股份有限公司": {
         "patents": [{"pn": "CN122619700A", "title": "一种负极片",
-                     "date": "2026-08-21"}],
+                     "date": "2026-08-21", "legal_status": "active",
+                     "ipc": "H01M4/36"},
+                    {"pn": "CN122607746A", "title": "翻转控制方法",
+                     "date": "2026-06-01", "legal_status": "pending",
+                     "ipc": "B60T7/12"}],
         "papers": [{"title": "Dynamic Pricing", "date": "2026-01-23"}],
         "updated": "2026-08-25"}}
+    ip_meta = {"比亚迪股份有限公司": {"updated": "2026-08-25", "source": "智慧芽"}}
     monkeypatch.setattr("ashare_monitor.import_data.get_all_ip_assets",
                         lambda db_path=None: ips)
+    monkeypatch.setattr("ashare_monitor.import_data.get_ip_meta",
+                        lambda db_path=None: ip_meta)
     checks = check_stock("002594", "比亚迪", "ashare")
     item = next(c for c in checks if c.name == "知识产权")
     assert item.status == "OK"
-    assert "专利 1 件" in str(item.detail)
-    assert "论文 1 篇" in str(item.detail)
+    d = str(item.detail)
+    assert "专利 2 件" in d
+    assert "论文 1 篇" in d
+    assert "有效 1/申请中 1" in d      # 专利质量
+    assert "技术 H01M 为主" in d       # IPC 聚焦
+    assert "近3年 2 件" in d
+    assert "来源 智慧芽" in d          # 数据血缘
+    assert "30 天内更新" in d          # 新鲜度
+
+
+def test_profile_ip_meta(tmp_path, monkeypatch):
+    """get_profile_meta / get_ip_meta：返回 updated + source。"""
+    from ashare_monitor import storage
+    from ashare_monitor.import_data import (
+        get_ip_meta,
+        get_profile_meta,
+        import_company_profile,
+        import_ip_assets,
+    )
+
+    db = str(tmp_path / "meta.db")
+    orig = storage.get_conn
+    monkeypatch.setattr(storage, "get_conn",
+                        lambda db_path=storage.DB_PATH: orig(db_path=db))
+
+    import_company_profile("测试公司", {"规模": "大型"}, db_path=db)
+    import_ip_assets("测试公司", patents=[{"pn": "CN1", "title": "t"}],
+                     db_path=db)
+    pm = get_profile_meta(db_path=db)
+    im = get_ip_meta(db_path=db)
+    assert pm["测试公司"]["source"] == "天眼查"
+    assert pm["测试公司"]["updated"]  # 非空
+    assert im["测试公司"]["source"] == "智慧芽"
+    assert im["测试公司"]["updated"]

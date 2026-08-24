@@ -366,13 +366,16 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
 
     # 15a. 工商画像（天眼查导入，company_profiles）
     try:
-        from .import_data import get_all_company_profiles
+        from .import_data import get_all_company_profiles, get_profile_meta
 
         profiles = get_all_company_profiles()
+        meta = get_profile_meta()
         match = None
+        match_key = None
         for full_name, prof in profiles.items():
             if name in full_name or full_name in name:
                 match = prof
+                match_key = full_name
                 break
         if match:
             detail = []
@@ -389,21 +392,41 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
             status = match.get("经营状态")
             if status:
                 detail.append(status)
+            # 数据血缘 + 新鲜度（元数据）
+            m = (meta.get(match_key) or {}) if match_key else {}
+            src = m.get("source") or match.get("数据源") or "天眼查"
+            detail.append(f"来源 {src}")
+            upd = m.get("updated")
+            if upd:
+                try:
+                    days = (__import__("datetime").date.today()
+                            - __import__("datetime").date.fromisoformat(upd)).days
+                    if days > 90:
+                        detail.append(f"{days} 天前更新，建议回补")
+                    else:
+                        detail.append(f"{days} 天前更新")
+                except ValueError:
+                    pass
             if detail:
                 checks.append(_ok("工商画像", "；".join(detail)))
             else:
                 checks.append(_ok("工商画像", "已导入"))
     except Exception:  # noqa: BLE001
         pass
-    # 15a2. 知识产权（智慧芽导入，ip_assets）
+    # 15a2. 知识产权（智慧芽导入，ip_assets，含质量/新鲜度/血缘）
     try:
-        from .import_data import get_all_ip_assets
+        from collections import Counter
+
+        from .import_data import get_all_ip_assets, get_ip_meta
 
         ip_assets = get_all_ip_assets()
+        ip_meta = get_ip_meta()
         ip_match = None
+        ip_key = None
         for full_name, ip in ip_assets.items():
             if name in full_name or full_name in name:
                 ip_match = ip
+                ip_key = full_name
                 break
         if ip_match:
             np_ = len(ip_match.get("patents") or [])
@@ -413,9 +436,38 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
                 detail.append(f"论文 {na_} 篇")
             pats = ip_match.get("patents") or []
             if pats:
+                # 专利质量：法律状态分布 + IPC 技术分布 + 近 3 年新增
+                status_cnt = Counter(p.get("legal_status") or "unknown"
+                                     for p in pats)
+                act = status_cnt.get("active", 0)
+                pend = status_cnt.get("pending", 0)
+                if act or pend:
+                    detail.append(f"有效 {act}/申请中 {pend}")
+                ipc_cnt = Counter((p.get("ipc") or "")[:4]
+                                  for p in pats if p.get("ipc"))
+                if ipc_cnt:
+                    top_ipc = ipc_cnt.most_common(1)[0][0]
+                    detail.append(f"技术 {top_ipc} 为主")
+                recent = sum(1 for p in pats
+                             if str(p.get("date") or "")[:4] >= "2023")
+                if recent:
+                    detail.append(f"近3年 {recent} 件")
                 latest = max(pats, key=lambda x: str(x.get("date") or ""))
                 detail.append(f"最新 {latest.get('date', '')[:10]} "
-                              f"{str(latest.get('title', ''))[:24]}")
+                              f"{str(latest.get('title', ''))[:18]}")
+            # 数据血缘 + 新鲜度
+            m = (ip_meta.get(ip_key) or {}) if ip_key else {}
+            src = m.get("source") or "智慧芽"
+            detail.append(f"来源 {src}")
+            upd = m.get("updated")
+            if upd:
+                try:
+                    days = (__import__("datetime").date.today()
+                            - __import__("datetime").date.fromisoformat(upd)).days
+                    detail.append("30 天内更新" if days <= 30
+                                  else f"{days} 天前更新，建议回补")
+                except ValueError:
+                    pass
             checks.append(_ok("知识产权", "；".join(detail)))
     except Exception:  # noqa: BLE001
         pass
@@ -433,6 +485,7 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
                 detail += f"（较前日 {chg:+.1f} 亿）"
             if latest.get("rzmre"):
                 detail += f" 买入 {latest['rzmre'] / 1e8:.1f} 亿"
+            detail += "（来源 东财）"
             checks.append(_ok("两融", detail))
         else:
             checks.append(_warn("两融", "数据源受限（如实）"))
@@ -449,9 +502,10 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
             detail = f"未来 90 天 {len(upcoming)} 批，最近 {first['date']}"
             if first.get("ratio_pct"):
                 detail += f"（占比 {first['ratio_pct']}%）"
+            detail += "（来源 东财）"
             checks.append(_warn("解禁", detail))
         else:
-            checks.append(_ok("解禁", "未来 90 天无解禁"))
+            checks.append(_ok("解禁", "未来 90 天无解禁（来源 东财）"))
     except Exception as exc:  # noqa: BLE001
         checks.append(_warn("解禁", f"获取失败：{str(exc)[:30]}"))
     # 16. 龙虎榜

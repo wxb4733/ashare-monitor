@@ -1,6 +1,12 @@
 # ashare-monitor
 
-多市场（A 股 / 港股 / 加密货币）交易信息监控工具：实时行情快照、涨跌幅预警、价格突破提醒。
+[![CI](https://github.com/wxb4733/ashare-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/wxb4733/ashare-monitor/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-353-green.svg)](https://github.com/wxb4733/ashare-monitor/actions)
+[![MCP Tools](https://img.shields.io/badge/MCP%20tools-23-orange.svg)](src/ashare_monitor/mcp_server.py)
+
+多市场（A 股 / 港股 / 美股 / 加密货币）个人投研平台 + 低频自动化交易模拟：
+实时行情监控、涨跌幅预警、选股体检（22 维）、工商画像与知识产权（天眼查/智慧芽回填）、策略回测与模拟盘。
 
 ## 功能
 

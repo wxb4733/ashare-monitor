@@ -22,6 +22,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run tests
+          pip install pytest-cov
+      - name: Run tests with coverage
         run: |
-          python -m pytest tests/ -q
+          python -m pytest tests/ -q --cov=ashare_monitor --cov-report=term-missing
+      - name: Health check (MCP/API surface)
+        run: |
+          python scripts/check_health.py
