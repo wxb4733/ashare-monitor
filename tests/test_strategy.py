@@ -353,24 +353,25 @@ def test_factor_ic_test(tmp_path, monkeypatch):
     from ashare_monitor import strategy
 
     # 两只标的：一只趋势上行、一只横盘
+    drift_map = {"600519": 0.5, "000001": 0.0, "300750": -0.2}
+
     def fake_load(code, market):
         rows = []
         for i in range(120):
             m = 1 + i // 30
             d = i % 30 + 1
-            drift = 0.5 if code == "600519" else 0.0
             rows.append({"date": f"2024-{m:02d}-{d:02d}",
-                         "close": 10.0 + i * drift})
+                         "close": 10.0 + i * drift_map[code]})
         return rows
 
     monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
-    ic = strategy.factor_ic_test(["600519", "000001"],
+    ic = strategy.factor_ic_test(["600519", "000001", "300750"],
                                  "momentum", forward_days=10)
     assert ic["n_days"] > 0
     assert -1.0 <= ic["mean_ic"] <= 1.0
     assert "ic_ir" in ic and "ic_positive_pct" in ic
 
-    q = strategy.factor_quantile_test(["600519", "000001"],
+    q = strategy.factor_quantile_test(["600519", "000001", "300750"],
                                       "momentum", 5, 10)
     assert q["samples"] > 0
     assert len(q["quantiles"]) <= 5
