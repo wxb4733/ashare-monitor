@@ -445,3 +445,64 @@ def analyze_history(rows: list[dict]) -> dict:
         "year_high": year_high,
         "year_low": year_low,
     }
+
+
+def backfill_kline_incremental(codes: list[tuple[str, str]], days: int = 15) -> dict:
+    """K 线增量更新：从库内最新日期起补最近 days 天（幂等）。
+
+    :param codes: [(code, market), ...]
+    :return: {code: (新增条数, 库内总条数)}
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    from .storage import count_klines, load_klines, record_klines
+
+    result: dict[str, tuple[int, int]] = {}
+    for code, market in codes:
+        try:
+            rows = load_klines(code, market)
+            if rows:
+                last = rows[-1]["date"]
+                start = (_dt.strptime(last, "%Y-%m-%d")
+                         - _td(days=days)).strftime("%Y-%m-%d")
+            else:
+                start = _start_date(code, market)
+            if market == "crypto":
+                new_rows = _backfill_kline_binance(code, start)
+            elif market == "us":
+                import akshare as ak
+
+                df = ak.stock_us_daily(symbol=code, adjust="qfq")
+                new_rows = [(str(r["date"])[:10], float(r["open"]),
+                             float(r["close"]), float(r["high"]),
+                             float(r["low"]), float(r["volume"]))
+                            for _, r in df.iterrows()
+                            if str(r["date"])[:10] >= start]
+            elif market == "hk":
+                import akshare as ak
+
+                df = ak.stock_hk_hist(symbol=code[-5:], period="daily",
+                                      start_date=start.replace("-", ""),
+                                      end_date=_dt.now().strftime("%Y%m%d"),
+                                      adjust="qfq")
+                new_rows = [(str(r["日期"])[:10], float(r["开盘"]),
+                             float(r["收盘"]), float(r["最高"]),
+                             float(r["最低"]), float(r["成交量"]))
+                            for _, r in df.iterrows()]
+            else:
+                import akshare as ak
+
+                df = ak.stock_zh_a_hist(symbol=code[-6:], period="daily",
+                                        start_date=start.replace("-", ""),
+                                        end_date=_dt.now().strftime("%Y%m%d"),
+                                        adjust="qfq")
+                new_rows = [(str(r["日期"])[:10], float(r["开盘"]),
+                             float(r["收盘"]), float(r["最高"]),
+                             float(r["最低"]), float(r["成交量"]))
+                            for _, r in df.iterrows()]
+            new = record_klines(new_rows, market, code)
+            result[code] = (new, count_klines(code, market))
+        except Exception as exc:  # noqa: BLE001
+            result[code] = (0, 0)
+            logger.warning("增量更新 %s(%s) 失败: %s", code, market,
+                           str(exc)[:50])
+    return result

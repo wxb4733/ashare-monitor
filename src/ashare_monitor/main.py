@@ -890,6 +890,23 @@ def run_obsidian(action: str, vault: str | None, config_path: str | None) -> Non
         console.print(f"[red]Obsidian 操作失败：{exc}[/red]")
 
 
+def run_backfill_kline(config_path: str | None) -> None:
+    """K 线增量更新：全部自选股补最近 15 天（幂等，每日任务用）。"""
+    from .backfill import backfill_kline_incremental
+
+    cfg = load_config(config_path)
+    codes = [(str(it["code"]), str(it.get("market", "ashare")))
+             for it in cfg.watchlist]
+    console.print(f"[cyan]K 线增量更新 {len(codes)} 只…[/cyan]")
+    result = backfill_kline_incremental(codes)
+    for code, (new, total) in result.items():
+        if new:
+            console.print(f"[green]  {code}: +{new} 根（库内 {total}）[/green]")
+        else:
+            console.print(f"[dim]  {code}: 无新增（库内 {total}）[/dim]")
+    print_disclaimer()
+
+
 def run_backfill(code: str, market: str | None, config_path: str | None,
                  kline: bool, news: bool, financial: bool) -> None:
     """回填标的自上市以来的全量历史数据（行情/公告/研报/财报）。"""
@@ -3801,6 +3818,8 @@ def main() -> None:
     p_backfill.add_argument("--financial", action="store_true", help="仅回填财报")
     p_history = sub.add_parser("history", help="上市以来统计（需先 backfill）")
     p_history.add_argument("code", help="证券代码，如 002594 / 01211")
+    p_kinc = sub.add_parser("backfill_kline",
+                           help="K 线增量更新（每日任务）")
     p_history.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                            help="市场（缺省按代码位数推断）")
     p_bt = sub.add_parser("backtest", help="持有期回测（买入日/金额/持有交易日数）")
@@ -4107,6 +4126,8 @@ def main() -> None:
                       "review 生成时自动执行[/dim]")
     elif args.command == "obsidian":
         run_obsidian(args.action, args.vault, args.config)
+    elif args.command == "backfill_kline":
+        run_backfill_kline(args.config)
     elif args.command == "backfill":
         run_backfill(args.code, args.market, args.config,
                      args.kline, args.news, args.financial)

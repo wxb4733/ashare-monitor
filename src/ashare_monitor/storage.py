@@ -490,9 +490,11 @@ def load_klines(
 def count_klines(code: str, market: str = "ashare", db_path: str | Path = DB_PATH) -> int:
     conn = _connect(db_path)
     try:
+        # 同 load_klines：仅数字代码截断 6 位，交易对用完整代码
+        query_code = code[-6:] if code.isdigit() else code
         return conn.execute(
             "SELECT COUNT(*) FROM klines WHERE market=? AND code=?",
-            (market, code[-6:]),
+            (market, query_code),
         ).fetchone()[0]
     finally:
         conn.close()

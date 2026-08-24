@@ -7,6 +7,8 @@ PY="${PYTHON:-.venv/Scripts/python.exe}"
 CFG="--config config.local.yaml"
 
 echo "[daily] $(date '+%Y-%m-%d %H:%M') 开始"
+# 0. K 线增量更新（幂等，补最新交易日）
+"$PY" -m ashare_monitor.main $CFG backfill_kline 2>/dev/null | tail -10 || true
 # 1. 盘中异动监控（收盘后跑当日信号）
 "$PY" -m ashare_monitor.main $CFG monitor 2>/dev/null | tail -20 || true
 # 2. 多视角日报（四市场）
