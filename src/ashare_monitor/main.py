@@ -2164,7 +2164,9 @@ def run_ad(sub: str, codes: str, config_path: str | None) -> None:
 
 def run_strategy_rebalance(strategy_name: str, config_path: str | None,
                            capital: float, top_n: int,
-                           min_yield: float, paper: bool) -> None:
+                           min_yield: float, paper: bool,
+                           commission_bps: float = 0.0,
+                           stamp_duty_bps: float = 0.0) -> None:
     """月度再平衡：新目标持仓 vs 当前持仓 → 差额指令 → 模拟执行。"""
     from .strategy import (
         dividend_strategy,
@@ -2213,7 +2215,9 @@ def run_strategy_rebalance(strategy_name: str, config_path: str | None,
     print_disclaimer()
     if paper:
         console.print("[cyan]执行再平衡（paper）…[/cyan]")
-        result = execute_rebalance(orders)
+        result = execute_rebalance(
+            orders, cash=capital if paper else None,
+            commission_bps=commission_bps, stamp_duty_bps=stamp_duty_bps)
         buys = result["buy"]["fills"]
         console.print(f"[green]买入 {len(buys)} 笔（成本 {result['buy']['total_cost']:,.0f} 元）；"
                       f"卖出 {len(result['sell'])} 笔[/green]")
@@ -2292,7 +2296,8 @@ def run_strategy_backtest(codes: str, config_path: str | None,
 
 def run_strategy(strategy: str, config_path: str | None, capital: float,
                top_n: int, min_yield: float, paper: bool,
-               dry_run: bool = False) -> None:
+               dry_run: bool = False, commission_bps: float = 0.0,
+               stamp_duty_bps: float = 0.0) -> None:
     """低频策略：选股器输出 → 目标持仓 → 模拟交易。"""
     from .strategy import (
         dividend_strategy,
@@ -2334,7 +2339,10 @@ def run_strategy(strategy: str, config_path: str | None, capital: float,
     print_disclaimer()
     if paper:
         console.print("[cyan]模拟执行（paper trading）…[/cyan]")
-        result = execute_paper_trade(targets, dry_run=dry_run)
+        result = execute_paper_trade(
+            targets, dry_run=dry_run,
+            cash=capital if paper else None,
+            commission_bps=commission_bps, stamp_duty_bps=stamp_duty_bps)
         if result["fills"]:
             ft = Table(title=f"模拟成交 {len(result['fills'])} 笔（成本 {result['total_cost']:,.0f} 元）")
             ft.add_column("代码", justify="left")
@@ -4259,10 +4267,10 @@ def main() -> None:
     p_bd.add_argument("--report", action="store_true", help="生成报告")
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
     p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance",
-                                            "status", "risk", "track",
-                                            "breaker", "factor"],
-                      help="策略：dividend/backtest/rebalance/status/risk/"
-                           "track 净值跟踪/breaker 组合熔断")
+                                            "status", "orders", "risk",
+                                            "track", "breaker", "factor"],
+                      help="策略：dividend/backtest/rebalance/status/"
+                           "orders 订单历史/risk/track/breaker/factor")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
@@ -4293,6 +4301,10 @@ def main() -> None:
                       help="执行模拟买入（paper trading）")
     p_st.add_argument("--dry-run", action="store_true",
                       help="只算成交不落库（配合 --paper）")
+    p_st.add_argument("--commission", type=float, default=0.0,
+                      help="佣金（万分比，A 股参考 2.5=万 2.5；默认 0 关闭）")
+    p_st.add_argument("--stamp", type=float, default=0.0,
+                      help="印花税（卖出万分比，A 股参考 5=0.05%；默认 0）")
     p_dr = sub.add_parser("dividend_rank",
                           help="股息率榜单时长（占据高股息榜最久的股票）")
     p_dr.add_argument("--years", type=int, default=15,
@@ -4614,6 +4626,40 @@ def main() -> None:
             color = "red" if pnl > 0 else "green"
             console.print(f"[bold]组合总盈亏 [{color}]{rep['pnl']:+,.0f} 元"
                           f"（{pnl:+.2f}%）[/{color}][/bold]")
+            console.print(f"现金 {rep['cash']:,.0f} 元 ｜ 净资产"
+                          f"（现金+持仓）{rep['equity']:,.0f} 元")
+            print_disclaimer()
+            return
+        if args.strategy == "orders":
+            from .broker import PaperBroker
+
+            broker = PaperBroker.load()
+            console.print(f"[cyan]账户：现金 {broker.cash:,.0f} 元 ｜ "
+                          f"持仓 {len(broker.positions)} 只 ｜ "
+                          f"净资产 {broker.equity():,.0f} 元"
+                          f"（无现价按成本近似）[/cyan]")
+            orders = list(reversed(broker.orders[-30:]))
+            table = Table(title=f"订单历史（最近 {len(orders)} 笔，"
+                                f"状态机：New→Filled/Rejected）")
+            table.add_column("ID", justify="left")
+            table.add_column("代码", justify="left")
+            table.add_column("名称", justify="left")
+            table.add_column("方向", justify="left")
+            table.add_column("股数", justify="right")
+            table.add_column("价格", justify="right")
+            table.add_column("费用", justify="right")
+            table.add_column("状态", justify="left")
+            table.add_column("原因", justify="left")
+            for o in orders:
+                st_color = ("green" if o["status"] == "Filled"
+                            else "red" if o["status"] == "Rejected"
+                            else "yellow")
+                table.add_row(str(o["id"]), o["code"], o["name"], o["side"],
+                              str(o["shares"]), f"{o['price']:.2f}",
+                              f"{o['fee']:.2f}",
+                              f"[{st_color}]{o['status']}[/{st_color}]",
+                              str(o["reason"] or ""))
+            console.print(table)
             print_disclaimer()
             return
         if args.strategy == "backtest":
@@ -4623,11 +4669,15 @@ def main() -> None:
                                   getattr(args, "cost", 5.0))
         elif args.strategy == "rebalance":
             run_strategy_rebalance("dividend", args.config, args.capital,
-                                   args.top, args.min_yield, args.paper)
+                                   args.top, args.min_yield, args.paper,
+                                   getattr(args, "commission", 0.0),
+                                   getattr(args, "stamp", 0.0))
         else:
             run_strategy(args.strategy, args.config, args.capital, args.top,
                          args.min_yield, args.paper,
-                         getattr(args, "dry_run", False))
+                         getattr(args, "dry_run", False),
+                         getattr(args, "commission", 0.0),
+                         getattr(args, "stamp", 0.0))
     elif args.command == "backfill_indicators":
         run_backfill_indicators(args.code or None, args.config,
                                 report=args.report)

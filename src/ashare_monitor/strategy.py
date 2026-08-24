@@ -47,13 +47,21 @@ def dividend_strategy(top_n: int = 10, capital: float = 100_000.0,
 
 
 def execute_paper_trade(targets: list[TargetPosition],
-                        dry_run: bool = False) -> dict:
-    """按现价模拟买入（整手），入库 paper_positions + paper_trades。
+                        dry_run: bool = False,
+                        cash: float | None = None,
+                        commission_bps: float = 0.0,
+                        stamp_duty_bps: float = 0.0) -> dict:
+    """按现价模拟买入（整手），走 PaperBroker（现金账户 + 订单状态机）。
 
-    :return: {"fills": [...], "total_cost": float, "rejected": [...]}
+    :param cash: 注入资金（None=保留账户现金；旧账户无现金记录时给宽松额度）
+    :param commission_bps: 佣金（万分比，A 股参考 2.5=万 2.5）
+    :param stamp_duty_bps: 印花税（卖出，万分比，A 股参考 5=0.05%）
+    :return: {"fills": [...], "total_cost": float, "rejected": [...],
+              "cash": float}
     """
     import sqlite3
 
+    from .broker import PaperBroker
     from .quotes import fetch_spot_quotes
     from .storage import get_conn
 
@@ -65,32 +73,47 @@ def execute_paper_trade(targets: list[TargetPosition],
     except Exception as exc:  # noqa: BLE001
         logger.warning("行情获取失败: %s", exc)
 
-    fills, rejected = [], []
-    total = 0.0
+    broker = PaperBroker.load()
+    broker.commission_bps = commission_bps
+    broker.stamp_duty_bps = stamp_duty_bps
+    if cash is not None:
+        broker.cash += cash                        # 注入资金（追加）
+    elif broker.cash <= 0:
+        broker.cash = 1_000_000.0                  # 旧账户无现金记录 → 宽松额度（如实）
+
     for t in targets:
         q = quotes.get(t.code)
         if q is None or not q.price:
-            rejected.append({"code": t.code, "name": t.name, "reason": "行情缺失"})
+            broker.place_order(t.code, t.name, "buy", 0, 0.0,
+                               reason="行情缺失")
             continue
         shares = int(t.target_value // q.price // 100) * 100  # 整手
         if shares <= 0:
-            rejected.append({"code": t.code, "name": t.name,
-                             "reason": f"资金不足一手（价 {q.price:.2f}）"})
+            broker.place_order(t.code, t.name, "buy", 0, 0.0,
+                               reason=f"资金不足一手（价 {q.price:.2f}）")
             continue
-        cost = shares * q.price
-        total += cost
-        fills.append({"code": t.code, "name": t.name, "shares": shares,
-                      "price": round(q.price, 2), "cost": round(cost, 2),
-                      "date": datetime.now().strftime("%Y-%m-%d")})
+        reason = "新进" if not broker.positions.get(t.code) else "加仓"
+        broker.place_order(t.code, t.name, "buy", shares, q.price,
+                           reason=reason)
+    processed = broker.process_orders()
+
+    fills, rejected = [], []
+    for o in processed:
+        if o["status"] == "Filled":
+            fills.append({"code": o["code"], "name": o["name"],
+                          "shares": o["shares"], "price": o["price"],
+                          "cost": round(o["shares"] * o["price"], 2),
+                          "fee": o["fee"],
+                          "date": datetime.now().strftime("%Y-%m-%d")})
+        else:
+            rejected.append({"code": o["code"], "name": o["name"],
+                             "reason": o["reason"] or "资金不足"})
+    total = sum(f["cost"] for f in fills)
     if not dry_run:
+        broker.save()
         conn = get_conn()
         conn.row_factory = sqlite3.Row
         with conn:
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS paper_positions (
-                    code TEXT PRIMARY KEY, name TEXT, shares INTEGER,
-                    avg_cost REAL, updated TEXT)"""
-            )
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS paper_trades (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,20 +122,13 @@ def execute_paper_trade(targets: list[TargetPosition],
             )
             for f in fills:
                 conn.execute(
-                    "INSERT OR REPLACE INTO paper_positions "
-                    "(code, name, shares, avg_cost, updated) VALUES (?,?,?,?,?)",
-                    (f["code"], f["name"], f["shares"], f["price"],
-                     f["date"]))
-                conn.execute(
                     "INSERT INTO paper_trades "
                     "(code, name, side, shares, price, cost, trade_date) "
                     "VALUES (?,?,?,?,?,?,?)",
                     (f["code"], f["name"], "buy", f["shares"], f["price"],
                      f["cost"], f["date"]))
     return {"fills": fills, "total_cost": round(total, 2),
-            "rejected": rejected}
-
-
+            "rejected": rejected, "cash": round(broker.cash, 2)}
 def load_paper_positions() -> list[dict]:
     """读取模拟持仓。"""
     import sqlite3
@@ -274,24 +290,43 @@ def rebalance_orders(targets: list[TargetPosition],
     return orders
 
 
-def execute_rebalance(orders: list[dict]) -> dict:
-    """执行差额指令：买入复用 execute_paper_trade；卖出更新持仓。"""
+def execute_rebalance(orders: list[dict], cash: float | None = None,
+                      commission_bps: float = 0.0,
+                      stamp_duty_bps: float = 0.0) -> dict:
+    """执行差额指令（走 PaperBroker：买/卖统一订单状态机 + 现金账户）。"""
     import sqlite3
 
+    from .broker import PaperBroker
     from .storage import get_conn
 
-    buy_targets = [TargetPosition(o["code"], o["name"],
-                                  round(o["value"] / max(sum(
-                                      x["value"] for x in orders if x["side"] == "buy"
-                                      ), 1) * 100, 2), o["value"])
-                   for o in orders if o["side"] == "buy"]
-    buy_result = execute_paper_trade(buy_targets) if buy_targets else \
-        {"fills": [], "total_cost": 0.0, "rejected": []}
+    broker = PaperBroker.load()
+    broker.commission_bps = commission_bps
+    broker.stamp_duty_bps = stamp_duty_bps
+    if cash is not None:
+        broker.cash += cash
+    elif broker.cash <= 0:
+        broker.cash = 1_000_000.0                  # 旧账户无现金记录 → 宽松额度
 
-    sells = [o for o in orders if o["side"] == "sell"]
+    for o in orders:
+        if o["side"] == "hold":
+            continue
+        broker.place_order(o["code"], o["name"], o["side"], o["shares"],
+                           o["price"], reason=o["reason"])
+    processed = broker.process_orders()
+    broker.save()
+
+    buys, sells = [], []
+    for o in processed:
+        if o["status"] != "Filled":
+            continue
+        rec = {"code": o["code"], "name": o["name"], "side": o["side"],
+               "shares": o["shares"], "price": o["price"],
+               "value": round(o["shares"] * o["price"], 2),
+               "fee": o["fee"], "reason": o["reason"]}
+        (buys if o["side"] == "buy" else sells).append(rec)
+    # 交易日志（兼容 paper_trades）
     conn = get_conn()
     conn.row_factory = sqlite3.Row
-    sold = []
     with conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS paper_trades (
@@ -299,31 +334,22 @@ def execute_rebalance(orders: list[dict]) -> dict:
                 code TEXT, name TEXT, side TEXT, shares INTEGER,
                 price REAL, cost REAL, trade_date TEXT)"""
         )
-        for o in sells:
-            cur = conn.execute(
-                "SELECT * FROM paper_positions WHERE code=?",
-                (o["code"],)).fetchone()
-            if not cur:
+        for o in processed:
+            if o["status"] != "Filled":
                 continue
-            remaining = cur["shares"] - o["shares"]
-            if remaining <= 0:
-                conn.execute("DELETE FROM paper_positions WHERE code=?",
-                             (o["code"],))
-            else:
-                conn.execute(
-                    "UPDATE paper_positions SET shares=?, updated=? "
-                    "WHERE code=?",
-                    (remaining, o["reason"], o["code"]))
             conn.execute(
                 "INSERT INTO paper_trades "
                 "(code, name, side, shares, price, cost, trade_date) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (o["code"], o["name"], "sell", o["shares"], o["price"],
-                 o["value"], datetime.now().strftime("%Y-%m-%d")))
-            sold.append(o)
-    return {"buy": buy_result, "sell": sold}
-
-
+                (o["code"], o["name"], o["side"], o["shares"], o["price"],
+                 round(o["shares"] * o["price"], 2),
+                 datetime.now().strftime("%Y-%m-%d")))
+    buy_result = {"fills": buys,
+                  "total_cost": round(sum(b["value"] for b in buys), 2),
+                  "rejected": [o for o in processed
+                               if o["status"] == "Rejected"]}
+    return {"buy": buy_result, "sell": sells,
+            "cash": round(broker.cash, 2)}
 # ===================== 风控层（低频交易生命线） =====================
 
 # 规则：单标的上限 / ST 退市黑名单 / 最小市值过滤。
@@ -388,10 +414,14 @@ def paper_report() -> dict:
     """模拟持仓市值/盈亏报告（现价×股数 vs 成本）。"""
     from .quotes import fetch_spot_quotes
 
+    from .broker import PaperBroker
+
     pos = load_paper_positions()
+    broker = PaperBroker.load()
     if not pos:
         return {"positions": [], "total_cost": 0.0, "total_value": 0.0,
-                "pnl": 0.0, "pnl_pct": 0.0}
+                "pnl": 0.0, "pnl_pct": 0.0, "cash": round(broker.cash, 2),
+                "equity": round(broker.cash, 2)}
     quotes = {}
     try:
         qs, _ = fetch_spot_quotes([p["code"] for p in pos], market="ashare")
@@ -418,7 +448,9 @@ def paper_report() -> dict:
             "total_value": round(total_value, 2),
             "pnl": round(total_value - total_cost, 2),
             "pnl_pct": round((total_value / total_cost - 1) * 100, 2)
-            if total_cost else 0.0}
+            if total_cost else 0.0,
+            "cash": round(broker.cash, 2),
+            "equity": round(broker.cash + total_value, 2)}
 
 
 # ===================== 止损风控（单标的止损检查） =====================

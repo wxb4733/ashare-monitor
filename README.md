@@ -634,3 +634,13 @@ python -m ashare_monitor.main strategy factor --expr "(close/Ref(close,60)-1)*10
 # 自定义因子：复制 factors.example.yaml 为 factors.local.yaml（同名覆盖内置）
 # 求值 O(n)（滚动窗口 deque 增量）；内置 momentum/rsi/volatility 与旧实现数值零偏差
 # 真实：60 日动量因子 IC 0.0118（零代码改动检验新因子）
+
+# 模拟经纪人（backtrader 模式：现金账户 + 订单状态机）
+python -m ashare_monitor.main strategy orders          # 订单历史（状态机）+ 现金/净资产
+python -m ashare_monitor.main strategy status          # 持仓盈亏 + 现金 + 净资产
+python -m ashare_monitor.main strategy dividend --paper --commission 2.5 --stamp 5   # 真实费率
+# 状态机：New → Filled / Rejected（资金不足/持仓不足）/ Canceled
+# 现金账户：买入扣款（含佣金）、卖出入账（扣佣金+印花税）；净资产=现金+持仓市值
+# 佣金：--commission 万分数（A 股参考 2.5=万2.5）/ --stamp 印花税卖出（5=0.05%）
+# 默认 0（与历史行为零变化）；旧仓位无现金记录 → 现金 0（如实），注入 --capital 开始记账
+# 真实：平安银行 11.56 元 买卖各 1 笔 + 超持仓拒单，佣金 0.29/0.35 元精确
