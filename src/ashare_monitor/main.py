@@ -4268,7 +4268,13 @@ def main() -> None:
     p_st.add_argument("--start", default=None,
                       help="backtest：起始日期 YYYY-MM-DD（默认全历史）")
     p_st.add_argument("--factor-name", dest="factor_name", default="momentum",
-                      help="factor：momentum/rsi/volatility")
+                      help="factor：因子名（内置 momentum/rsi/volatility 或 "
+                           "factors.local.yaml 自定义，默认 momentum）")
+    p_st.add_argument("--expr", default=None,
+                      help="factor：直接传表达式，如 (close/Ref(close,60)-1)*100"
+                           "（优先于 --factor-name）")
+    p_st.add_argument("--list", action="store_true",
+                      help="factor：列出全部可用因子表达式")
     p_st.add_argument("--forward", type=int, default=20,
                       help="factor：未来收益天数")
     p_st.add_argument("--rebalance", action="store_true",
@@ -4468,6 +4474,26 @@ def main() -> None:
                              if str(it.get("market", "ashare")) == "ashare"]
             fname = getattr(args, "factor_name", "momentum")
             fwd = getattr(args, "forward", 20)
+            if getattr(args, "list", False):
+                from .factor_dsl import load_factor_exprs
+
+                exprs = load_factor_exprs()
+                table = Table(title=f"可用因子表达式（{len(exprs)} 个）")
+                table.add_column("名称", justify="left")
+                table.add_column("表达式", justify="left")
+                table.add_column("来源", justify="left")
+                for name, e in sorted(exprs.items()):
+                    src = ("内置" if name in ("momentum", "rsi", "volatility")
+                           else "yaml")
+                    table.add_row(name, e, src)
+                console.print(table)
+                console.print("[dim]用法：strategy factor --factor-name <名> "
+                              "或 --expr '<表达式>'[/dim]")
+                print_disclaimer()
+                return
+            expr = getattr(args, "expr", None)
+            if expr:
+                fname = expr   # 直接表达式优先
             console.print(f"[cyan]因子检验 {fname}（{len(code_list)} 只，"
                           f"forward {fwd} 天）…[/cyan]")
             try:

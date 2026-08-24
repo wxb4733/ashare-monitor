@@ -624,3 +624,13 @@ python -m ashare_monitor.main strategy factor --factor-name momentum \
 # 真实：动量因子在自选股 IC 0.04/IC_IR 0.06/无单调分层 → 检验为无效（如实）
 # 因子：momentum / rsi / volatility（可扩展）
 # 意义：选股前先验因子有效性，淘汰无效因子（stock-panel 同类能力）
+
+# 因子表达式 DSL（qlib 模式，因子可配置化）
+python -m ashare_monitor.main strategy factor --list      # 列出全部因子
+python -m ashare_monitor.main strategy factor --factor-name momentum60 --codes ...
+python -m ashare_monitor.main strategy factor --expr "(close/Ref(close,60)-1)*100" --codes ...
+# DSL 语法：字段 close/open/high/low/volume + 函数 Ref/SMA/EMA/RSI/STD/SUM/MEAN/MAX/MIN/
+#   ABS/SQRT/SIGN/LOG + 运算 + - * / % ** 与比较
+# 自定义因子：复制 factors.example.yaml 为 factors.local.yaml（同名覆盖内置）
+# 求值 O(n)（滚动窗口 deque 增量）；内置 momentum/rsi/volatility 与旧实现数值零偏差
+# 真实：60 日动量因子 IC 0.0118（零代码改动检验新因子）

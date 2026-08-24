@@ -360,8 +360,9 @@ def test_factor_ic_test(tmp_path, monkeypatch):
         for i in range(120):
             m = 1 + i // 30
             d = i % 30 + 1
-            rows.append({"date": f"2024-{m:02d}-{d:02d}",
-                         "close": 10.0 + i * drift_map[code]})
+            c = 10.0 + i * drift_map[code]
+            rows.append({"date": f"2024-{m:02d}-{d:02d}", "open": c,
+                         "close": c, "high": c, "low": c, "volume": 1000.0})
         return rows
 
     monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)

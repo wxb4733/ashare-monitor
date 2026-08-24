@@ -1,0 +1,35 @@
+# 因子表达式配置（qlib 风格 DSL，轻量实现）
+#
+# 语法：字段 close/open/high/low/volume + 常量 + 函数 + 运算符
+#   函数：Ref(x,n) SMA(x,n) EMA(x,n) RSI(x,n) STD(x,n)
+#         SUM(x,n) MEAN(x,n) MAX(x,n) MIN(x,n) ABS(x) SQRT(x) SIGN(x)
+#   运算：+ - * / % ** 与比较 > < >= <= ==（比较返回 1.0/0.0）
+#
+# 内置因子（momentum/rsi/volatility）同名即覆盖——例如想改动量窗口：
+#   momentum: "(close/Ref(close,60)-1)*100"
+#
+# 用法：
+#   python -m ashare_monitor.main strategy factor --factor-name momentum20 --codes 600519,000001,300750,002594
+#   python -m ashare_monitor.main strategy factor --expr "(close/Ref(close,60)-1)*100" --codes ...
+#
+# 复制本文件为 factors.local.yaml 自定义（gitignore 推荐），example 文件不覆盖。
+
+factors:
+  # 动量族（不同窗口）
+  momentum20: "(close/Ref(close,20)-1)*100"
+  momentum60: "(close/Ref(close,60)-1)*100"
+
+  # 波动率族（年化%）
+  vol60: "STD(close/Ref(close,1)-1,60)*SQRT(252)*100"
+
+  # 短周期 RSI（超买超卖更敏感）
+  rsi_short: "RSI(close,6)"
+
+  # 均线结构（多头排列 > 0）
+  sma_cross: "SMA(close,5)-SMA(close,20)"
+
+  # 上影线比例（抛压信号，0~1）
+  upper_shadow: "(high-MAX(open,close))/(high-low+0.000001)"
+
+  # 量能放大（当日成交 vs 20 日均量，>1 放量）
+  vol_ratio: "volume/MEAN(volume,20)"

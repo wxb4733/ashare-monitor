@@ -736,43 +736,14 @@ def _spearman(x: list[float], y: list[float]) -> float:
     return cov / (sx * sy) if sx and sy else 0.0
 
 
-def _momentum_factor(rows: list[dict], lookback: int = 20) -> dict:
-    """动量因子：lookback 日涨幅（每日期值）。返回 {date: value}。"""
-    closes = [float(r["close"]) for r in rows]
-    out = {}
-    for i in range(lookback, len(rows)):
-        base = closes[i - lookback]
-        if base:
-            out[rows[i]["date"]] = (closes[i] / base - 1) * 100
-    return out
-
-
-def _rsi_factor(rows: list[dict], n: int = 14) -> dict:
-    """RSI 因子（每日期值，越接近 100 越超买）。"""
-    from .timing import _rsi_series
-
-    closes = [float(r["close"]) for r in rows]
-    rsi = _rsi_series(closes, n)
-    return {rows[i]["date"]: v for i, v in enumerate(rsi) if v is not None}
-
-
-def _vol_factor(rows: list[dict], lookback: int = 20) -> dict:
-    """波动率因子：lookback 日收益标准差（年化%）。"""
-    closes = [float(r["close"]) for r in rows]
-    out = {}
-    for i in range(lookback, len(rows)):
-        rets = [(closes[j] / closes[j - 1] - 1)
-                for j in range(i - lookback + 1, i + 1)]
-        mean = sum(rets) / len(rets)
-        var = sum((r - mean) ** 2 for r in rets) / len(rets)
-        out[rows[i]["date"]] = var ** 0.5 * (252 ** 0.5) * 100
-    return out
-
+# 因子函数统一来自表达式 DSL（factor_dsl）——内置 + factors.local.yaml 可覆盖。
+# 兼容层：FACTOR_FNS 保留名字 → fn 映射（内部即 DSL 求值），
+# 自定义因子走 get_factor_fn（yaml 或 --expr）。
+from .factor_dsl import BUILTIN_EXPRS, eval_factor_expr
 
 FACTOR_FNS = {
-    "momentum": lambda rows: _momentum_factor(rows),
-    "rsi": lambda rows: _rsi_factor(rows),
-    "volatility": lambda rows: _vol_factor(rows),
+    name: (lambda rows, e=e: eval_factor_expr(e, rows))
+    for name, e in BUILTIN_EXPRS.items()
 }
 
 
@@ -784,9 +755,12 @@ def factor_ic_test(codes: list[str], factor: str = "momentum",
     """
     from .storage import load_klines
 
-    if factor not in FACTOR_FNS:
-        raise RuntimeError(f"因子 {factor} 未注册（可选：momentum/rsi/volatility）")
-    fn = FACTOR_FNS[factor]
+    if factor in FACTOR_FNS:
+        fn = FACTOR_FNS[factor]
+    else:
+        from .factor_dsl import get_factor_fn
+
+        _, fn = get_factor_fn(factor)   # yaml 自定义 / 直接表达式
     # 面板：每个标的的 {date: factor_value} 与 {date: close}
     fvals: dict[str, dict[str, float]] = {}
     closes: dict[str, dict[str, float]] = {}
@@ -839,9 +813,12 @@ def factor_quantile_test(codes: list[str], factor: str = "momentum",
     """因子分层检验：按因子值 5 分位 → 各层未来收益 → 单调性 + 多空。"""
     from .storage import load_klines
 
-    if factor not in FACTOR_FNS:
-        raise RuntimeError(f"因子 {factor} 未注册")
-    fn = FACTOR_FNS[factor]
+    if factor in FACTOR_FNS:
+        fn = FACTOR_FNS[factor]
+    else:
+        from .factor_dsl import get_factor_fn
+
+        _, fn = get_factor_fn(factor)
     closes: dict[str, dict[str, float]] = {}
     fvals: dict[str, dict[str, float]] = {}
     for c in codes:
