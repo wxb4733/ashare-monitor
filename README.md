@@ -593,3 +593,12 @@ python -m ashare_monitor.main strategy breaker   # 组合熔断检查（-20% 停
 # 每日跟踪：strategy track（paper_history 净值）
 # 风控：周日 strategy risk（-15% 止损）+ strategy breaker（-20% 熔断）
 # 月度：strategy rebalance（差额调仓，自动过熔断）
+
+# 本机每日/每周任务（数据积累）
+# 一次性：把 config.local.yaml 放到项目根（含自选股），然后：
+bash scripts/run_daily.sh    # 工作日 15:40 后：monitor + 日报 + 净值跟踪
+bash scripts/run_weekly.sh   # 周日 20:00：止损/熔断 + 周报 + 净值
+# Windows 自动调度（管理员）：
+scripts/setup_schedule_windows.bat
+# 验证：schtasks /Query /TN "ashare-daily"
+# 数据积累：data/ashare_monitor.db（klines/paper_positions/paper_history/...）
