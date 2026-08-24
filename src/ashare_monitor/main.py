@@ -1964,6 +1964,78 @@ def run_backfill_indicators(code: str | None, config_path: str | None,
         console.print(f"[green]指标历史报告已生成: {out_path}[/green]")
 
 
+def run_ad(sub: str, codes: str, config_path: str | None) -> None:
+    """A 股全栈数据查询（融合 a-stock-data：腾讯富行情/热点/龙虎榜/解禁）。"""
+    from . import a_stock_data as ad
+
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    try:
+        if sub == "quote":
+            if not code_list:
+                console.print("[red]需指定代码：ad quote 600519[/red]")
+                return
+            q = ad.tencent_quote_rich(code_list)
+            table = Table(title=f"腾讯富字段行情（{len(q)} 只）")
+            table.add_column("代码", justify="left")
+            table.add_column("名称", justify="left")
+            table.add_column("现价", justify="right")
+            table.add_column("涨跌%", justify="right")
+            table.add_column("PE(TTM)", justify="right")
+            table.add_column("PB", justify="right")
+            table.add_column("总市值(亿)", justify="right")
+            table.add_column("换手%", justify="right")
+            for code, v in q.items():
+                table.add_row(code, v["name"],
+                              f"{v['price']:.2f}" if v["price"] else "-",
+                              f"{v['change_pct']:+.2f}" if v["change_pct"] else "-",
+                              f"{v['pe_ttm']:.1f}" if v["pe_ttm"] else "-",
+                              f"{v['pb']:.2f}" if v["pb"] else "-",
+                              f"{v['mcap_yi']:,.0f}" if v["mcap_yi"] else "-",
+                              f"{v['turnover_pct']:.2f}" if v["turnover_pct"] else "-")
+            console.print(table)
+        elif sub == "hot":
+            hot = ad.ths_hot_reason()
+            console.print(f"[cyan]同花顺当日强势股 {len(hot)} 只[/cyan]")
+            table = Table(title="当日强势股 + 题材归因（TOP 20）")
+            table.add_column("代码", justify="left")
+            table.add_column("名称", justify="left")
+            table.add_column("涨幅%", justify="right")
+            table.add_column("题材归因", justify="left")
+            for h in hot[:20]:
+                table.add_row(h["code"], h["name"],
+                              f"{h['change_pct']:.2f}" if h["change_pct"] else "-",
+                              str(h["reason"] or "-"))
+            console.print(table)
+        elif sub == "lhb":
+            if not code_list:
+                console.print("[red]需指定代码：ad lhb 002594[/red]")
+                return
+            for code in code_list:
+                data = ad.dragon_tiger_board(code, datetime.now().strftime("%Y-%m-%d"))
+                console.print(f"[cyan]{code} 近 30 日上榜 {len(data['records'])} 次[/cyan]")
+                for r in data["records"][:5]:
+                    console.print(f"  {r['date']}: {r['reason']} 净买 {r['net_buy_wan']} 万")
+                inst = data["institution"]
+                console.print(f"  机构: 买 {inst['buy_wan']} 万 / 卖 {inst['sell_wan']} 万"
+                              f" / 净 {inst['net_wan']} 万")
+        elif sub == "unlock":
+            if not code_list:
+                console.print("[red]需指定代码：ad unlock 002594[/red]")
+                return
+            for code in code_list:
+                data = ad.lockup_expiry(code)
+                console.print(f"[cyan]{code} 未来 90 天待解禁 {len(data['upcoming'])} 批[/cyan]")
+                for u in data["upcoming"][:10]:
+                    console.print(f"  {u['date']}: {u['type']} {u['shares']} 股"
+                                  f"（占比 {u['ratio_pct']}%）")
+        else:
+            console.print("[red]ad 子命令：quote / hot / lhb / unlock[/red]")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{exc}[/red]")
+        console.print("[dim]提示：同花顺/东财接口在部分网络受限（如实），本机直连通常可用[/dim]")
+    print_disclaimer()
+
+
 def run_strategy_rebalance(strategy_name: str, config_path: str | None,
                            capital: float, top_n: int,
                            min_yield: float, paper: bool) -> None:
@@ -3820,6 +3892,11 @@ def main() -> None:
     p_history.add_argument("code", help="证券代码，如 002594 / 01211")
     p_kinc = sub.add_parser("backfill_kline",
                            help="K 线增量更新（每日任务）")
+    p_ad = sub.add_parser("ad", help="A 股全栈数据（融合 a-stock-data）")
+    p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock"],
+                      help="quote 富字段行情 / hot 热点题材 / lhb 龙虎榜 / "
+                           "unlock 解禁")
+    p_ad.add_argument("codes", nargs="?", default="", help="代码（逗号分隔）")
     p_history.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                            help="市场（缺省按代码位数推断）")
     p_bt = sub.add_parser("backtest", help="持有期回测（买入日/金额/持有交易日数）")
@@ -4126,6 +4203,8 @@ def main() -> None:
                       "review 生成时自动执行[/dim]")
     elif args.command == "obsidian":
         run_obsidian(args.action, args.vault, args.config)
+    elif args.command == "ad":
+        run_ad(args.sub, args.codes, args.config)
     elif args.command == "backfill_kline":
         run_backfill_kline(args.config)
     elif args.command == "backfill":

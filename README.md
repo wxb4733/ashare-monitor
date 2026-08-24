@@ -602,3 +602,11 @@ bash scripts/run_weekly.sh   # 周日 20:00：止损/熔断 + 周报 + 净值
 scripts/setup_schedule_windows.bat
 # 验证：schtasks /Query /TN "ashare-daily"
 # 数据积累：data/ashare_monitor.db（klines/paper_positions/paper_history/...）
+
+# A 股全栈数据融合（a-stock-data V3.2.3 核心能力）
+# 来源：github.com/simonlin1212/a-stock-data（Simon 林，感谢作者）
+python -m ashare_monitor.main ad quote 600519,002594   # 腾讯富字段 PE/PB/市值
+python -m ashare_monitor.main ad hot                    # 同花顺强势股+题材归因
+python -m ashare_monitor.main ad lhb 002594             # 龙虎榜席位+机构动向
+python -m ashare_monitor.main ad unlock 002594          # 限售解禁日历（90 天）
+# 融合：em_get 东财节流（防封）/腾讯不封IP富行情/同花顺热点/东财 datacenter
