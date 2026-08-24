@@ -677,3 +677,10 @@ python -m ashare_monitor.main strategy backtest --codes 600519,000001,300750,002
 #   （semi_annual+0bp 夏普 0.95/年化 32.78%，月度 26-28%——再平衡频率再验证）
 # 统计 4→9 项：+Sortino/日胜率/盈亏比/最佳日/最差日（pyfolio 模式）
 # --report：output/backtest-*.html（净值曲线 SVG + 月度热力图，纯标准库零依赖）
+
+# 诊断可视化补全（水下曲线 + 模拟净值报告）
+python -m ashare_monitor.main strategy backtest --codes ... --rebalance --report
+# 回测报告新增"水下曲线"（回撤面积图 + 最深回撤标注，pyfolio 模式）
+python -m ashare_monitor.main strategy navreport
+# 模拟组合净值报告：paper_history 净值 vs 沪深 300 双线 + 明细表
+# 模拟运行期间每日 track → 任意时刻 navreport 出一张净值曲线（3 个月验证）

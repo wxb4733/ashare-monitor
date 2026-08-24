@@ -4308,9 +4308,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
     p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance",
                                             "status", "orders", "risk",
-                                            "track", "breaker", "factor"],
+                                            "track", "navreport", "breaker",
+                                            "factor"],
                       help="策略：dividend/backtest/rebalance/status/"
-                           "orders 订单历史/risk/track/breaker/factor")
+                           "orders/risk/track/navreport 净值报告/breaker/factor")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
@@ -4613,6 +4614,24 @@ def main() -> None:
                               f"{n['cost']:,.0f}",
                               f"[{color}]{pnl:+.2f}[/{color}]")
             console.print(table)
+            print_disclaimer()
+            return
+        if args.strategy == "navreport":
+            from pathlib import Path
+
+            from .backtest_report import render_paper_nav_html
+            from .strategy import load_paper_nav
+
+            navs = load_paper_nav()
+            if not navs:
+                console.print("[yellow]无净值记录（先 strategy track 积累）[/yellow]")
+                return
+            out_dir = Path("output")
+            out_dir.mkdir(exist_ok=True)
+            path = render_paper_nav_html(
+                navs, out_dir / f"paper-nav-{datetime.now():%Y-%m-%d}.html")
+            console.print(f"[green]净值报告已生成: {path}[/green]"
+                          f"（{len(navs)} 条记录）")
             print_disclaimer()
             return
         if args.strategy == "breaker":

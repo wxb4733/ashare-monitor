@@ -131,3 +131,51 @@ def test_monthly_returns():
     assert mr["2024"][1] == pytest.approx(10.0)                # 1 月 +10%
     assert mr["2024"][2] == pytest.approx((1.2 / 1.1 - 1) * 100,
                                           abs=0.01)            # 2 月 +9.09%
+
+
+def test_drawdown_series():
+    from ashare_monitor.backtest_report import drawdown_series
+
+    # 单调上涨 → 无回撤
+    assert drawdown_series([0, 1, 2, 3]) == [0.0, 0.0, 0.0, 0.0]
+    # 先涨后跌 → 回撤出现
+    dd = drawdown_series([0, 10, 5, -5])   # 峰值 1.1，后跌到 1.05/0.95
+    assert dd[0] == 0.0 and dd[1] == 0.0
+    assert dd[2] == pytest.approx((1.05 / 1.1 - 1) * 100, abs=0.01)
+    assert dd[3] == pytest.approx((0.95 / 1.1 - 1) * 100, abs=0.01)
+
+
+def test_render_html_contains_drawdown(tmp_path):
+    from ashare_monitor.backtest_report import render_backtest_html
+
+    path = render_backtest_html(_mk_result(), ["600519"],
+                                str(tmp_path / "bt2.html"))
+    content = open(path, encoding="utf-8").read()
+    assert "水下曲线" in content
+    assert "最深回撤" in content
+
+
+def test_render_paper_nav_html(tmp_path):
+    """模拟净值报告：双线 SVG + 明细表（mock 基准避免网络）。"""
+    from ashare_monitor.backtest_report import render_paper_nav_html
+
+    navs = [{"date": "2026-08-24", "value": 81449.0, "cost": 81170.0,
+             "nav": 1.0034, "pnl_pct": 0.34},
+            {"date": "2026-08-25", "value": 82000.0, "cost": 81170.0,
+             "nav": 1.0102, "pnl_pct": 1.02}]
+    bench = [{"date": "2026-08-24", "close": 3900.0},
+             {"date": "2026-08-25", "close": 3950.0}]
+    path = render_paper_nav_html(navs, str(tmp_path / "nav.html"),
+                                 bench=bench)
+    content = open(path, encoding="utf-8").read()
+    assert "模拟组合净值跟踪" in content
+    assert "模拟组合" in content and "沪深300" in content
+    assert "+0.34" in content and "+1.02" in content
+    assert "polyline" in content
+
+
+def test_render_paper_nav_empty(tmp_path):
+    from ashare_monitor.backtest_report import render_paper_nav_html
+
+    with pytest.raises(ValueError, match="无净值记录"):
+        render_paper_nav_html([], str(tmp_path / "e.html"))
