@@ -460,11 +460,18 @@ def portfolio_backtest_rebalanced(codes: list[str],
                                   start: str | None = None,
                                   end: str | None = None,
                                   frequency: str = "monthly",
-                                  cost_bps: float = 5.0) -> dict:
-    """再平衡回测（频率可调 + 交易成本）vs 静态等权 vs 沪深 300。
+                                  cost_bps: float = 5.0,
+                                  limit_pct: float | None = 9.5) -> dict:
+    """再平衡回测（频率可调 + 交易成本 + A 股交易规则）vs 静态等权 vs 沪深 300。
 
     :param frequency: monthly / quarterly / semi_annual 再平衡周期
     :param cost_bps: 单边综合交易成本（bp，含佣金+印花税+滑点，默认 5bp=0.05%）
+    :param limit_pct: 涨跌停成交约束阈值 %（涨幅 ≥ 阈值=涨停日买入受限，
+                      跌幅 ≤ -阈值=跌停日卖出受限；None 关闭）。
+                      主板 10% / 创业科创 20% 用近似 9.5%（排除普通大阳线）。
+    A 股规则说明：T+1 对低频月度/季度再平衡无实际影响（周期首日卖出的都是
+    上一周期已持有 ≥1 天的仓位，天然满足 T+1）——如实标注；涨跌停约束才是
+    实际影响项（一字涨停买不进/一字跌停卖不出）。
     """
     from .storage import load_klines
 
@@ -513,22 +520,41 @@ def portfolio_backtest_rebalanced(codes: list[str],
             navs.append((nav - 1) * 100)
         return _ret_stats(navs, dates)
 
-    # 周期再平衡：周期首日重置等权，按 cost_bps 扣除换仓成本
+    # 周期再平衡：周期首日重置等权（涨跌停受限标的不重置），扣换仓成本
     def _periodic():
         nav = 1.0
         navs = []
         cur_key = None
         last_val = {c: close_at[dates[0]][c] for c in series}
-        for d in dates:
+        prev_closes = {c: close_at[dates[0]][c] for c in series}
+        for i, d in enumerate(dates):
             key = _period_key(d, frequency)
             if cur_key is None or key != cur_key:
                 cur_key = key
-                # 周期首日等权重置 + 扣换仓成本（按当时组合市值）
-                last_val = {c: close_at[d][c] for c in series}
+                # 涨跌停约束判断（用当日涨跌幅近似）
+                buy_blocked, sell_blocked = set(), set()
+                if limit_pct is not None and i > 0:
+                    for c in series:
+                        pc = close_at[dates[i - 1]][c]
+                        if pc:
+                            chg = (close_at[d][c] / pc - 1) * 100
+                            if chg >= limit_pct:
+                                buy_blocked.add(c)      # 涨停日买入受限
+                            elif chg <= -limit_pct:
+                                sell_blocked.add(c)     # 跌停日卖出受限
+                # 未受限标的重置等权；受限标的保留旧权重（如实模拟成交约束）
+                new_val = {}
+                for c in series:
+                    if c in buy_blocked or c in sell_blocked:
+                        new_val[c] = last_val[c]
+                    else:
+                        new_val[c] = close_at[d][c]
+                last_val = new_val
                 nav *= (1 - cost_bps / 10000)
             day_ret = sum((close_at[d][c] / last_val[c] - 1)
                           for c in series if last_val[c]) / len(series)
             nav *= (1 + day_ret)
+            prev_closes = {c: close_at[d][c] for c in series}
             last_val = {c: close_at[d][c] for c in series}
             navs.append((nav - 1) * 100)
         return _ret_stats(navs, dates)
@@ -574,6 +600,7 @@ def portfolio_backtest_rebalanced(codes: list[str],
         "buy_hold_cost": _buy_hold_cost(),
         "periodic": _periodic(),
         "frequency": frequency, "cost_bps": cost_bps,
+        "limit_pct": limit_pct,
         "benchmark": _bench_stats(),
     }
 

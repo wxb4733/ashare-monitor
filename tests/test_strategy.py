@@ -299,3 +299,40 @@ def test_portfolio_circuit_breaker(monkeypatch):
                  "pnl_pct": -5.0, "positions": []})
     cb2 = portfolio_circuit_breaker(drawdown_pct=20.0)
     assert cb2["triggered"] is False
+
+
+def test_rebalanced_limit_constraint(tmp_path, monkeypatch):
+    """涨跌停约束：涨停日买入受限标的不重置权重。"""
+    from ashare_monitor import strategy
+    import pandas as pd
+
+    def fake_load(code, market):
+        rows = []
+        # 构造：某标的在周期首日涨停（+10%），其余正常
+        for i in range(60):
+            d = 1 + i // 30
+            day = i % 30 + 1
+            base = 10.0 + i * 0.1
+            if code == "600519" and d == 2 and day == 1:
+                base = 11.0     # 周期首日大涨（模拟涨停）
+            rows.append({"date": f"2024-{d:02d}-{day:02d}", "close": base})
+        return rows
+
+    monkeypatch.setattr("ashare_monitor.storage.load_klines", fake_load)
+    idx_df = pd.DataFrame({
+        "date": [f"2024-{1 + i // 30:02d}-{i % 30 + 1:02d}" for i in range(60)],
+        "open": [100.0] * 60, "high": [101.0] * 60, "low": [99.0] * 60,
+        "close": [100.0 + i * 0.1 for i in range(60)],
+        "volume": [1.0] * 60,
+    })
+    monkeypatch.setattr("akshare.stock_zh_index_daily",
+                        lambda symbol="sh000300": idx_df)
+    r_on = strategy.portfolio_backtest_rebalanced(
+        ["600519", "000001"], frequency="monthly", cost_bps=0.0,
+        limit_pct=9.5)
+    r_off = strategy.portfolio_backtest_rebalanced(
+        ["600519", "000001"], frequency="monthly", cost_bps=0.0,
+        limit_pct=None)
+    # 约束开启时：涨停日保留上涨仓位 → 收益应 ≥ 无约束
+    assert r_on["periodic"]["total"] >= r_off["periodic"]["total"] - 0.01
+    assert r_on["limit_pct"] == 9.5

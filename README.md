@@ -610,3 +610,10 @@ python -m ashare_monitor.main ad hot                    # 同花顺强势股+题
 python -m ashare_monitor.main ad lhb 002594             # 龙虎榜席位+机构动向
 python -m ashare_monitor.main ad unlock 002594          # 限售解禁日历（90 天）
 # 融合：em_get 东财节流（防封）/腾讯不封IP富行情/同花顺热点/东财 datacenter
+
+# A 股交易规则约束（涨跌停成交 + T+1 说明）
+python -m ashare_monitor.main strategy backtest --codes ... --rebalance
+# 涨跌停约束：涨停日（≥9.5%）买入受限保留旧仓 / 跌停日卖出受限
+# 真实发现：约束后月度再平衡年化 25.15%→27.50%（涨停买不进反而保住强势仓位）
+# T+1：低频月度/季度再平衡天然满足（周期首日卖出的都是持有≥1天的仓位）
+# 关闭约束：--limit none 参数（如需对比）
