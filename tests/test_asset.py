@@ -132,3 +132,47 @@ def test_us_profile_fallback(monkeypatch):
             RuntimeError("net down")))
     p = us_profile("NVDA")
     assert p.status == "WARN"
+
+
+def test_fetch_onchain_btc(monkeypatch):
+    """BTC 通胀率：近 1 年新增供给/总量。"""
+    from ashare_monitor.asset import fetch_onchain_profile
+
+    class _R:
+        def json(self):
+            # 1950 万 → 1985 万（年增 35 万 → 通胀 ~1.76%）
+            return {"values": [{"y": 1.95e7}, {"y": 1.985e7}]}
+
+    monkeypatch.setattr("requests.get",
+                        lambda *a, **k: _R())
+    r = fetch_onchain_profile("BTCUSDT")
+    assert r["inflation_pct"] == pytest.approx(1.76, abs=0.1)
+    assert "blockchain.info" in r["note"]
+
+
+def test_fetch_onchain_eth(monkeypatch):
+    """ETH 质押收益：Lido stETH APR。"""
+    from ashare_monitor.asset import fetch_onchain_profile
+
+    class _R:
+        def json(self):
+            return {"data": {"apr": 0.0312}}
+
+    monkeypatch.setattr("requests.get",
+                        lambda *a, **k: _R())
+    r = fetch_onchain_profile("ETHUSDT")
+    assert r["staking_yield_pct"] == pytest.approx(3.12, abs=0.01)
+    assert "Lido" in r["note"]
+
+
+def test_fetch_onchain_fallback(monkeypatch):
+    """境外不可达 → 字段 None + 本机提示（如实）。"""
+    from ashare_monitor.asset import fetch_onchain_profile
+
+    def _boom(*a, **k):
+        raise RuntimeError("connect timeout")
+
+    monkeypatch.setattr("requests.get", _boom)
+    r = fetch_onchain_profile("BTCUSDT")
+    assert r["inflation_pct"] is None
+    assert "本机直连" in r["note"]

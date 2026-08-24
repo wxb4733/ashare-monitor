@@ -233,14 +233,43 @@ def build_profile(code: str, name: str = "", market: str = "ashare",
 
 
 def fetch_onchain_profile(code: str) -> dict:
-    """链上画像占位（Phase 3 预留接口）。
+    """链上画像（Phase 3 真实实现）：通胀率 + 质押收益。
 
-    返回：{"staking_yield_pct": None, "inflation_pct": None,
-           "note": "链上数据源待接入（Phase 3）"}
+    免费源（沙箱境外 API 不可达 → mock 测试 + 本机验证）：
+    - BTC 通胀率：blockchain.info charts（无 key，年新增供给/总量）
+    - ETH 质押收益：Lido stETH APR（无 key，近似全网质押收益率）
+
+    返回：{"staking_yield_pct": ..., "inflation_pct": ...,
+           "note": 数据源说明}；获取失败时字段 None + WARN 说明（如实）。
     """
-    return {
-        "staking_yield_pct": None,
-        "inflation_pct": None,
-        "note": "链上数据源待接入（Phase 3）：质押收益需 beaconcha/Lido，"
-                "通胀率需链上 RPC（沙箱境外 API 不可达，如实）",
-    }
+    import requests
+
+    code = code.upper()
+    result = {"staking_yield_pct": None, "inflation_pct": None, "note": ""}
+    try:
+        if "BTC" in code:
+            d = requests.get(
+                "https://api.blockchain.info/charts/total-bitcoins",
+                params={"timespan": "1year", "format": "json"},
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=15).json()
+            vals = [v["y"] for v in (d.get("values") or [])]
+            if len(vals) >= 2 and vals[-1]:
+                inflation = (vals[-1] - vals[0]) / vals[-1] * 100
+                result["inflation_pct"] = round(inflation, 4)
+                result["note"] = ("BTC 通胀率=近 1 年新增供给/总量"
+                                  "（blockchain.info，无 key）")
+        elif "ETH" in code:
+            d = requests.get("https://api.lido.fi/v1/steth/apr/latest",
+                             headers={"User-Agent": "Mozilla/5.0"},
+                             timeout=15).json()
+            apr = (d.get("data") or {}).get("apr") if isinstance(d, dict)                 else None
+            if apr is not None:
+                result["staking_yield_pct"] = round(float(apr) * 100, 2)
+                result["note"] = ("ETH 质押收益≈stETH APR（Lido，无 key，"
+                                  "近似全网质押率）")
+        if not result["note"]:
+            raise RuntimeError(f"未识别的链上标的 {code}")
+    except Exception as exc:  # noqa: BLE001
+        result["note"] = (f"链上数据获取失败：{str(exc)[:60]}"
+                          "（境外 API 沙箱可能不可达，本机直连通常可用）")
+    return result

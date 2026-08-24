@@ -856,3 +856,42 @@ def screen_us_momentum(top_n: int = 30, min_turnover: float = 1000.0,
         hits[-1]._turnover = amt
     hits.sort(key=lambda x: x.dividend_yield or 0, reverse=True)
     return hits[:top_n]
+
+
+def screen_us_lowval(top_n: int = 30, min_price: float = 5.0,
+                     max_pe: float = 25.0, min_mcap_yi: float = 100.0,
+                     pool_size: int = 300) -> list[ScreenHit]:
+    """美股低估选股：东财全市场列表取流动性 top N → 腾讯富字段 PE/市值。
+
+    过滤：价格 ≥ min_price / PE(TTM) ≤ max_pe / 市值 ≥ min_mcap_yi 亿美元。
+    东财美股列表沙箱可能不可达（本机直连可用）；腾讯富字段不封 IP。
+    """
+    import akshare as ak
+
+    df = ak.stock_us_spot_em()
+    if df is None or df.empty:
+        raise RuntimeError("东财美股列表无数据（本机直连可用）")
+    code_col = "代码" if "代码" in df.columns else "编码"
+    amt_col = "成交额" if "成交额" in df.columns else None
+    # 按成交额取流动性 top pool_size
+    if amt_col and amt_col in df.columns:
+        df = df.sort_values(amt_col, ascending=False).head(pool_size)
+    codes = [str(c) for c in df[code_col].tolist() if c]
+
+    from .a_stock_data import tencent_us_quote_batch
+
+    q = tencent_us_quote_batch(codes)
+    hits = []
+    for code, v in q.items():
+        price = v["price"]
+        pe = v["pe_ttm"]
+        mcap = v["mcap_yi"]
+        if not price or not pe or pe <= 0 or price < min_price:
+            continue
+        if pe > max_pe or (mcap and mcap < min_mcap_yi):
+            continue
+        hits.append(ScreenHit(code=code, name=v["name"], price=price,
+                              dividend_yield=None, pe=pe, pb=None,
+                              market_value=mcap))
+    hits.sort(key=lambda x: x.pe or 0)
+    return hits[:top_n]

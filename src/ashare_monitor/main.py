@@ -2556,6 +2556,7 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
         screen_margin,
         screen_share,
         screen_sgr,
+        screen_us_lowval,
         screen_us_momentum,
     )
 
@@ -2563,8 +2564,12 @@ def run_screen(metric: str, config_path: str | None, top_n: int,
     console.print(f"[cyan]正在扫描 {market} 市场（{metric}，TOP {top_n}）…[/cyan]")
     try:
         if market == "us":
-            hits = screen_us_momentum(top_n=top_n)
-            title = f"美股动量选股（当日涨幅 TOP {top_n}）"
+            if metric == "lowval":
+                hits = screen_us_lowval(top_n=top_n)
+                title = f"美股低估选股（PE≤25 流动性 TOP {top_n}）"
+            else:
+                hits = screen_us_momentum(top_n=top_n)
+                title = f"美股动量选股（当日涨幅 TOP {top_n}）"
         elif metric == "sgr":
             hits = screen_sgr(top_n=top_n, min_sgr=min_yield)
             title = f"持续增长率选股（SGR ≥ {min_yield}%）"

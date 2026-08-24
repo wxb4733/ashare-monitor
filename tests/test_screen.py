@@ -309,3 +309,46 @@ def test_screen_us_momentum(monkeypatch):
     assert len(hits) == 2
     assert hits[0].code == "NVDA"
     assert hits[0].dividend_yield == pytest.approx(3.2)
+
+
+def test_screen_us_lowval(monkeypatch):
+    """美股低估选股：PE/市值过滤 + 排序。"""
+    import pandas as pd
+
+    from ashare_monitor.screen import screen_us_lowval
+
+    df = pd.DataFrame([
+        {"代码": "NVDA", "名称": "英伟达", "最新价": 209.0, "涨跌幅": 1.0,
+         "成交额": 9.0e7},
+        {"代码": "AAPL", "名称": "苹果", "最新价": 312.0, "涨跌幅": 0.5,
+         "成交额": 8.0e7},
+        {"代码": "GOOGL", "名称": "谷歌-A", "最新价": 347.0, "涨跌幅": -1.0,
+         "成交额": 7.0e7},
+        {"代码": "PENNY", "名称": "仙股", "最新价": 0.5, "涨跌幅": 10.0,
+         "成交额": 5.0e5},   # 低价过滤
+        {"代码": "HIPE", "名称": "高估值", "最新价": 100.0, "涨跌幅": 0.1,
+         "成交额": 6.0e7},   # 高 PE 过滤
+    ])
+    monkeypatch.setattr("akshare.stock_us_spot_em", lambda: df)
+    monkeypatch.setattr(
+        "ashare_monitor.a_stock_data.tencent_us_quote_batch",
+        lambda codes: {
+            "NVDA": {"name": "英伟达", "price": 209.0, "pe_ttm": 21.9,
+                     "mcap_yi": 50677.0, "change_pct": 1.0},
+            "AAPL": {"name": "苹果", "price": 312.0, "pe_ttm": 34.0,
+                     "mcap_yi": 45560.0, "change_pct": 0.5},
+            "GOOGL": {"name": "谷歌-A", "price": 347.0, "pe_ttm": 12.2,
+                      "mcap_yi": 42500.0, "change_pct": -1.0},
+            "PENNY": {"name": "仙股", "price": 0.5, "pe_ttm": 5.0,
+                      "mcap_yi": 10.0, "change_pct": 10.0},
+            "HIPE": {"name": "高估值", "price": 100.0, "pe_ttm": 80.0,
+                     "mcap_yi": 5000.0, "change_pct": 0.1},
+        })
+    hits = screen_us_lowval(top_n=10, max_pe=25.0, min_price=5.0,
+                            min_mcap_yi=100.0)
+    codes = [h.code for h in hits]
+    assert "GOOGL" in codes and "NVDA" in codes      # PE ≤ 25 保留
+    assert "AAPL" not in codes                        # PE 34 过滤
+    assert "PENNY" not in codes                       # 低价过滤
+    assert "HIPE" not in codes                        # 高 PE 过滤
+    assert hits[0].code == "GOOGL"                    # PE 最低排最前

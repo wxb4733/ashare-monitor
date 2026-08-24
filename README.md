@@ -684,3 +684,11 @@ python -m ashare_monitor.main strategy backtest --codes ... --rebalance --report
 python -m ashare_monitor.main strategy navreport
 # 模拟组合净值报告：paper_history 净值 vs 沪深 300 双线 + 明细表
 # 模拟运行期间每日 track → 任意时刻 navreport 出一张净值曲线（3 个月验证）
+
+# 美股低估选股 + 链上数据（业务侧补完）
+python -m ashare_monitor.main screen --market us --metric lowval --top 30
+# 东财美股列表（流动性 top 300）→ 腾讯富字段批量 PE/市值（不封 IP）
+# 过滤：PE≤25 / 价格≥5 / 市值≥100 亿美元——真实：GOOGL PE 12.2 / AMZN 15.3
+python -c "from ashare_monitor.asset import fetch_onchain_profile; print(fetch_onchain_profile('BTCUSDT'))"
+# 链上：BTC 通胀率（blockchain.info 无 key）/ ETH 质押收益（Lido APR）
+# 沙箱境外不可达（如实）→ 本机直连验证

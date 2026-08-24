@@ -483,3 +483,41 @@ def ths_eps_forecast(code: str) -> list[dict]:
                for k, v in zip(df.columns, row)}
         rows.append(rec)
     return rows
+
+
+# ── 美股富字段（腾讯批量：PE/市值，不封 IP） ────────────────
+
+# 腾讯美股字段（实测校准）：3 现价 / 4 昨收 / 6 成交量 /
+#   53 总市值(亿美元) / 65 PE(TTM)
+_US_FIELD_PRICE, _US_FIELD_MCAP, _US_FIELD_PE = 3, 53, 65
+
+
+def tencent_us_quote_batch(codes: list[str],
+                           batch: int = 50) -> dict[str, dict]:
+    """腾讯美股富字段批量查询（含 PE/市值，不封 IP）。
+
+    返回 {code: {"name", "price", "pe_ttm", "mcap_yi", "change_pct"}}。
+    字段索引 53 为亿美元市值（NVDA 50677 亿=5.07 万亿美元，实测校准）。
+    """
+    out: dict[str, dict] = {}
+    for i in range(0, len(codes), batch):
+        chunk = codes[i:i + batch]
+        url = "https://qt.gtimg.cn/q=" + ",".join(
+            c if c.upper().startswith("US") else f"us{c}" for c in chunk)
+        r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
+        r.encoding = "gbk"
+        for line in r.text.split(";"):
+            if "=" not in line:
+                continue
+            parts = line.split("~")
+            if len(parts) <= _US_FIELD_PE:
+                continue
+            code = parts[2].split(".")[0]
+            out[code] = {
+                "name": parts[1],
+                "price": _f(parts[_US_FIELD_PRICE]),
+                "pe_ttm": _f(parts[_US_FIELD_PE]),
+                "mcap_yi": _f(parts[_US_FIELD_MCAP]),
+                "change_pct": _f(parts[32]) if len(parts) > 32 else None,
+            }
+    return out
