@@ -617,3 +617,10 @@ python -m ashare_monitor.main strategy backtest --codes ... --rebalance
 # 真实发现：约束后月度再平衡年化 25.15%→27.50%（涨停买不进反而保住强势仓位）
 # T+1：低频月度/季度再平衡天然满足（周期首日卖出的都是持有≥1天的仓位）
 # 关闭约束：--limit none 参数（如需对比）
+
+# 因子有效性检验（IC/IR/分层/多空）
+python -m ashare_monitor.main strategy factor --factor-name momentum \
+  --forward 20 --codes 600519,000001,300750,002594
+# 真实：动量因子在自选股 IC 0.04/IC_IR 0.06/无单调分层 → 检验为无效（如实）
+# 因子：momentum / rsi / volatility（可扩展）
+# 意义：选股前先验因子有效性，淘汰无效因子（stock-panel 同类能力）

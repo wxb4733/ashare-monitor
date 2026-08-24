@@ -698,3 +698,192 @@ def portfolio_circuit_breaker(drawdown_pct: float = 20.0) -> dict:
     return {"triggered": triggered, "loss_pct": round(loss, 2),
             "threshold": drawdown_pct,
             "total_value": rep["total_value"], "total_cost": rep["total_cost"]}
+
+
+# ===================== 因子有效性检验（IC/IR/分层/多空） =====================
+
+# 同类项目对比优化（stock-panel 亮点）：选股前先验因子有效性。
+# IC（信息系数）：因子排名 vs 未来收益排名 的 Spearman 相关（每日截面）
+# IC_IR：IC 均值 / IC 标准差（因子稳定性）
+# 分层收益：按因子值 5 分位 → 各层未来收益 → 单调性检验
+# 多空组合：Q5(多头) - Q1(空头) 累计收益
+
+
+def _spearman(x: list[float], y: list[float]) -> float:
+    """Spearman 秩相关系数（并列值取平均秩）。"""
+    def _rank(v: list[float]) -> list[float]:
+        idx = sorted(range(len(v)), key=lambda i: v[i])
+        ranks = [0.0] * len(v)
+        i = 0
+        while i < len(v):
+            j = i
+            while j + 1 < len(v) and v[idx[j + 1]] == v[idx[i]]:
+                j += 1
+            avg = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                ranks[idx[k]] = avg
+            i = j + 1
+        return ranks
+
+    rx, ry = _rank(x), _rank(y)
+    n = len(x)
+    if n < 3:
+        return 0.0
+    mx, my = sum(rx) / n, sum(ry) / n
+    cov = sum((rx[i] - mx) * (ry[i] - my) for i in range(n))
+    sx = (sum((r - mx) ** 2 for r in rx) ** 0.5)
+    sy = (sum((r - my) ** 2 for r in ry) ** 0.5)
+    return cov / (sx * sy) if sx and sy else 0.0
+
+
+def _momentum_factor(rows: list[dict], lookback: int = 20) -> dict:
+    """动量因子：lookback 日涨幅（每日期值）。返回 {date: value}。"""
+    closes = [float(r["close"]) for r in rows]
+    out = {}
+    for i in range(lookback, len(rows)):
+        base = closes[i - lookback]
+        if base:
+            out[rows[i]["date"]] = (closes[i] / base - 1) * 100
+    return out
+
+
+def _rsi_factor(rows: list[dict], n: int = 14) -> dict:
+    """RSI 因子（每日期值，越接近 100 越超买）。"""
+    from .timing import _rsi_series
+
+    closes = [float(r["close"]) for r in rows]
+    rsi = _rsi_series(closes, n)
+    return {rows[i]["date"]: v for i, v in enumerate(rsi) if v is not None}
+
+
+def _vol_factor(rows: list[dict], lookback: int = 20) -> dict:
+    """波动率因子：lookback 日收益标准差（年化%）。"""
+    closes = [float(r["close"]) for r in rows]
+    out = {}
+    for i in range(lookback, len(rows)):
+        rets = [(closes[j] / closes[j - 1] - 1)
+                for j in range(i - lookback + 1, i + 1)]
+        mean = sum(rets) / len(rets)
+        var = sum((r - mean) ** 2 for r in rets) / len(rets)
+        out[rows[i]["date"]] = var ** 0.5 * (252 ** 0.5) * 100
+    return out
+
+
+FACTOR_FNS = {
+    "momentum": lambda rows: _momentum_factor(rows),
+    "rsi": lambda rows: _rsi_factor(rows),
+    "volatility": lambda rows: _vol_factor(rows),
+}
+
+
+def factor_ic_test(codes: list[str], factor: str = "momentum",
+                   forward_days: int = 20) -> dict:
+    """因子 IC 检验：每日截面 Spearman（因子排名 vs 未来收益排名）。
+
+    :return: mean_ic / ic_ir / ic_positive_pct / n_days / samples
+    """
+    from .storage import load_klines
+
+    if factor not in FACTOR_FNS:
+        raise RuntimeError(f"因子 {factor} 未注册（可选：momentum/rsi/volatility）")
+    fn = FACTOR_FNS[factor]
+    # 面板：每个标的的 {date: factor_value} 与 {date: close}
+    fvals: dict[str, dict[str, float]] = {}
+    closes: dict[str, dict[str, float]] = {}
+    for c in codes:
+        try:
+            rows = load_klines(c, "ashare")
+        except Exception:  # noqa: BLE001
+            continue
+        if len(rows) < 80:
+            continue
+        fvals[c] = fn(rows)
+        closes[c] = {r["date"]: float(r["close"]) for r in rows}
+    if len(fvals) < 2:
+        raise RuntimeError("本地 K 线不足（至少 2 只标的）")
+
+    # 所有日期并集（升序）
+    dates = sorted({d for v in fvals.values() for d in v})
+    ics = []
+    for d in dates:
+        # 未来 forward 天收益（用每个标的下一个可用 close）
+        fv, fwd = [], []
+        for c in codes:
+            if c not in fvals or d not in fvals[c]:
+                continue
+            v = fvals[c][d]
+            # 未来收益：d 之后 forward_days 天的收益（取 d+forward 的 close）
+            later = [dd for dd in closes[c] if dd > d]
+            if len(later) < forward_days:
+                continue
+            target = later[min(forward_days - 1, len(later) - 1)]
+            ret = (closes[c][target] / closes[c][d] - 1) * 100
+            fv.append(v)
+            fwd.append(ret)
+        if len(fv) >= 3 and len(set(fv)) > 1:
+            ics.append(_spearman(fv, fwd))
+    if not ics:
+        return {"mean_ic": 0.0, "ic_ir": 0.0, "ic_positive_pct": 0.0,
+                "n_days": 0, "samples": 0}
+    mean_ic = sum(ics) / len(ics)
+    var = sum((x - mean_ic) ** 2 for x in ics) / len(ics)
+    ic_ir = mean_ic / (var ** 0.5) if var > 0 else 0.0
+    pos = sum(1 for x in ics if x > 0) / len(ics) * 100
+    return {"mean_ic": round(mean_ic, 4), "ic_ir": round(ic_ir, 3),
+            "ic_positive_pct": round(pos, 1), "n_days": len(ics),
+            "samples": sum(len(fv) for fv in []) or len(ics)}
+
+
+def factor_quantile_test(codes: list[str], factor: str = "momentum",
+                         quantiles: int = 5, forward_days: int = 20) -> dict:
+    """因子分层检验：按因子值 5 分位 → 各层未来收益 → 单调性 + 多空。"""
+    from .storage import load_klines
+
+    if factor not in FACTOR_FNS:
+        raise RuntimeError(f"因子 {factor} 未注册")
+    fn = FACTOR_FNS[factor]
+    closes: dict[str, dict[str, float]] = {}
+    fvals: dict[str, dict[str, float]] = {}
+    for c in codes:
+        try:
+            rows = load_klines(c, "ashare")
+        except Exception:  # noqa: BLE001
+            continue
+        if len(rows) < 80:
+            continue
+        closes[c] = {r["date"]: float(r["close"]) for r in rows}
+        fvals[c] = fn(rows)
+    # 收集所有 (因子值, 未来收益) 样本
+    samples = []
+    for c in fvals:
+        for d, v in fvals[c].items():
+            later = [dd for dd in closes[c] if dd > d]
+            if len(later) < forward_days:
+                continue
+            target = later[min(forward_days - 1, len(later) - 1)]
+            ret = (closes[c][target] / closes[c][d] - 1) * 100
+            samples.append((v, ret))
+    if len(samples) < quantiles * 5:
+        return {"quantiles": [], "monotonic": False,
+                "samples": len(samples), "note": "样本不足"}
+    samples.sort(key=lambda x: x[0])
+    n = len(samples)
+    size = n // quantiles
+    layers = []
+    for q in range(quantiles):
+        seg = samples[q * size: (q + 1) * size if q < quantiles - 1 else n]
+        if not seg:
+            continue
+        avg_ret = sum(x[1] for x in seg) / len(seg)
+        layers.append({"quantile": q + 1,
+                       "factor_range": f"{seg[0][0]:.2f}~{seg[-1][0]:.2f}",
+                       "avg_ret": round(avg_ret, 2), "n": len(seg)})
+    if len(layers) < 2:
+        return {"quantiles": [], "monotonic": False, "samples": len(samples)}
+    # 单调性：Q5 > Q4 > Q3 > Q2 > Q1（严格递减为反向有效）
+    rets = [l["avg_ret"] for l in layers]
+    ascending = all(rets[i] <= rets[i + 1] for i in range(len(rets) - 1))
+    descending = all(rets[i] >= rets[i + 1] for i in range(len(rets) - 1))
+    spread = rets[-1] - rets[0]
+    return {"quantiles": layers, "monotonic": ascending or descending,
+            "long_short": round(spread, 2), "samples": len(samples)}

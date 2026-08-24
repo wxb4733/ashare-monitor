@@ -4260,13 +4260,17 @@ def main() -> None:
     p_st = sub.add_parser("strategy", help="低频策略：目标持仓 + 模拟交易")
     p_st.add_argument("strategy", choices=["dividend", "backtest", "rebalance",
                                             "status", "risk", "track",
-                                            "breaker"],
+                                            "breaker", "factor"],
                       help="策略：dividend/backtest/rebalance/status/risk/"
                            "track 净值跟踪/breaker 组合熔断")
     p_st.add_argument("--codes", default="",
                       help="backtest：标的列表（逗号分隔，默认自选股 A 股）")
     p_st.add_argument("--start", default=None,
                       help="backtest：起始日期 YYYY-MM-DD（默认全历史）")
+    p_st.add_argument("--factor-name", dest="factor_name", default="momentum",
+                      help="factor：momentum/rsi/volatility")
+    p_st.add_argument("--forward", type=int, default=20,
+                      help="factor：未来收益天数")
     p_st.add_argument("--rebalance", action="store_true",
                       help="backtest：静态 vs 周期再平衡对比（含成本）")
     p_st.add_argument("--frequency", choices=["monthly", "quarterly",
@@ -4453,6 +4457,50 @@ def main() -> None:
         run_dividend_rank(args.config, args.years, args.min_yield,
                           args.top_k, args.sort, report=args.report)
     elif args.command == "strategy":
+        if args.strategy == "factor":
+            from .strategy import factor_ic_test, factor_quantile_test
+
+            codes_arg = getattr(args, "codes", "") or "600519,000001,300750,002594"
+            cfgs = load_config(args.config)
+            code_list = [c.strip() for c in codes_arg.split(",") if c.strip()]
+            if not code_list:
+                code_list = [str(it["code"]) for it in cfgs.watchlist
+                             if str(it.get("market", "ashare")) == "ashare"]
+            fname = getattr(args, "factor_name", "momentum")
+            fwd = getattr(args, "forward", 20)
+            console.print(f"[cyan]因子检验 {fname}（{len(code_list)} 只，"
+                          f"forward {fwd} 天）…[/cyan]")
+            try:
+                ic = factor_ic_test(code_list, fname, fwd)
+                console.print(f"[bold]IC 检验：均值 IC {ic['mean_ic']:.4f} / "
+                              f"IC_IR {ic['ic_ir']:.3f} / 正向比例 "
+                              f"{ic['ic_positive_pct']:.0f}%（{ic['n_days']} 日截面）[/bold]")
+                q = factor_quantile_test(code_list, fname, 5, fwd)
+                if q.get("quantiles"):
+                    table = Table(title=f"分层检验（Q1 最低因子 → Q5 最高，"
+                                        f"样本 {q['samples']}）")
+                    table.add_column("分位", justify="left")
+                    table.add_column("因子区间", justify="left")
+                    table.add_column("未来收益%", justify="right")
+                    table.add_column("样本", justify="right")
+                    for layer in q["quantiles"]:
+                        table.add_row(f"Q{layer['quantile']}",
+                                      layer["factor_range"],
+                                      f"{layer['avg_ret']:.2f}",
+                                      str(layer["n"]))
+                    console.print(table)
+                    console.print(f"[bold]单调性: {'是' if q['monotonic'] else '否'} / "
+                                  f"多空价差(Q5-Q1): {q['long_short']:.2f}%[/bold]")
+                    if q["monotonic"] and q["long_short"] > 1:
+                        console.print("[green]因子有效（单调分层 + 多空正价差）[/green]")
+                    else:
+                        console.print("[yellow]因子无效或样本不足（如实）[/yellow]")
+                else:
+                    console.print(f"[yellow]{q.get('note', '样本不足')}[/yellow]")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[red]{exc}[/red]")
+            print_disclaimer()
+            return
         if args.strategy == "track":
             from .strategy import load_paper_nav, record_paper_nav
 
