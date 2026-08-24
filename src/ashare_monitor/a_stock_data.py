@@ -392,3 +392,94 @@ def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
                     f"?annoId={item.get('announcementId', '')}"),
         })
     return rows
+
+
+# ── 研报层：东财研报列表 + PDF 下载 ─────────────────────────────
+
+REPORT_API = "https://reportapi.eastmoney.com/report/list"
+PDF_TPL = "https://pdf.dfcfw.com/pdf/H3_{info_code}_1.pdf"
+
+
+def eastmoney_reports(code: str, max_pages: int = 3) -> list[dict]:
+    """东财研报列表（含评级/预测 EPS）。"""
+    import re
+
+    all_records = []
+    for page in range(1, max_pages + 1):
+        params = {
+            "industryCode": "*", "pageSize": "100", "industry": "*",
+            "rating": "*", "ratingChange": "*",
+            "beginTime": "2000-01-01", "endTime": "2030-01-01",
+            "pageNo": str(page), "fields": "", "qType": "0",
+            "orgCode": "", "code": code, "rcode": "",
+            "p": str(page), "pageNum": str(page), "pageNumber": str(page),
+        }
+        d = em_get(REPORT_API, params=params,
+                   headers={"Referer": "https://data.eastmoney.com/"},
+                   timeout=30).json()
+        rows = d.get("data") or []
+        if not rows:
+            break
+        all_records.extend(rows)
+        if page >= (d.get("TotalPage", 1) or 1):
+            break
+    return all_records
+
+
+def download_pdf(record: dict, target_dir: str = "output/reports") -> str | None:
+    """下载单份研报 PDF（H3_{info_code}_1.pdf 模板），返回保存路径。"""
+    import re
+    from pathlib import Path
+
+    info_code = record.get("infoCode", "")
+    if not info_code:
+        return None
+    date = (record.get("publishDate") or "")[:10]
+    org = record.get("orgSName") or "未知"
+    title = re.sub(r'[\\/:*?"<>|]', "_", record.get("title", ""))[:80]
+    target = Path(target_dir) / f"{date}_{org}_{title}.pdf"
+    if target.exists():
+        return str(target)
+    r = em_get(PDF_TPL.format(info_code=info_code),
+               headers={"Referer": "https://data.eastmoney.com/"}, timeout=60)
+    if r.status_code == 200 and len(r.content) >= 1024:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(r.content)
+        return str(target)
+    return None
+
+
+# ── 研报层：同花顺机构一致预期 EPS ─────────────────────────────
+
+def ths_eps_forecast(code: str) -> list[dict]:
+    """同花顺机构一致预期 EPS（basic.10jqka.com.cn HTML 表解析）。"""
+    import io
+
+    import pandas as pd
+
+    url = f"https://basic.10jqka.com.cn/new/{code}/worth.html"
+    r = requests.get(url,
+                     headers={"User-Agent": UA,
+                              "Referer": "https://basic.10jqka.com.cn/"},
+                     timeout=15)
+    r.encoding = "gbk"
+    try:
+        dfs = pd.read_html(io.StringIO(r.text))
+    except ValueError:
+        return []
+    df = None
+    for d in dfs:
+        cols = [str(c) for c in d.columns]
+        if any("每股收益" in c or "均值" in c for c in cols):
+            df = d
+            break
+    if df is None:
+        df = dfs[0] if dfs else None
+    if df is None or df.empty:
+        return []
+    rows = []
+    for _, row in df.iterrows():
+        rec = {str(k): (str(v) if v is not None else "")
+               for k, v in zip(df.columns, row)}
+        rows.append(rec)
+    return rows

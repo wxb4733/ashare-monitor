@@ -2073,6 +2073,39 @@ def run_ad(sub: str, codes: str, config_path: str | None) -> None:
                                       f" / 超大单 {r['super_net']/1e4:+.0f} 万")
                     console.print(f"  近 20 日主力累计: "
                                   f"{total20/1e8:+.2f} 亿")
+        elif sub == "reports":
+            if not code_list:
+                console.print("[red]需指定代码：ad reports 600519[/red]")
+                return
+            for code in code_list:
+                reps = ad.eastmoney_reports(code)
+                console.print(f"[cyan]{code} 东财研报 {len(reps)} 篇[/cyan]")
+                table = Table(title=f"研报列表 {code}（TOP 10）")
+                table.add_column("日期", justify="left")
+                table.add_column("机构", justify="left")
+                table.add_column("评级", justify="left")
+                table.add_column("标题", justify="left")
+                for r in reps[:10]:
+                    table.add_row((r.get("publishDate") or "")[:10],
+                                  r.get("orgSName") or "-",
+                                  r.get("emRatingName") or "-",
+                                  (r.get("title") or "")[:30])
+                console.print(table)
+        elif sub == "eps":
+            if not code_list:
+                console.print("[red]需指定代码：ad eps 600519[/red]")
+                return
+            for code in code_list:
+                rows = ad.ths_eps_forecast(code)
+                if not rows:
+                    console.print(f"[yellow]{code} 一致预期 EPS 无数据（网络受限如实）[/yellow]")
+                    continue
+                console.print(f"[cyan]{code} 同花顺机构一致预期 EPS[/cyan]")
+                for r in rows[:5]:
+                    console.print("  " + " | ".join(
+                        f"{k}: {v[:20]}" for k, v in r.items()
+                        if k.lower() in ("年份", "年度", "均值", "每股收益",
+                                         "预测机构数", "最小值", "最大值")))
         elif sub == "fin":
             if not code_list:
                 console.print("[red]需指定代码：ad fin 600519 --report lrb[/red]")
@@ -3976,7 +4009,7 @@ def main() -> None:
     p_ad = sub.add_parser("ad", help="A 股全栈数据（融合 a-stock-data）")
     p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock",
                                       "margin", "block", "fundflow",
-                                      "fin", "announce"],
+                                      "fin", "announce", "reports", "eps"],
                       help="quote/hot/lhb/unlock/margin 两融/block 大宗/"
                            "fundflow 资金流120日")
     p_ad.add_argument("codes", nargs="?", default="", help="代码（逗号分隔）")

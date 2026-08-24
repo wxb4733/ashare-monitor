@@ -174,3 +174,64 @@ def test_cninfo_announcements(monkeypatch):
     assert anns[0]["title"] == "2026年半年度报告"
     assert "2026-" in anns[0]["date"]             # 时间戳转日期
     assert "annoId=12345" in anns[0]["url"]
+
+
+def test_eastmoney_reports(monkeypatch):
+    from ashare_monitor.a_stock_data import eastmoney_reports
+
+    class _R:
+        def json(self):
+            return {"data": [
+                {"publishDate": "2026-08-21 09:00",
+                 "orgSName": "西南证券", "emRatingName": "买入",
+                 "title": "2026年中报点评", "infoCode": "ABC123"},
+                {"publishDate": "2026-08-19 09:00",
+                 "orgSName": "万联证券", "emRatingName": "增持",
+                 "title": "提价与直销双轮驱动", "infoCode": "DEF456"},
+            ], "TotalPage": 1}
+
+    monkeypatch.setattr("ashare_monitor.a_stock_data.em_get",
+                        lambda *a, **k: _R())
+    reps = eastmoney_reports("600519", max_pages=1)
+    assert len(reps) == 2
+    assert reps[0]["orgSName"] == "西南证券"
+    assert reps[0]["infoCode"] == "ABC123"
+
+
+def test_download_pdf(tmp_path, monkeypatch):
+    from ashare_monitor.a_stock_data import download_pdf
+
+    class _R:
+        status_code = 200
+        content = b"%PDF-1.4 " + b"x" * 2048
+
+    monkeypatch.setattr("ashare_monitor.a_stock_data.em_get",
+                        lambda *a, **k: _R())
+    path = download_pdf({"infoCode": "ABC123",
+                         "publishDate": "2026-08-21",
+                         "orgSName": "西南证券",
+                         "title": "中报点评"},
+                        target_dir=str(tmp_path))
+    assert path is not None
+    assert path.endswith(".pdf")
+    with open(path, "rb") as f:
+        assert f.read().startswith(b"%PDF")
+
+
+def test_ths_eps_forecast(monkeypatch):
+    from ashare_monitor.a_stock_data import ths_eps_forecast
+
+    html = ('<html><table><tr><th>年份</th><th>预测机构数</th><th>均值</th>'
+            '<th>最小值</th><th>最大值</th></tr>'
+            '<tr><td>2026</td><td>32</td><td>55.2</td><td>48.1</td>'
+            '<td>62.3</td></tr></table></html>')
+
+    class _R:
+        encoding = "gbk"
+        text = html
+
+    monkeypatch.setattr("ashare_monitor.a_stock_data.requests.get",
+                        lambda *a, **k: _R())
+    rows = ths_eps_forecast("600519")
+    assert len(rows) == 1
+    assert any("2026" in str(v) for v in rows[0].values())
