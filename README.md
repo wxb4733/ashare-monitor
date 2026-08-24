@@ -659,3 +659,13 @@ python -m ashare_monitor.docs_gen            # 生成 docs/commands.md（53 命�
 python -m ashare_monitor.docs_gen --stdout   # 打印不落盘
 # 文档从 build_parser() 自动提取（help/参数/默认值）——改命令不用改文档
 # main.py 重构：build_parser() 供 CLI 与文档生成共用（单源）
+
+# MCP Server（AI Agent 查询四市场数据）
+python -m ashare_monitor.main mcp      # 启动（stdio）
+# 客户端配置（如 WorkBuddy ~/.workbuddy/mcp.json）：
+#   {"mcpServers": {"ashare": {"command": "python",
+#     "args": ["-m", "ashare_monitor.mcp_server"],
+#     "cwd": "C:/Users/Administrator/github/ashare-monitor"}}}
+# 23 个工具自动暴露（quote/check/screen/backtest/factor_ic/paper_*/ad_*）
+# 协议：JSON-RPC 2.0 over stdio（initialize/tools/list/tools/call）
+# 零依赖实现（不装 mcp SDK）；工具注册表从 api.py 函数签名自动生成

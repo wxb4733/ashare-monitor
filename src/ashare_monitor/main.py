@@ -4027,6 +4027,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_history.add_argument("code", help="证券代码，如 002594 / 01211")
     p_kinc = sub.add_parser("backfill_kline",
                            help="K 线增量更新（每日任务）")
+    sub.add_parser("mcp", help="启动 MCP Server（stdio，AI Agent 查询接口）")
     p_ad = sub.add_parser("ad", help="A 股全栈数据（融合 a-stock-data）")
     p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock",
                                       "margin", "block", "fundflow",
@@ -4363,6 +4364,10 @@ def main() -> None:
         run_obsidian(args.action, args.vault, args.config)
     elif args.command == "ad":
         run_ad(args.sub, args.codes, args.config)
+    elif args.command == "mcp":
+        from .mcp_server import main as run_mcp
+
+        run_mcp()
     elif args.command == "backfill_kline":
         run_backfill_kline(args.config)
     elif args.command == "backfill":
