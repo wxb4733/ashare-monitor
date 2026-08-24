@@ -395,6 +395,30 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
                 checks.append(_ok("工商画像", "已导入"))
     except Exception:  # noqa: BLE001
         pass
+    # 15a2. 知识产权（智慧芽导入，ip_assets）
+    try:
+        from .import_data import get_all_ip_assets
+
+        ip_assets = get_all_ip_assets()
+        ip_match = None
+        for full_name, ip in ip_assets.items():
+            if name in full_name or full_name in name:
+                ip_match = ip
+                break
+        if ip_match:
+            np_ = len(ip_match.get("patents") or [])
+            na_ = len(ip_match.get("papers") or [])
+            detail = [f"专利 {np_} 件"]
+            if na_:
+                detail.append(f"论文 {na_} 篇")
+            pats = ip_match.get("patents") or []
+            if pats:
+                latest = max(pats, key=lambda x: str(x.get("date") or ""))
+                detail.append(f"最新 {latest.get('date', '')[:10]} "
+                              f"{str(latest.get('title', ''))[:24]}")
+            checks.append(_ok("知识产权", "；".join(detail)))
+    except Exception:  # noqa: BLE001
+        pass
     # 15b. 两融（融资余额与趋势）
     try:
         from .a_stock_data import margin_trading

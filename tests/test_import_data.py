@@ -80,3 +80,57 @@ def test_check_company_profile_dim(monkeypatch):
     assert item.status == "OK"
     assert "大型" in str(item.detail)
     assert "1995-02-10" in str(item.detail)
+
+
+def test_import_ip_assets(tmp_path, monkeypatch):
+    """知识产权导入：专利/论文合并去重。"""
+    from ashare_monitor import storage
+    from ashare_monitor.import_data import (
+        get_all_ip_assets,
+        import_ip_assets,
+        load_ip_assets,
+    )
+
+    db = str(tmp_path / "ip.db")
+
+    def _mk(db_path=storage.DB_PATH):
+        import sqlite3
+
+        conn = sqlite3.connect(db)
+        conn.executescript(storage._SCHEMA)
+        return conn
+
+    monkeypatch.setattr(storage, "_connect", _mk)
+
+    p1 = [{"pn": "CN122619700A", "title": "一种负极片", "date": "2026-08-21"}]
+    a1 = [{"title": "Dynamic Pricing", "date": "2026-01-23"}]
+    assert import_ip_assets("比亚迪股份有限公司", patents=p1, papers=a1,
+                            db_path=db)
+    # 重复导入不重复（upsert 合并去重）
+    p2 = [{"pn": "CN122619700A", "title": "一种负极片", "date": "2026-08-21"},
+          {"pn": "CN122607746A", "title": "翻转控制方法", "date": "2026-08-21"}]
+    import_ip_assets("比亚迪股份有限公司", patents=p2, papers=a1, db_path=db)
+    ip = load_ip_assets("比亚迪股份有限公司", db_path=db)
+    assert len(ip["patents"]) == 2        # 去重后 2 件
+    assert len(ip["papers"]) == 1
+    assert get_all_ip_assets(db_path=db)["比亚迪股份有限公司"]["patents"][0][
+        "pn"] == "CN122619700A"
+    assert load_ip_assets("不存在公司", db_path=db) is None
+
+
+def test_check_ip_dim(monkeypatch):
+    """check 知识产权维度。"""
+    from ashare_monitor.check import check_stock
+
+    ips = {"比亚迪股份有限公司": {
+        "patents": [{"pn": "CN122619700A", "title": "一种负极片",
+                     "date": "2026-08-21"}],
+        "papers": [{"title": "Dynamic Pricing", "date": "2026-01-23"}],
+        "updated": "2026-08-25"}}
+    monkeypatch.setattr("ashare_monitor.import_data.get_all_ip_assets",
+                        lambda db_path=None: ips)
+    checks = check_stock("002594", "比亚迪", "ashare")
+    item = next(c for c in checks if c.name == "知识产权")
+    assert item.status == "OK"
+    assert "专利 1 件" in str(item.detail)
+    assert "论文 1 篇" in str(item.detail)

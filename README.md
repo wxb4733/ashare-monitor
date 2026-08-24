@@ -702,3 +702,10 @@ python -c "from ashare_monitor.import_data import import_klines_json, import_com
 # 2. 天眼查画像：import_company_profile(全称, {工商/规模/标签/...}) → company_profiles 表
 #    ——真实：比亚迪（成立 1995-02-10/王传福/大型/新能源车整车制造）→ check 工商画像维度
 # 3. 会话内工作流：DeferExecuteTool(mcp wind/tyc) 拉数据 → Bash python 调 import_data 落库
+
+# 智慧芽专利/论文回填（知识产权维度）
+# 会话内拉取（patsnap_search patent/paper）→ import_ip_assets 落库：
+python -c "from ashare_monitor.import_data import import_ip_assets; import_ip_assets('比亚迪股份有限公司', patents=[...], papers=[...])"
+# 真实：比亚迪专利 15 件（总量 27493）+ 论文 10 篇（2026-01 最新）→ check 知识产权维度
+# 专利字段：pn/title/ipc/legal_status/date/inventors；论文：title/authors/org/date/journal
+# 最新专利：CN122619700A 负极片（快充）；比亚迪技术布局集中在 H01M 电池/电解液

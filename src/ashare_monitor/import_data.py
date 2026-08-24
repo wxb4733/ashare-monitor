@@ -121,3 +121,102 @@ def get_all_company_profiles(db_path: str | Path | None = None) -> dict:
         return {}
     finally:
         conn.close()
+
+
+# ── 知识产权资产（智慧芽专利/论文导入） ─────────────────────
+
+def import_ip_assets(company_name: str, patents: list | None = None,
+                     papers: list | None = None,
+                     db_path: str | Path | None = None) -> bool:
+    """导入知识产权资产（智慧芽）：专利/论文列表 → ip_assets 表（upsert 合并）。
+
+    :param patents: [{pn, title, date, legal_status, ...}]
+    :param papers:  [{title, authors, org, date, ...}]
+    """
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn(db_path) if db_path else get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        with conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS ip_assets (
+                    company TEXT PRIMARY KEY,
+                    patents TEXT,
+                    papers TEXT,
+                    updated TEXT)""")
+            row = conn.execute(
+                "SELECT patents, papers FROM ip_assets WHERE company=?",
+                (company_name,)).fetchone()
+            old_p = json.loads(row["patents"]) if row and row["patents"] else []
+            old_a = json.loads(row["papers"]) if row and row["papers"] else []
+            # 合并去重（按 pn/title）
+            if patents:
+                seen = {p.get("pn") or p.get("title") for p in old_p}
+                for p in patents:
+                    key = p.get("pn") or p.get("title")
+                    if key and key not in seen:
+                        old_p.append(p)
+                        seen.add(key)
+            if papers:
+                seen = {a.get("title") for a in old_a}
+                for a in papers:
+                    if a.get("title") and a["title"] not in seen:
+                        old_a.append(a)
+                        seen.add(a["title"])
+            conn.execute(
+                "INSERT OR REPLACE INTO ip_assets (company, patents, papers, "
+                "updated) VALUES (?,?,?,?)",
+                (company_name, json.dumps(old_p, ensure_ascii=False),
+                 json.dumps(old_a, ensure_ascii=False),
+                 __import__("datetime").datetime.now().strftime("%Y-%m-%d")))
+        return True
+    finally:
+        conn.close()
+
+
+def load_ip_assets(company_name: str,
+                   db_path: str | Path | None = None) -> dict | None:
+    """读取知识产权资产（无则 None）：{patents: [...], papers: [...], updated}。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn(db_path) if db_path else get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT patents, papers, updated FROM ip_assets WHERE company=?",
+            (company_name,)).fetchone()
+        if not row:
+            return None
+        return {"patents": json.loads(row["patents"] or "[]"),
+                "papers": json.loads(row["papers"] or "[]"),
+                "updated": row["updated"]}
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+
+
+def get_all_ip_assets(db_path: str | Path | None = None) -> dict:
+    """读取全部知识产权资产：{company: {...}}。"""
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn(db_path) if db_path else get_conn()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT company, patents, papers, updated FROM ip_assets").fetchall()
+        return {r["company"]: {
+            "patents": json.loads(r["patents"] or "[]"),
+            "papers": json.loads(r["papers"] or "[]"),
+            "updated": r["updated"]} for r in rows}
+    except sqlite3.OperationalError:
+        return {}
+    finally:
+        conn.close()
