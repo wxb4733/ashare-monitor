@@ -692,3 +692,13 @@ python -m ashare_monitor.main screen --market us --metric lowval --top 30
 python -c "from ashare_monitor.asset import fetch_onchain_profile; print(fetch_onchain_profile('BTCUSDT'))"
 # 链上：BTC 通胀率（blockchain.info 无 key）/ ETH 质押收益（Lido APR）
 # 沙箱境外不可达（如实）→ 本机直连验证
+
+# Wind / 天眼查数据回填（MCP 会话内导入）
+# 项目 CLI 运行时无法调用 MCP → 会话内拉取 + import_data 落库：
+python -c "from ashare_monitor.import_data import import_klines_json, import_company_profile; ..."
+# 1. Wind K 线：import_klines_json([{date,open,close,high,low,volume}], market, code)
+#    ——真实：比亚迪 58 根导入，补 8/21、8/24；7 日与 akshare 逐点一致（口径吻合）
+#    8/20 偏差 0.51（复权基准差异，如实）
+# 2. 天眼查画像：import_company_profile(全称, {工商/规模/标签/...}) → company_profiles 表
+#    ——真实：比亚迪（成立 1995-02-10/王传福/大型/新能源车整车制造）→ check 工商画像维度
+# 3. 会话内工作流：DeferExecuteTool(mcp wind/tyc) 拉数据 → Bash python 调 import_data 落库

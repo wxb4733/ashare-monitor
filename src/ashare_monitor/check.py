@@ -364,6 +364,37 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
     except Exception:  # noqa: BLE001
         checks.append(_warn("股权质押", "数据源受限"))
 
+    # 15a. 工商画像（天眼查导入，company_profiles）
+    try:
+        from .import_data import get_all_company_profiles
+
+        profiles = get_all_company_profiles()
+        match = None
+        for full_name, prof in profiles.items():
+            if name in full_name or full_name in name:
+                match = prof
+                break
+        if match:
+            detail = []
+            scale = match.get("规模")
+            if scale:
+                detail.append(f"规模 {scale}")
+            tags = match.get("标签")
+            if isinstance(tags, list) and tags:
+                detail.append(f"标签 {'/'.join(tags[:3])}")
+            labels = match.get("标签") if isinstance(match.get("标签"), str) else None
+            est = match.get("成立日期") or match.get("成立时间")
+            if est:
+                detail.append(f"成立 {str(est)[:10]}")
+            status = match.get("经营状态")
+            if status:
+                detail.append(status)
+            if detail:
+                checks.append(_ok("工商画像", "；".join(detail)))
+            else:
+                checks.append(_ok("工商画像", "已导入"))
+    except Exception:  # noqa: BLE001
+        pass
     # 15b. 两融（融资余额与趋势）
     try:
         from .a_stock_data import margin_trading
