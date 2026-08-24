@@ -2227,9 +2227,12 @@ def run_strategy_backtest(codes: str, config_path: str | None,
                           start: str | None,
                           rebalance: bool = False,
                           frequency: str = "monthly",
-                          cost: float = 5.0) -> None:
-    """组合回测：等权/周期再平衡（含成本）vs 沪深 300。"""
+                          cost: float = 5.0,
+                          optimize: bool = False,
+                          report: bool = False) -> None:
+    """组合回测：等权/周期再平衡（含成本/网格优化/HTML 报告）vs 沪深 300。"""
     from .strategy import (
+        optimize_backtest,
         portfolio_backtest,
         portfolio_backtest_rebalanced,
     )
@@ -2255,17 +2258,52 @@ def run_strategy_backtest(codes: str, config_path: str | None,
         table.add_column("年化%", justify="right")
         table.add_column("最大回撤%", justify="right")
         table.add_column("夏普", justify="right")
+        table.add_column("Sortino", justify="right")
+        table.add_column("日胜率%", justify="right")
         for label, key in [("静态等权(含成本)", "buy_hold_cost"),
                            (f"{fname}再平衡", "periodic"),
                            ("沪深300", "benchmark")]:
             s_ = result[key]
             table.add_row(label, f"[red]{s_['total']:.2f}[/red]",
                           f"{s_['annual']:.2f}", f"{s_['max_dd']:.2f}",
-                          f"{s_['sharpe']:.2f}")
+                          f"{s_['sharpe']:.2f}", f"{s_['sortino']:.2f}",
+                          f"{s_['win_rate']:.1f}")
         console.print(table)
         ex = result["periodic"]["annual"] - result["benchmark"]["annual"]
         console.print(f"[bold]{fname}再平衡年化{'跑赢' if ex>0 else '跑输'}基准 "
                       f"{abs(ex):.2f} 个百分点[/bold]")
+        if optimize:
+            console.print(f"[cyan]参数网格优化（频率 × 成本）…[/cyan]")
+            grid = optimize_backtest(code_list, start=start)
+            ok = [r for r in grid["results"] if "error" not in r]
+            if ok:
+                gt = Table(title=f"参数网格 {len(grid['results'])} 组"
+                                 f"（最优按夏普）")
+                gt.add_column("频率", justify="left")
+                gt.add_column("成本bp", justify="right")
+                gt.add_column("年化%", justify="right")
+                gt.add_column("最大回撤%", justify="right")
+                gt.add_column("夏普", justify="right")
+                gt.add_column("Sortino", justify="right")
+                for r in sorted(ok, key=lambda x: -x["sharpe"]):
+                    mark = " ★" if (grid["best"] and
+                                    r["sharpe"] == grid["best"]["sharpe"]) else ""
+                    gt.add_row(f"{r['frequency']}{mark}",
+                               str(r["cost_bps"]), f"{r['annual']:.2f}",
+                               f"{r['max_dd']:.2f}", f"{r['sharpe']:.2f}",
+                               f"{r['sortino']:.2f}")
+                console.print(gt)
+        if report:
+            from .backtest_report import render_backtest_html
+
+            from pathlib import Path
+
+            out_dir = Path("output")
+            out_dir.mkdir(exist_ok=True)
+            path = render_backtest_html(
+                result, code_list,
+                out_dir / f"backtest-{datetime.now():%Y-%m-%d}.html")
+            console.print(f"[green]回测报告已生成: {path}[/green]")
         print_disclaimer()
         return
     console.print(f"[cyan]组合回测 {len(code_list)} 只等权 vs 沪深 300…[/cyan]")
@@ -4294,6 +4332,10 @@ def build_parser() -> argparse.ArgumentParser:
                       default="monthly", help="再平衡频率（默认月度）")
     p_st.add_argument("--cost", type=float, default=5.0,
                       help="单边交易成本 bp（佣金+印花税+滑点，默认 5）")
+    p_st.add_argument("--optimize", action="store_true",
+                      help="backtest：参数网格优化（频率×成本，最优按夏普）")
+    p_st.add_argument("--report", action="store_true",
+                      help="backtest：生成 HTML 报告（净值曲线+月度热力图）")
     p_st.add_argument("--capital", type=float, default=100000.0,
                       help="资金（默认 10 万）")
     p_st.add_argument("--top", type=int, default=10, help="持仓数量")
@@ -4678,7 +4720,9 @@ def main() -> None:
             run_strategy_backtest(args.codes, args.config, args.start,
                                   getattr(args, "rebalance", False),
                                   getattr(args, "frequency", "monthly"),
-                                  getattr(args, "cost", 5.0))
+                                  getattr(args, "cost", 5.0),
+                                  getattr(args, "optimize", False),
+                                  getattr(args, "report", False))
         elif args.strategy == "rebalance":
             run_strategy_rebalance("dividend", args.config, args.capital,
                                    args.top, args.min_yield, args.paper,

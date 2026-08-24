@@ -521,10 +521,14 @@ def portfolio_backtest_rebalanced(codes: list[str],
 
     import akshare as ak
 
-    idx = ak.stock_zh_index_daily(symbol="sh000300")
-    idx_rows = [{"date": str(r["date"])[:10], "close": float(r["close"])}
-                for _, r in idx.iterrows()]
-    idx_map = {r["date"]: r["close"] for r in idx_rows}
+    # 指数缓存（网格优化多轮复用，避免重复拉取）
+    cache_key = (start, end)
+    if cache_key not in _INDEX_CACHE:
+        idx = ak.stock_zh_index_daily(symbol="sh000300")
+        idx_rows = [{"date": str(r["date"])[:10], "close": float(r["close"])}
+                    for _, r in idx.iterrows()]
+        _INDEX_CACHE[cache_key] = {r["date"]: r["close"] for r in idx_rows}
+    idx_map = _INDEX_CACHE[cache_key]
 
     # 按日期合并所有标的收盘
     dates = sorted({r["date"] for rows in series.values() for r in rows})
@@ -550,7 +554,7 @@ def portfolio_backtest_rebalanced(codes: list[str],
             val = sum(units[c] * close_at[d][c] for c in series)
             nav = val / sum(units[c] * first[c] for c in series)
             navs.append((nav - 1) * 100)
-        return _ret_stats(navs, dates)
+        return _ret_stats(navs, dates), navs
 
     # 周期再平衡：周期首日重置等权（涨跌停受限标的不重置），扣换仓成本
     def _periodic():
@@ -589,7 +593,7 @@ def portfolio_backtest_rebalanced(codes: list[str],
             prev_closes = {c: close_at[d][c] for c in series}
             last_val = {c: close_at[d][c] for c in series}
             navs.append((nav - 1) * 100)
-        return _ret_stats(navs, dates)
+        return _ret_stats(navs, dates), navs
 
     def _buy_hold_cost():
         # 静态等权：仅首日建仓成本
@@ -602,39 +606,75 @@ def portfolio_backtest_rebalanced(codes: list[str],
             nav = (1 - cost_bps / 10000) * val / sum(
                 units[c] * first[c] for c in series)
             navs.append((nav - 1) * 100)
-        return _ret_stats(navs, dates)
-
-    # 基准
-    bench_nav = []
-    base = idx_map.get(dates[0])
-    if base:
-        for d in dates:
-            v = idx_map.get(d)
-            if v:
-                bench_nav.append((v / base - 1) * 100)
+        return _ret_stats(navs, dates), navs
 
     def _bench_stats():
+        # 基准净值序列与 dates 对齐（缺失日沿用前值）
         nav = 1.0
         navs = []
         prev = None
         for d in dates:
             v = idx_map.get(d)
-            if v and prev:
-                nav *= (1 + (v / prev - 1))
             if v:
+                if prev:
+                    nav *= (1 + (v / prev - 1))
                 prev = v
-                navs.append((nav - 1) * 100)
-        return _ret_stats(navs, dates)
+            navs.append((nav - 1) * 100)
+        return _ret_stats(navs, dates), navs
 
+    bh_stats, bh_navs = _buy_hold()
+    bhc_stats, bhc_navs = _buy_hold_cost()
+    per_stats, per_navs = _periodic()
+    bench_stats, bench_navs = _bench_stats()
     return {
         "dates": dates,
-        "buy_hold": _buy_hold(),
-        "buy_hold_cost": _buy_hold_cost(),
-        "periodic": _periodic(),
+        "buy_hold": bh_stats,
+        "buy_hold_cost": bhc_stats,
+        "periodic": per_stats,
         "frequency": frequency, "cost_bps": cost_bps,
         "limit_pct": limit_pct,
-        "benchmark": _bench_stats(),
+        "benchmark": bench_stats,
+        "nav_series": {"dates": dates, "buy_hold": bh_navs,
+                       "periodic": per_navs, "benchmark": bench_navs},
     }
+
+
+# 指数缓存（模块级，网格优化复用）
+_INDEX_CACHE: dict = {}
+
+
+def optimize_backtest(codes: list[str],
+                      frequencies=("monthly", "quarterly", "semi_annual"),
+                      costs=(0.0, 5.0, 10.0),
+                      start: str | None = None,
+                      limit_pct: float | None = 9.5) -> dict:
+    """参数网格优化（backtesting.py optimize 模式）：频率 × 成本 扫描。
+
+    返回 {"results": [...], "best": {...}}——best 按夏普最高，
+    results 每项含 frequency/cost_bps/annual/total/max_dd/sharpe/sortino。
+    """
+    rows = []
+    for f in frequencies:
+        for c in costs:
+            try:
+                r = portfolio_backtest_rebalanced(
+                    codes, start=start, frequency=f, cost_bps=c,
+                    limit_pct=limit_pct)
+                rows.append({
+                    "frequency": f, "cost_bps": c,
+                    "annual": r["periodic"]["annual"],
+                    "total": r["periodic"]["total"],
+                    "max_dd": r["periodic"]["max_dd"],
+                    "sharpe": r["periodic"]["sharpe"],
+                    "sortino": r["periodic"]["sortino"],
+                    "win_rate": r["periodic"]["win_rate"],
+                })
+            except Exception as exc:  # noqa: BLE001
+                rows.append({"frequency": f, "cost_bps": c,
+                             "error": str(exc)[:40]})
+    ok = [r for r in rows if "error" not in r]
+    best = max(ok, key=lambda r: r["sharpe"]) if ok else None
+    return {"results": rows, "best": best}
 
 
 def _period_key(date: str, frequency: str) -> str:
@@ -655,7 +695,11 @@ def _close_on(rows: list[dict], date: str) -> float | None:
 
 
 def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
-    """从累计收益序列算统计。"""
+    """从累计收益序列算统计（pyfolio 口径扩展：9 项）。
+
+    新增（相对旧 4 项）：sortino（下行风险调整）/ win_rate（日胜率）/
+    profit_factor（盈亏比）/ best_day / worst_day。
+    """
     nav = 1.0
     peak = 1.0
     max_dd = 0.0
@@ -674,8 +718,21 @@ def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
     mean = sum(rets) / n if n else 0.0
     var = sum((r - mean) ** 2 for r in rets) / n if n else 0.0
     sharpe = (mean / (var ** 0.5) * (252 ** 0.5) if var > 0 else 0.0)
+    # pyfolio 扩展：下行风险 / 胜率 / 盈亏比 / 最佳最差日
+    downside_var = sum(r * r for r in rets if r < 0) / n if n else 0.0
+    sortino = (mean / (downside_var ** 0.5) * (252 ** 0.5)
+               if downside_var > 0 else 0.0)
+    win_rate = (sum(1 for r in rets if r > 0) / n * 100 if n else 0.0)
+    gains = sum(r for r in rets if r > 0)
+    losses = -sum(r for r in rets if r < 0)
+    profit_factor = (gains / losses if losses > 0
+                     else (99.0 if gains > 0 else 0.0))
     return {"total": round(total, 2), "annual": round(annual, 2),
             "max_dd": round(max_dd * 100, 2), "sharpe": round(sharpe, 2),
+            "sortino": round(sortino, 2), "win_rate": round(win_rate, 1),
+            "profit_factor": round(profit_factor, 2),
+            "best_day": round(max(rets), 2) if rets else 0.0,
+            "worst_day": round(min(rets), 2) if rets else 0.0,
             "days": n}
 
 

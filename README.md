@@ -669,3 +669,11 @@ python -m ashare_monitor.main mcp      # 启动（stdio）
 # 23 个工具自动暴露（quote/check/screen/backtest/factor_ic/paper_*/ad_*）
 # 协议：JSON-RPC 2.0 over stdio（initialize/tools/list/tools/call）
 # 零依赖实现（不装 mcp SDK）；工具注册表从 api.py 函数签名自动生成
+
+# 回测报告升级（5k-10k star 项目借鉴：优化/统计/可视化）
+python -m ashare_monitor.main strategy backtest --codes 600519,000001,300750,002594 \
+  --start 2024-01-01 --rebalance --optimize --report
+# --optimize：参数网格（频率×成本 9 组）最优按夏普——真实：半年再平衡最优
+#   （semi_annual+0bp 夏普 0.95/年化 32.78%，月度 26-28%——再平衡频率再验证）
+# 统计 4→9 项：+Sortino/日胜率/盈亏比/最佳日/最差日（pyfolio 模式）
+# --report：output/backtest-*.html（净值曲线 SVG + 月度热力图，纯标准库零依赖）
