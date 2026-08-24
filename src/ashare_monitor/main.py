@@ -2073,6 +2073,32 @@ def run_ad(sub: str, codes: str, config_path: str | None) -> None:
                                       f" / 超大单 {r['super_net']/1e4:+.0f} 万")
                     console.print(f"  近 20 日主力累计: "
                                   f"{total20/1e8:+.2f} 亿")
+        elif sub == "fin":
+            if not code_list:
+                console.print("[red]需指定代码：ad fin 600519 --report lrb[/red]")
+                return
+            rtype = {"fzb": "资产负债表", "lrb": "利润表", "llb": "现金流量表"}
+            for code in code_list:
+                rows = ad.sina_financial_report(code, "lrb")
+                if not rows:
+                    console.print(f"[yellow]{code} 三表无数据（网络受限如实）[/yellow]")
+                    continue
+                latest = rows[0]
+                console.print(f"[cyan]{code} 利润表最新期 {latest.get('报告期')}[/cyan]")
+                for key in ["营业收入", "营业利润", "净利润", "归属于母公司所有者的净利润"]:
+                    if key in latest:
+                        console.print(f"  {key}: {latest[key]}")
+                if "净利润_同比" in latest:
+                    console.print(f"  净利润同比: {latest['净利润_同比']}")
+        elif sub == "announce":
+            if not code_list:
+                console.print("[red]需指定代码：ad announce 600519[/red]")
+                return
+            for code in code_list:
+                anns = ad.cninfo_announcements(code, page_size=15)
+                console.print(f"[cyan]{code} 巨潮公告（近 {len(anns)} 条）[/cyan]")
+                for a in anns[:10]:
+                    console.print(f"  {a['date']} | {a['type']} | {a['title'][:40]}")
         elif sub == "unlock":
             if not code_list:
                 console.print("[red]需指定代码：ad unlock 002594[/red]")
@@ -3949,7 +3975,8 @@ def main() -> None:
                            help="K 线增量更新（每日任务）")
     p_ad = sub.add_parser("ad", help="A 股全栈数据（融合 a-stock-data）")
     p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock",
-                                      "margin", "block", "fundflow"],
+                                      "margin", "block", "fundflow",
+                                      "fin", "announce"],
                       help="quote/hot/lhb/unlock/margin 两融/block 大宗/"
                            "fundflow 资金流120日")
     p_ad.add_argument("codes", nargs="?", default="", help="代码（逗号分隔）")

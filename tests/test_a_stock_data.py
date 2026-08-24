@@ -125,3 +125,52 @@ def test_fund_flow_120d(monkeypatch):
     assert len(rows) == 2
     assert rows[0]["main_net"] == pytest.approx(1.0e7)
     assert rows[0]["super_net"] == pytest.approx(5.0e6)
+
+
+def test_sina_financial_report(monkeypatch):
+    from ashare_monitor.a_stock_data import sina_financial_report
+
+    class _R:
+        def json(self):
+            return {"result": {"data": {"report_list": {
+                "20260331": {"data": [
+                    {"item_title": "营业收入", "item_value": "9.07e10",
+                     "item_tongbi": "0.05"},
+                    {"item_title": "净利润", "item_value": "4.6e10",
+                     "item_tongbi": ""},
+                ]},
+                "20251231": {"data": [
+                    {"item_title": "营业收入", "item_value": "8.5e10",
+                     "item_tongbi": ""},
+                ]},
+            }}}}
+
+    monkeypatch.setattr("ashare_monitor.a_stock_data.requests.get",
+                        lambda *a, **k: _R())
+    rows = sina_financial_report("600519", "lrb", num=2)
+    assert len(rows) == 2
+    assert rows[0]["报告期"] == "2026-03-31"
+    assert rows[0]["营业收入"] == "9.07e10"
+    assert rows[0]["营业收入_同比"] == "0.05"     # 有同比附 _同比 键
+    assert "净利润_同比" not in rows[0]            # 无同比不加键
+
+
+def test_cninfo_announcements(monkeypatch):
+    from ashare_monitor.a_stock_data import cninfo_announcements
+
+    class _R:
+        def json(self):
+            return {"announcements": [
+                {"announcementTitle": "2026年半年度报告",
+                 "announcementTypeName": "定期报告",
+                 "announcementTime": 1787308800000,
+                 "announcementId": "12345"},
+            ]}
+
+    monkeypatch.setattr("ashare_monitor.a_stock_data.requests.post",
+                        lambda *a, **k: _R())
+    anns = cninfo_announcements("600519")
+    assert len(anns) == 1
+    assert anns[0]["title"] == "2026年半年度报告"
+    assert "2026-" in anns[0]["date"]             # 时间戳转日期
+    assert "annoId=12345" in anns[0]["url"]

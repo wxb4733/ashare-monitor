@@ -319,3 +319,76 @@ def stock_fund_flow_120d(code: str) -> list[dict]:
                 "super_net": _f(parts[5]) or 0,  # 超大单
             })
     return rows
+
+
+# ── 新浪财报三表（资产负债表/利润表/现金流量表）──────────────────
+
+def sina_financial_report(code: str, report_type: str = "lrb",
+                          num: int = 8) -> list[dict]:
+    """新浪财报三表（fzb 资产负债 / lrb 利润 / llb 现金流）。
+
+    结构：result.data.report_list 按报告期为键，每期 data 为行项列表
+    （item_title / item_value / item_tongbi）。
+    """
+    prefix = "sh" if code.startswith("6") else "sz"
+    url = ("https://quotes.sina.cn/cn/api/openapi.php/"
+           "CompanyFinanceService.getFinanceReport2022")
+    params = {"paperCode": f"{prefix}{code}", "source": report_type,
+              "type": "0", "page": "1", "num": str(num)}
+    r = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=15)
+    report_list = (r.json().get("result", {}).get("data", {})
+                   .get("report_list", {})) or {}
+    rows = []
+    for period in sorted(report_list.keys(), reverse=True)[:num]:
+        obj = report_list[period]
+        rec = {"报告期": f"{period[:4]}-{period[4:6]}-{period[6:8]}"}
+        for it in obj.get("data", []) or []:
+            title = it.get("item_title", "")
+            if not title or it.get("item_value") is None:
+                continue
+            rec[title] = it.get("item_value")
+            tongbi = it.get("item_tongbi")
+            if tongbi not in (None, ""):
+                rec[title + "_同比"] = tongbi
+        rows.append(rec)
+    return rows
+
+
+# ── 巨潮公告全文检索（cninfo）───────────────────────────────────
+
+def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
+    """巨潮公告检索：标题/类型/日期/详情页 URL（orgId 2026 新格式）。"""
+    if code.startswith("6"):
+        org_id = f"gssh0{code}"
+    elif code.startswith("8") or code.startswith("4"):
+        org_id = f"gsbj0{code}"
+    else:
+        org_id = f"gssz0{code}"
+    url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+    payload = {
+        "stock": f"{code},{org_id}", "tabName": "fulltext",
+        "pageSize": str(page_size), "pageNum": "1",
+        "column": "", "category": "", "plate": "", "seDate": "",
+        "searchkey": "", "secid": "", "sortName": "", "sortType": "",
+        "isHLtitle": "true",
+    }
+    headers = {"User-Agent": UA,
+               "Content-Type": "application/x-www-form-urlencoded",
+               "Referer": "https://www.cninfo.com.cn/new/disclosure",
+               "Origin": "https://www.cninfo.com.cn"}
+    r = requests.post(url, data=payload, headers=headers, timeout=15)
+    d = r.json()
+    rows = []
+    for item in d.get("announcements", []) or []:
+        ts = item.get("announcementTime")
+        date = (datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                if isinstance(ts, (int, float)) else
+                str(ts)[:10] if ts else "")
+        rows.append({
+            "title": item.get("announcementTitle", ""),
+            "type": item.get("announcementTypeName", ""),
+            "date": date,
+            "url": ("https://www.cninfo.com.cn/new/disclosure/detail"
+                    f"?annoId={item.get('announcementId', '')}"),
+        })
+    return rows
