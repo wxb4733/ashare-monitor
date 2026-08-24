@@ -644,3 +644,12 @@ python -m ashare_monitor.main strategy dividend --paper --commission 2.5 --stamp
 # 佣金：--commission 万分数（A 股参考 2.5=万2.5）/ --stamp 印花税卖出（5=0.05%）
 # 默认 0（与历史行为零变化）；旧仓位无现金记录 → 现金 0（如实），注入 --capital 开始记账
 # 真实：平安银行 11.56 元 买卖各 1 笔 + 超持仓拒单，佣金 0.29/0.35 元精确
+
+# Python API 层（OpenBB 模式：一行代码查数据）
+python -c "import ashare_monitor.api as am; print(am.quote('002594').price)"
+python -c "import ashare_monitor.api as am; print(am.history('NVDA')['annualized_pct'])"
+# 核心函数：quote/quotes/kline/history/profile/check/screen/backtest/
+#   factor_ic/factor_expr/paper_report/paper_orders/ad_quote/ad_margin/...
+# 市场自动识别：数字=A股/港股、USDT=币、其他=美股（detect_market）
+# 返回类型与 CLI 同源（Quote/ScreenHit/CheckItem/AssetProfile），零重复实现
+# 意义：任何脚本/AI Agent 可编程调用；MCP Server 只需在此之上再套一层注册表
