@@ -216,6 +216,7 @@ def build_html(
     financial_rows: list[dict] | None = None,
     ipo_rows: list[dict] | None = None,
     timing_signals: list[dict] | None = None,
+    ip_rows: list[dict] | None = None,
 ) -> str:
     """拼装复盘报告 HTML。charts: [{id, title, dates, kdata, volumes}]。
 
@@ -344,6 +345,27 @@ def build_html(
 <tr><th>日期</th><th>标的</th><th>类型</th><th style="text-align:left">标题</th><th>原文</th></tr>
 {''.join(rows)}
 </table>
+</div>""")
+
+    if ip_rows:
+        rows = []
+        for r in ip_rows:
+            status_style = "green" if r["np"] else "#86909c"
+            rows.append(
+                "<tr>"
+                f"<td>{r['name']}</td><td>{r['np']}</td><td>{r['na']}</td>"
+                f'<td><span class="tag" style="color:{status_style}">{r["status"]}</span></td>'
+                f"<td>{r['ipc']}</td><td>{r['latest']}</td>"
+                f"<td>{r['updated']}</td>"
+                "</tr>"
+            )
+        add_section("知识产权布局（智慧芽）", f"""
+<div class="card">
+<table>
+<tr><th>标的</th><th>专利(采样)</th><th>论文</th><th>法律状态</th><th>技术聚焦</th><th>最新专利</th><th>回填时间</th></tr>
+{''.join(rows)}
+</table>
+<div style="margin-top:8px;font-size:12px;color:#86909c">专利/论文为智慧芽会话内采样快照（每标的 ≤15 件专利），非全量；未回填标的显示 0。数据仅供研发布局参考。</div>
 </div>""")
 
     if ipo_rows:
@@ -655,12 +677,47 @@ def generate_review(
     except Exception as exc:  # noqa: BLE001
         logger.warning("复盘：择时信号扫描失败: %s", exc)
 
+    # 知识产权布局（智慧芽回填，失败不阻塞）
+    ip_rows: list[dict] = []
+    try:
+        from collections import Counter
+
+        from .import_data import get_all_ip_assets
+
+        assets = get_all_ip_assets()
+        for item in cfg.watchlist:
+            nm = str(item.get("name", ""))
+            ip = None
+            for k, v in assets.items():
+                if nm and (nm in k or k in nm):
+                    ip = v
+                    break
+            pats = (ip or {}).get("patents") or []
+            papers = (ip or {}).get("papers") or []
+            row = {"name": nm, "np": len(pats), "na": len(papers),
+                   "status": "未回填" if not pats else "-",
+                   "ipc": "-", "latest": "-",
+                   "updated": (ip or {}).get("updated", "")}
+            if pats:
+                st = Counter(p.get("legal_status") or "unknown" for p in pats)
+                act, pend = st.get("active", 0), st.get("pending", 0)
+                ipc_cnt = Counter((p.get("ipc") or "")[:4]
+                                  for p in pats if p.get("ipc"))
+                row["ipc"] = (ipc_cnt.most_common(1)[0][0]
+                              if ipc_cnt else "-")
+                row["status"] = f"有效{act}/申请{pend}"
+                latest = max(pats, key=lambda x: str(x.get("date") or ""))
+                row["latest"] = f"{str(latest.get('date', ''))[:10]}"
+            ip_rows.append(row)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("复盘：知识产权布局读取失败: %s", exc)
+
     html = build_html(
         date_str, quotes, records, charts,
         index_quotes=index_quotes, index_charts=index_charts,
         indicator_rows=indicator_rows, news_rows=news_rows,
         financial_rows=financial_rows, ipo_rows=ipo_rows,
-        timing_signals=timing_signals,
+        timing_signals=timing_signals, ip_rows=ip_rows,
     )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
