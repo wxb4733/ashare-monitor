@@ -239,3 +239,83 @@ def _f(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+# ── 融资融券（两融余额，日级）───────────────────────────────────
+
+def margin_trading(code: str, page_size: int = 10) -> list[dict]:
+    """融资融券明细：融资余额/买入/偿还 + 融券余额（东财 datacenter）。"""
+    data = eastmoney_datacenter(
+        "RPTA_WEB_RZRQ_GGMX", filter_str=f'(SCODE="{code}")',
+        page_size=page_size, sort_columns="DATE", sort_types="-1")
+    rows = []
+    for row in data:
+        rows.append({
+            "date": str(row.get("DATE", ""))[:10],
+            "rzye": row.get("RZYE", 0),       # 融资余额(元)
+            "rzmre": row.get("RZMRE", 0),     # 融资买入额
+            "rqye": row.get("RQYE", 0),       # 融券余额(元)
+            "rzrqye": row.get("RZRQYE", 0),   # 两融合计
+        })
+    return rows
+
+
+# ── 大宗交易（溢价率 + 买卖方营业部）────────────────────────────
+
+def block_trade(code: str, page_size: int = 20) -> list[dict]:
+    """大宗交易记录：成交价/量 + 溢价率 + 买卖方（东财 datacenter）。"""
+    data = eastmoney_datacenter(
+        "RPT_DATA_BLOCKTRADE", filter_str=f'(SECURITY_CODE="{code}")',
+        page_size=page_size, sort_columns="TRADE_DATE", sort_types="-1")
+    rows = []
+    for row in data:
+        close = row.get("CLOSE_PRICE") or 0
+        deal_price = row.get("DEAL_PRICE") or 0
+        premium = ((deal_price / close - 1) * 100) if close else 0
+        rows.append({
+            "date": str(row.get("TRADE_DATE", ""))[:10],
+            "price": deal_price, "close": close,
+            "premium_pct": round(premium, 2),
+            "vol": row.get("DEAL_VOLUME", 0),
+            "amount": row.get("DEAL_AMT", 0),
+            "buyer": row.get("BUYER_NAME", ""),
+            "seller": row.get("SELLER_NAME", ""),
+        })
+    return rows
+
+
+# ── 个股资金流 120 日（主力/超大/大/中/小单）────────────────────
+
+def stock_fund_flow_120d(code: str) -> list[dict]:
+    """资金流日级（最近 120 交易日）：主力/超大/大/中/小单净流入（元）。"""
+    market_code = 1 if code.startswith("6") else 0
+    url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+    params = {
+        "secid": f"{market_code}.{code}",
+        "fields1": "f1,f2,f3,f7",
+        "fields2": ("f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,"
+                    "f61,f62,f63,f64,f65"),
+        "lmt": "120",
+    }
+    headers = {"User-Agent": UA,
+               "Referer": "https://quote.eastmoney.com/",
+               "Origin": "https://quote.eastmoney.com"}
+    try:
+        d = em_get(url, params=params, headers=headers, timeout=15).json()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("push2 资金流请求失败: %s", exc)
+        return []
+    klines = (d.get("data") or {}).get("klines") or []
+    rows = []
+    for line in klines:
+        parts = line.split(",")
+        if len(parts) >= 7:
+            rows.append({
+                "date": parts[0],
+                "main_net": _f(parts[1]) or 0,   # 主力净流入
+                "small_net": _f(parts[2]) or 0,
+                "mid_net": _f(parts[3]) or 0,
+                "large_net": _f(parts[4]) or 0,
+                "super_net": _f(parts[5]) or 0,  # 超大单
+            })
+    return rows

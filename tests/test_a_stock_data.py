@@ -80,3 +80,48 @@ def test_dragon_tiger_board(monkeypatch):
     assert data["records"][0]["net_buy_wan"] == pytest.approx(5000.0)
     assert data["institution"]["buy_wan"] == pytest.approx(1000.0)
     assert data["institution"]["net_wan"] == pytest.approx(1000.0)
+
+
+def test_margin_trading(monkeypatch):
+    from ashare_monitor import a_stock_data as ad
+
+    monkeypatch.setattr(
+        "ashare_monitor.a_stock_data.eastmoney_datacenter",
+        lambda *a, **k: [{"DATE": "2026-08-21", "RZYE": 2.0e10,
+                          "RZMRE": 5.0e9, "RQYE": 1.0e8,
+                          "RZRQYE": 2.01e10}])
+    rows = ad.margin_trading("600519")
+    assert rows[0]["date"] == "2026-08-21"
+    assert rows[0]["rzye"] == pytest.approx(2.0e10)
+
+
+def test_block_trade(monkeypatch):
+    from ashare_monitor import a_stock_data as ad
+
+    monkeypatch.setattr(
+        "ashare_monitor.a_stock_data.eastmoney_datacenter",
+        lambda *a, **k: [{"TRADE_DATE": "2026-08-21", "DEAL_PRICE": 1200.0,
+                          "CLOSE_PRICE": 1300.0, "DEAL_VOLUME": 1000,
+                          "DEAL_AMT": 1.2e6, "BUYER_NAME": "机构专用",
+                          "SELLER_NAME": "某某营业部"}])
+    rows = ad.block_trade("600519")
+    assert rows[0]["premium_pct"] == pytest.approx(-7.69, abs=0.01)  # 折价
+    assert rows[0]["buyer"] == "机构专用"
+
+
+def test_fund_flow_120d(monkeypatch):
+    from ashare_monitor import a_stock_data as ad
+
+    class _R:
+        def json(self):
+            return {"data": {"klines": [
+                "2026-08-21,1.0e7,2.0e6,3.0e6,4.0e6,5.0e6,0,0",
+                "2026-08-20,-5.0e6,-1.0e6,-1.0e6,-2.0e6,-3.0e6,0,0",
+            ]}}
+
+    monkeypatch.setattr("ashare_monitor.a_stock_data.em_get",
+                        lambda *a, **k: _R())
+    rows = ad.stock_fund_flow_120d("600519")
+    assert len(rows) == 2
+    assert rows[0]["main_net"] == pytest.approx(1.0e7)
+    assert rows[0]["super_net"] == pytest.approx(5.0e6)

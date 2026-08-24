@@ -2018,6 +2018,61 @@ def run_ad(sub: str, codes: str, config_path: str | None) -> None:
                 inst = data["institution"]
                 console.print(f"  机构: 买 {inst['buy_wan']} 万 / 卖 {inst['sell_wan']} 万"
                               f" / 净 {inst['net_wan']} 万")
+        elif sub == "margin":
+            if not code_list:
+                console.print("[red]需指定代码：ad margin 600519[/red]")
+                return
+            for code in code_list:
+                rows = ad.margin_trading(code)
+                console.print(f"[cyan]{code} 融资融券（近 {len(rows)} 日）[/cyan]")
+                table = Table(title=f"两融明细 {code}")
+                table.add_column("日期", justify="left")
+                table.add_column("融资余额(亿)", justify="right")
+                table.add_column("融资买入(亿)", justify="right")
+                table.add_column("融券余额(亿)", justify="right")
+                for r in rows[:8]:
+                    table.add_row(r["date"],
+                                  f"{(r['rzye'] or 0)/1e8:.2f}",
+                                  f"{(r['rzmre'] or 0)/1e8:.2f}",
+                                  f"{(r['rqye'] or 0)/1e8:.2f}")
+                console.print(table)
+        elif sub == "block":
+            if not code_list:
+                console.print("[red]需指定代码：ad block 600519[/red]")
+                return
+            for code in code_list:
+                rows = ad.block_trade(code)
+                console.print(f"[cyan]{code} 大宗交易（近 {len(rows)} 笔）[/cyan]")
+                table = Table(title=f"大宗交易 {code}")
+                table.add_column("日期", justify="left")
+                table.add_column("成交价", justify="right")
+                table.add_column("溢价%", justify="right")
+                table.add_column("金额(万)", justify="right")
+                table.add_column("买方", justify="left")
+                for r in rows[:8]:
+                    table.add_row(r["date"], f"{r['price']:.2f}",
+                                  f"[green]{r['premium_pct']:+.2f}[/green]"
+                                  if r["premium_pct"] < 0 else
+                                  f"[red]{r['premium_pct']:+.2f}[/red]",
+                                  f"{(r['amount'] or 0)/1e4:.0f}",
+                                  str(r["buyer"] or "-"))
+                console.print(table)
+        elif sub == "fundflow":
+            if not code_list:
+                console.print("[red]需指定代码：ad fundflow 002594[/red]")
+                return
+            for code in code_list:
+                rows = ad.stock_fund_flow_120d(code)
+                console.print(f"[cyan]{code} 资金流 120 日（{len(rows)} 条）[/cyan]")
+                if rows:
+                    recent = rows[-5:]
+                    total20 = sum(r["main_net"] for r in rows[-20:])
+                    for r in reversed(recent):
+                        console.print(f"  {r['date']}: 主力 "
+                                      f"{r['main_net']/1e4:+.0f} 万"
+                                      f" / 超大单 {r['super_net']/1e4:+.0f} 万")
+                    console.print(f"  近 20 日主力累计: "
+                                  f"{total20/1e8:+.2f} 亿")
         elif sub == "unlock":
             if not code_list:
                 console.print("[red]需指定代码：ad unlock 002594[/red]")
@@ -3893,9 +3948,10 @@ def main() -> None:
     p_kinc = sub.add_parser("backfill_kline",
                            help="K 线增量更新（每日任务）")
     p_ad = sub.add_parser("ad", help="A 股全栈数据（融合 a-stock-data）")
-    p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock"],
-                      help="quote 富字段行情 / hot 热点题材 / lhb 龙虎榜 / "
-                           "unlock 解禁")
+    p_ad.add_argument("sub", choices=["quote", "hot", "lhb", "unlock",
+                                      "margin", "block", "fundflow"],
+                      help="quote/hot/lhb/unlock/margin 两融/block 大宗/"
+                           "fundflow 资金流120日")
     p_ad.add_argument("codes", nargs="?", default="", help="代码（逗号分隔）")
     p_history.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
                            help="市场（缺省按代码位数推断）")
