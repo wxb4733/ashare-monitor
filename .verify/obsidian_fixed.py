@@ -194,11 +194,11 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
     if not ipo_reports:
         ipo_links = "（暂无 IPO 分析报告，运行 `ipo --report` 生成）"
     else:
-        ipo_lines = []
-        for r in ipo_reports[-12:]:
-            report_date = re.search(r"\d{4}-\d{2}-\d{2}", r.name).group(0)
-            ipo_lines.append(f"- [[IPO分析/{r.stem}|IPO 分析 {report_date}]]")
-        ipo_links = "\n".join(ipo_lines)
+        ipo_links = "\n".join(
+            f"- [[IPO分析/{r.stem}|IPO 分析 "
+            f"{re.search(r'\d{4}-\d{2}-\d{2}', r.name).group(0)}]]"
+            for r in ipo_reports[-12:]
+        )
     new_ipo_index = f"<!-- IPO_INDEX_START -->\n{ipo_links}\n<!-- IPO_INDEX_END -->"
 
     # 策略验证报告索引（信号命中率 + 多标的对比）
@@ -209,12 +209,12 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
     if not bt_reports:
         bt_links = "（暂无策略验证报告，运行 `verify --report` / `backtest --compare --chart` 生成）"
     else:
-        bt_lines = []
-        for r in bt_reports[-12:]:
-            label = "命中率" if r.name.startswith("verify") else "定投对比"
-            report_date = re.search(r"\d{4}-\d{2}-\d{2}", r.name).group(0)
-            bt_lines.append(f"- [[策略验证/{r.stem}|{label} {report_date}]]")
-        bt_links = "\n".join(bt_lines)
+        bt_links = "\n".join(
+            f"- [[策略验证/{r.stem}|"
+            f"{('命中率' if r.name.startswith('verify') else '定投对比')} "
+            f"{re.search(r'\d{4}-\d{2}-\d{2}', r.name).group(0)}]]"
+            for r in bt_reports[-12:]
+        )
     new_bt_index = f"<!-- BACKTEST_INDEX_START -->\n{bt_links}\n<!-- BACKTEST_INDEX_END -->"
 
     text = home.read_text(encoding="utf-8")
