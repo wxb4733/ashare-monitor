@@ -177,12 +177,13 @@ def build_vault_index(vault_path: str | Path, reports_dir: str = "A股复盘") -
         sum_links = "（暂无汇总报告，运行 `report --weekly|--monthly|--yearly` 生成）"
     else:
         _PERIOD_CN = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
-        sum_links = "\n".join(
-            f"- [[汇总报告/{s.stem}|"
-            f"{_PERIOD_CN.get(s.name.split('-')[1], s.name.split('-')[1])} "
-            f"{re.search(r'\d{4}-\d{2}-\d{2}', s.name).group(0)}]]"
-            for s in summaries[-12:]
-        )
+        sum_lines = []
+        for s in summaries[-12:]:
+            period_key = s.name.split("-")[1]
+            period_name = _PERIOD_CN.get(period_key, period_key)
+            report_date = re.search(r"\d{4}-\d{2}-\d{2}", s.name).group(0)
+            sum_lines.append(f"- [[汇总报告/{s.stem}|{period_name} {report_date}]]")
+        sum_links = "\n".join(sum_lines)
     new_summary_index = f"<!-- REPORT_INDEX_START -->\n{sum_links}\n<!-- REPORT_INDEX_END -->"
 
     # IPO 分析报告索引

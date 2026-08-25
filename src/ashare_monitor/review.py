@@ -321,6 +321,7 @@ def build_html(
             kind = "公告" if r["kind"] == "ann" else "研报"
             src = r.get("org") or ""
             major = r["kind"] == "ann" and is_major(r["title"])
+            source_html = f'<div class="profile">{src}</div>' if src else ""
             kind_tag = (
                 f'<span class="tag" style="background:#fde8e8;color:#e02e24">'
                 f'★重大·{kind}</span>'
@@ -335,7 +336,7 @@ def build_html(
                 f"<td>{r['date']}</td><td>{r['name']}({r['code']})</td>"
                 f"<td>{kind_tag}</td>"
                 f"<td style=\"text-align:left\">{title_html}"
-                f"{f'<div class=\"profile\">{src}</div>' if src else ''}</td>"
+                f"{source_html}</td>"
                 f'<td><a href="{r["url"]}">原文</a></td>'
                 "</tr>"
             )
