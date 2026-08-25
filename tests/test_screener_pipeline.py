@@ -29,9 +29,10 @@ def test_pipeline_queue_generation(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("ashare_monitor.import_data.get_all_ip_assets",
                         lambda db_path=None: {"贵州茅台酒股份有限公司": {}})
 
-    rc = pipeline.run_pipeline(top=3, min_yield=3.0)
+    rc = pipeline.run_pipeline(top=3, min_yield=3.0,
+                               out_path=tmp_path / "backfill_queue.json")
     assert rc == 0
-    out = pipeline.ROOT / "output" / "backfill_queue.json"
+    out = tmp_path / "backfill_queue.json"
     queue = json.loads(out.read_text(encoding="utf-8"))
     names = {q["name"] for q in queue}
     assert names == {"工商银行", "格力电器"}     # 茅台已回填 → 排除

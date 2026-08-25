@@ -17,9 +17,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def run_pipeline(top: int = 20, min_yield: float = 3.0,
-                 silent_json: bool = False) -> int:
+                 silent_json: bool = False,
+                 out_path: Path | None = None) -> int:
     """执行回填管线：选股 Top N → 比对已回填 → 输出待回填队列 JSON。
 
+    :param out_path: 队列 JSON 输出路径（默认 output/backfill_queue.json；
+        测试可传临时路径隔离）
     :return: 0 成功；1 数据源不可用
     """
     from ashare_monitor.import_data import (
@@ -71,7 +74,7 @@ def run_pipeline(top: int = 20, min_yield: float = 3.0,
     if silent_json:
         print(json.dumps(queue, ensure_ascii=False, indent=2))
         return 0
-    out = ROOT / "output" / "backfill_queue.json"
+    out = out_path or (ROOT / "output" / "backfill_queue.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(queue, ensure_ascii=False, indent=2),
                    encoding="utf-8")
