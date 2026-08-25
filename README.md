@@ -2,716 +2,372 @@
 
 [![CI](https://github.com/wxb4733/ashare-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/wxb4733/ashare-monitor/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-353-green.svg)](https://github.com/wxb4733/ashare-monitor/actions)
+[![Tests](https://img.shields.io/badge/tests-356-green.svg)](https://github.com/wxb4733/ashare-monitor/actions)
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-23-orange.svg)](src/ashare_monitor/mcp_server.py)
 
-多市场（A 股 / 港股 / 美股 / 加密货币）个人投研平台 + 低频自动化交易模拟：
-实时行情监控、涨跌幅预警、选股体检（22 维）、工商画像与知识产权（天眼查/智慧芽回填）、策略回测与模拟盘。
+**个人跨市场投研平台 + 低频自动化交易模拟** —— 一个命令，覆盖 A 股 / 港股 / 美股 / 数字货币的
+行情监控、选股体检、企业画像、策略回测与模拟盘，还可被 AI Agent 直接查询。
 
-## 功能
+```
+四市场行情 → 五类预警 → 落盘 → 收盘复盘 HTML → Obsidian 知识库
+    ↕ 六因子选股 / 22 维体检 / 专利画像 / 回测 / 模拟盘
+```
 
-- **多市场支持**：A 股（默认）、港股（`market: hk`）、币安加密货币（`market: crypto`，7×24）
-- **实时行情**：多数据源自动降级（新浪 → 腾讯 → 东方财富），单一接口故障不影响监控
-- **五档盘口**：买一~买五 / 卖一~卖五挂单明细与委比计算（sina / tencent 源，A 股）
-- **预警规则**：涨跌幅超阈值、价格上破 / 下破、委比失衡、单档大单挂单、振幅波动，内置冷却去抖避免重复告警
-- **分市场交易时段**：A 股 09:30–11:30/13:00–15:00，港股 09:30–12:00/13:00–16:00，加密货币 7×24
-- **通知渠道**：控制台彩色输出（涨红跌绿），支持 webhook（企业微信 / 钉钉机器人）
+---
 
-## 数据源
+## 📋 功能全景（你能用它做什么）
 
-| 数据源 | 市场 | 特点 | 说明 |
-| --- | --- | --- | --- |
-| `sina` | A 股 | 按需查询、速度快 | 新浪行情网关，适合盘中高频轮询 |
-| `tencent` | A 股 | 按需查询、更新频率高 | 腾讯行情网关 |
-| `tencent_hk` | 港股 | 按需查询 | 腾讯港股行情（借鉴 easyquotation.hkquote） |
-| `eastmoney` | A 股 | 字段最全 | 基于 akshare 全市场快照，开销较大，作为兜底 |
-| `binance` | 加密货币 | 公开 REST API | 无需 Key，主备域名自动切换 |
+| 板块 | 能力 | 入口 |
+|---|---|---|
+| **📈 行情监控** | 四市场实时行情（多源降级）、涨跌幅/盘口/振幅/大单预警、全市场异动扫描 | `monitor` / `once` / `scan` |
+| **🔍 选股体检** | 六因子选股（股息率/SGR/利润率/市占/低估值/成长）+ DSL 自定义因子；个股 22 维体检（A 股） | `screen` / `check` / `doctor` / `radar` |
+| **🧠 研究分析** | 技术指标（MACD/RSI/KDJ/BOLL）、交易信号、持有期/定投回测、信号命中率验证、财报/研报/公告/IPO | `analyze` / `advice` / `indicator` / `backtest` / `verify` |
+| **🏢 企业画像** | 工商画像（天眼查）、专利/论文布局（智慧芽）、两融/解禁/龙虎榜/大宗/北向/增减持 | `check` / `ad` / `profile` |
+| **🤖 低频交易** | 策略引擎 → 目标持仓 → 模拟撮合 → 再平衡 → 风控（止损/熔断）→ 净值跟踪 | `strategy` |
+| **📊 报告复盘** | 收盘复盘 HTML（含知识产权区块）、日报/周报/月报、Obsidian 知识库导出、专利横向对比报告 | `review` / `daily` / `period` / `report` / `export` |
+| **🔌 开放接口** | Python API（22 函数）、MCP Server（23 工具，AI Agent 查询）、企业数据导入（Wind/天眼查/智慧芽） | `mcp` / `import_data.py` |
 
-在 `config.yaml` 的 `quotes.sources` 中配置 A 股优先级，按顺序降级，首个可用的生效。
+> 规模：**54 个 CLI 命令 · 22 个 Python API · 23 个 MCP 工具 · 356 项测试 · 122+ commits**
 
-新浪 / 腾讯（含港股）源的解析逻辑借鉴自 [easyquotation](https://github.com/shidenggui/easyquotation)
-（MIT License，Copyright (c) 2018 shidenggui），特此致谢。
+---
 
-## 快速开始
+## 🚀 快速开始（5 分钟）
 
 ```bash
-# 创建虚拟环境并安装
+# 1. 安装（Python ≥ 3.10）
+cd ashare-monitor
 python -m venv .venv
-.venv/Scripts/pip install -e ".[dev]"   # Windows
-# .venv/bin/pip install -e ".[dev]"     # Linux/macOS
+.venv/Scripts/pip install -e ".[dev]"        # Windows；macOS/Linux 用 .venv/bin/pip
 
-# 编辑自选股与预警规则
-vim config.yaml
+# 2. 配置自选股与预警（编辑 config.yaml 的 watchlist / alerts）
+#    A 股 6 位代码 / 港股 5 位 + market: hk / 币安交易对 + market: crypto / 美股代码
 
-# 单次行情快照
-python -m ashare_monitor.main once
+# 3. 第一次跑起来
+.venv/Scripts/python -m ashare_monitor.main once        # 单次行情快照（全部自选股）
+.venv/Scripts/python -m ashare_monitor.main monitor     # 持续监控（交易时段自动预警）
 
-# 持续监控
-python -m ashare_monitor.main monitor
-
-# 历史数据分析（日/周/月线，前复权）
-python -m ashare_monitor.main analyze 600519 --days 120 --adjust qfq
-python -m ashare_monitor.main analyze 002594 --period weekly --days 60   # 周线看中期趋势
-python -m ashare_monitor.main analyze 002594 --period monthly --days 60  # 月线看大级别
-
-# 港股 / 加密货币分析
-python -m ashare_monitor.main analyze 00700 --market hk --days 60
-python -m ashare_monitor.main analyze BTCUSDT --market crypto --days 60
-
-# 规则化交易信号（结合实时行情；仅供参考，不构成投资建议）
-python -m ashare_monitor.main advice 600519 --days 120
-python -m ashare_monitor.main advice BTCUSDT --market crypto --days 60
-
-# 技术指标监控（MACD/RSI/KDJ/BOLL，支持日/周/月线）
-python -m ashare_monitor.main indicator 600519 --days 120
-python -m ashare_monitor.main indicator 002594 --period weekly --days 120  # 周线 MACD 金叉/死叉（中期信号）
-python -m ashare_monitor.main indicator BTCUSDT --market crypto --days 60
-
-# 生成复盘报告（默认今天，可指定日期）
-python -m ashare_monitor.main review [--date 2026-08-18]
-
-# 回填历史复盘（用本地 klines 库离线生成，需先 backfill --kline）
-python -m ashare_monitor.main review --backfill 2002-07-31 [--end 2026-08-19]
-# 历史复盘按交易日关联「当时最新已披露财报」（需先 backfill --financial；读 SQLite financials 表）
-
-# 全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）
-python -m ashare_monitor.main scan
-
-# 公告与研报（仅 A 股，带原文链接与机构预测）
-python -m ashare_monitor.main news 600519 --days 90
-
-# 上市以来全量数据回填 + 历史统计（行情/公告/研报/财报）
-python -m ashare_monitor.main backfill 002594           # 回填全部维度（可增量重跑）
-python -m ashare_monitor.main history 002594            # 上市以来统计（区间位置/最高最低）
-
-# 持有期回测：某日买入 X 元，持有 N 个交易日卖出
-python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100000 --hold-days 60,120,250
-
-# 定投回测：近 N 个月每月买入 X 元，持有 M 个交易日后卖出（收益分布统计）
-python -m ashare_monitor.main backtest 002594 --dca --months 60 --hold-days 250 --amount 10000 [--detail]
-
-# 多标的定投横向对比（同参数）
-python -m ashare_monitor.main backtest 002594 --compare 002594,01211 --hold-days 250 --amount 10000
-
-# 回测可视化：K 线图标注买卖点（HTML）
-python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --hold-days 250 --amount 100000 --chart
-
-# 财报分析（A 股人民币 / 港股港元口径，近 6 个报告期）
-python -m ashare_monitor.main financial 600519 --periods 6
-python -m ashare_monitor.main financial 01211 --market hk --periods 6
-
-# IPO 公司分析（近期新股列表 / 单只详情 / 分析报告）
-python -m ashare_monitor.main ipo --limit 30
-python -m ashare_monitor.main ipo 马矿股份
-python -m ashare_monitor.main ipo --report   # 生成 IPO 分析报告（HTML + Obsidian）
-python -m ashare_monitor.main ipo --history 002594,01211   # 历史 IPO 发行分析（A股东财/港股公开资料）
-
-# 导出复盘到 Obsidian（Markdown，需配置 obsidian.vault）
-python -m ashare_monitor.main review        # 生成时自动导出
-python -m ashare_monitor.main export        # 等效命令
-
-# 周/月复盘汇总报告（基于 SQLite 积累的数据）
-python -m ashare_monitor.main report --weekly
-python -m ashare_monitor.main report --monthly
-python -m ashare_monitor.main report --yearly   # 年报（近 365 天）
+# 4. 收盘复盘（生成 output/review-YYYY-MM-DD.html）
+.venv/Scripts/python -m ashare_monitor.main review
 ```
 
-安装为命令后也可直接使用 `ashare-monitor once` / `ashare-monitor monitor` / `ashare-monitor analyze` / `ashare-monitor advice` / `ashare-monitor indicator` / `ashare-monitor news` / `ashare-monitor financial` / `ashare-monitor ipo` / `ashare-monitor review` / `ashare-monitor export` / `ashare-monitor scan` / `ashare-monitor report`。
-
-## Obsidian 集成（独立知识库）
-
-项目内置一个**独立 Obsidian 知识库** `obsidian-vault/`（可被 Obsidian 直接打开），
-复盘报告生成时自动导出 Markdown 进去：
+**一条命令看一只股票的全貌**（以比亚迪为例）：
 
 ```bash
-python -m ashare_monitor.main obsidian init   # 初始化库结构（.obsidian 配置 + 模板 + 首页）
-python -m ashare_monitor.main obsidian index  # 重建首页索引（日复盘 + 周/月/年报 wikilink）
-python -m ashare_monitor.main review          # 生成复盘并自动导出到 obsidian-vault/A股复盘/
-python -m ashare_monitor.main report --weekly|--monthly|--yearly  # 周期报告自动导出到 汇总报告/
+python -m ashare_monitor.main analyze 002594        # 历史数据分析
+python -m ashare_monitor.main advice 002594         # 规则化交易信号
+python -m ashare_monitor.main indicator 002594      # MACD/RSI/KDJ/BOLL
+python -m ashare_monitor.main check 002594          # 22 维体检（含工商画像/专利/两融/解禁）
+python -m ashare_monitor.main backtest 002594       # 持有期回测
+python -m ashare_monitor.main history 002594        # 上市以来统计（需先 backfill）
 ```
+
+---
+
+## 🏗 技术报告（用户视角）
+
+### 系统架构：从数据到决策的分层设计
+
+```
+L0 研究层   四市场行情 / 选股 / 体检（信号与候选）
+L1 策略层   dividend 股息轮动等（选股器 → 目标持仓）
+L2 组合层   模拟持仓 / 月度再平衡差额指令
+L3 执行层   PaperBroker（现金账户 + 订单状态机）/ executor QMT/PTrade 占位
+L4 风控层   单标的上限 20% / ST 黑名单 / 最小市值 / 止损 -15% / 组合熔断 -20%
+L5 跟踪层   净值记录 / 周度风控 / 月度换仓
+```
+
+数据流：`多源行情 → 五类预警 → SQLite 落盘 → 收盘 HTML 复盘 → Obsidian 知识库`。
+所有交易功能均为**模拟盘**（paper trading），实盘通道留 QMT/PTrade 占位。
+
+### 四市场能力矩阵
+
+| 能力 | A 股 | 港股 | 美股 | 数字货币 |
+|---|---|---|---|---|
+| 实时行情 | 新浪/腾讯/东财 | 腾讯 | 新浪/腾讯 | Binance 双域 |
+| K 线历史 | 1990 起 | 2002 起 | 1999 起（5748 根）| 2017 起（币安）+ 2010 起（CoinGecko）|
+| 体检维度 | **22 维** | 11 维 | 5 维 | 4 维 |
+| 选股因子 | 6 个 + DSL 自定义 | — | momentum / lowval | — |
+| 企业画像/专利 | ✅ 5 家回填 | ⚠️ 小米 | ⚠️ 英伟达 | — |
+
+### 数据源与边界（如实标注）
+
+| 数据源 | 用途 | 状态 |
+|---|---|---|
+| 新浪/腾讯/东财 | 行情快照、K 线 | ✅ 多源自动降级 |
+| 东方财富 datacenter | 两融/研报/财报/解禁/龙虎榜 | ✅ 节流防封 |
+| **Wind** | K 线校准（权威前复权）| ✅ MCP 会话内回填 |
+| **天眼查** | 工商画像 | ✅ MCP 会话内回填 |
+| **智慧芽** | 专利/论文（含法律状态/IPC）| ✅ MCP 会话内回填（采样快照）|
+| Binance / CoinGecko | 币行情/K 线/链上 | ✅ 双域回退（境外源沙箱受限时需本机）|
+| akshare | 全市场数据兜底 | ⚠️ 部分接口受限 |
+
+> 诚实说明：专利数据为每标的最新 15 件采样快照（非全量）；境外 API（CoinGecko 等）
+> 在受限网络下不可达，程序自动降级并以 mock 测试覆盖。
+
+### 关键验证记录（真实数据）
+
+- 组合回测（2024-01 ~ 2026-08）：等权 4 只**年化 29.25%** vs 沪深 300 的 18.51%，跑赢 10.7pct
+- 网格优化：半年再平衡最优（夏普 0.95 / 年化 32.78%）
+- IC 检验：60 日动量因子 IC 0.0118（如实标注有效性）；动量因子自选股 IC 0.04 已淘汰
+- 英伟达：5748 根 K 线，上市以来 +523,607%（年化 45.13%）
+- 性能优化：timing 预计算 O(n²)→O(n)，5748 根 47s→0.06s（**780 倍**）
+- Wind 校准：7 日 K 线与 akshare 逐点一致
+
+### 合规与边界
+
+- 全部交易为**模拟**，零实盘风险；A 股程序化交易按 2024《程序化交易管理规定》需报备后才可实盘（见 `docs/compliance_checklist.md`）
+- 数字货币模块仅做行情监控与链上研究，不涉及交易
+- 输出为数据分析，不构成投资建议
+
+---
+
+## 📖 使用手册
+
+### 5.1 配置文件
+
+`config.yaml`（示例默认）——复制为 `config.local.yaml` 自定义，避免污染仓库：
 
 ```yaml
+watchlist:                 # 自选股（4 市场混排）
+  - { code: "600519", name: "贵州茅台" }
+  - { code: "01211", name: "比亚迪股份", market: hk }
+  - { code: "NVDA",   name: "英伟达",   market: us }
+  - { code: "BTCUSDT", name: "比特币",   market: crypto }
+alerts:                    # 预警规则
+  change_pct_threshold: 3.0     # 涨跌幅 ≥3% 预警
+  weibi_threshold: 80           # 盘口委比失衡预警
+  big_order_threshold: 5000     # 单档大单（手）预警
+  amplitude_threshold: 5.0      # 振幅预警
+monitor:
+  interval_seconds: 30          # 轮询间隔
+  auto_review: true             # 收盘自动复盘
+quotes:
+  sources: ["sina", "tencent", "eastmoney"]   # 多源降级
+review:
+  indexes: ["sh000001", "sz399001", "sz399006"]  # 大盘对照
 obsidian:
-  vault: "obsidian-vault"   # 独立库目录（相对 config 解析；留空禁用）
-  reports_dir: "A股复盘"     # 库内复盘子目录
+  vault: "obsidian-vault"       # Obsidian 知识库（可留空禁用）
 ```
 
-库结构：
-
-```
-obsidian-vault/
-├── .obsidian/          # 应用配置（新文件默认入复盘目录、启用模板）
-├── README.md           # 知识库首页（自动维护复盘 + 汇总报告索引）
-├── 模板/复盘模板.md     # 复盘笔记模板
-├── A股复盘/            # 每日复盘 Markdown（本地数据，git 忽略）
-└── 汇总报告/           # 周报 / 月报 / 年报 Markdown（本地数据，git 忽略）
-```
-
-导出的 Markdown 包含 frontmatter（date/tags，可检索与双链）、
-大盘指数 / 技术指标 / 当日表现 / 预警时间线 / 财报速览 / 公告与研报（含原文链接）/
-近期 IPO 各板块表格；K 线图（ECharts）无法入 Markdown，以链接指向 HTML 报告。
-复盘数据由 vault 内 `.gitignore` 排除，仅模板与配置入库。
-
-## IPO 公司分析（ipo）
-
-`ipo` 命令分析新股（东财新股申购/上市报表 `RPTA_APP_IPOAPPLY` 直连）：
-
-- **`ipo`（无参数）**：近期新股列表（代码/名称/交易所/申购日/发行价/行业 PE/募资/阶段状态），含北交所（920 开头）
-- **`ipo <代码或名称>`**：单只新股详情 + 规则化分析
-  - 发行阶段判定（待定价/待申购/待上市/已上市）
-  - 发行 PE vs 行业 PE 对比（估值偏贵/便宜/持平，PE 字段缺失时自动跳过）
-  - 募资完成度（超募/缩募提示）
-  - 已上市新股：现价 vs 发行价（**破发提示**）
+### 5.2 每日工作流
 
 ```bash
-python -m ashare_monitor.main ipo --limit 30   # 近期新股
-python -m ashare_monitor.main ipo 马矿股份      # 单只分析
+# 盘中：持续监控（自动预警 + 收盘自动复盘）
+python -m ashare_monitor.main monitor
+
+# 收盘后：一键日报 → 复盘 → 导出 Obsidian
+python -m ashare_monitor.main daily
+python -m ashare_monitor.main review
+python -m ashare_monitor.main export            # Obsidian Markdown
+python -m ashare_monitor.main report --weekly   # 周度汇总
 ```
 
-已知限制：东财该报表多数新股的发行市盈率字段为空，PE 对比仅在字段可用时输出。
-输出附完整免责声明（IPO 分析为投资参考信息，不构成投资建议）。
+定时任务（Windows）：右键管理员运行 `scripts/setup_schedule_windows.bat`，
+注册「工作日 15:40 日报」与「周日 20:00 周报」两个计划任务。
 
-## 财报分析（financial）
-
-`financial` 命令查看被监控标的的财务业绩（**仅 A 股**，东财业绩报表接口 → akshare 兜底）：
-
-- **多期趋势表**：最近 N 个报告期的营收/净利（亿元）及同比、ROE、毛利率（涨红跌绿）
-- **财报速览**：增速环比变化（改善/放缓）、近 3 期增长连续性、ROE/毛利率/净利率水平、每股经营现金流是否覆盖净利润（盈利质量）
+### 5.3 选股与体检
 
 ```bash
-python -m ashare_monitor.main financial 600519 --periods 6
+# 六因子选股（A 股）：股息率 / 可持续增长率 / 高利润率 / 市占率 / 低估值 / 高成长
+python -m ashare_monitor.main screen --metric dividend --top 20
+python -m ashare_monitor.main screen --metric sgr     # SGR 可持续增长率
+python -m ashare_monitor.main screen --metric lowval   # 低估值（PE/PB 分位）
+python -m ashare_monitor.main screen --market us --metric momentum   # 美股动量
+
+# DSL 自定义因子：如 (close/Ref(close,20)-1)*100 动量
+python -m ashare_monitor.main strategy factor --expr "(close/Ref(close,20)-1)*100"
+
+# 个股体检：check（22 维） / doctor（评分） / radar（多空计分）
+python -m ashare_monitor.main check 002594
+python -m ashare_monitor.main doctor 002594
+python -m ashare_monitor.main radar
 ```
 
-输出附完整免责声明（财报分析为投资参考信息，不构成投资建议）。
+A 股 22 维体检内容：行情、K 线历史、择时、基本面、估值分位、行业、研报数、事件、
+基金持仓、筹码、增减持、龙虎榜、股权质押、**工商画像（天眼查）**、**知识产权（智慧芽专利/论文）**、
+**两融**、**解禁**等。
 
-## 公告与研报（news）
-
-`news` 命令查看被监控标的的公开信息（**仅 A 股**，港股/加密货币暂无数据源）：
-
-- **公告**：东财公告接口（最近 N 条，含原文链接）
-- **研报**：东财研报接口（机构名称、报告标题、**预测 EPS / 预测 PE**、原文链接）
-- **持久化**：拉取结果自动存入 SQLite（`data/ashare_monitor.db` 的 `announcements` / `research_reports` 表，url 唯一去重），随用随查、离线可读
+### 5.4 研究分析
 
 ```bash
-python -m ashare_monitor.main news 600519 --days 90   # 拉取 + 入库
-python -m ashare_monitor.main news 600519 --local     # 仅读数据库，不联网
-python -m ashare_monitor.main news --watchlist --days 30  # 批量采集全部 A 股自选股入库
+# 技术指标与信号
+python -m ashare_monitor.main indicator 002594          # MACD/RSI/KDJ/BOLL
+python -m ashare_monitor.main advice 002594             # 规则化信号
+python -m ashare_monitor.main timing                    # 收盘后择时买点扫描
+python -m ashare_monitor.main verify 002594             # 信号历史命中率
+
+# 回测
+python -m ashare_monitor.main backtest 002594 --amount 100000 --hold-days 60,120,250
+python -m ashare_monitor.main backtest 002594 --dca --months 60 --detail   # 定投
+python -m ashare_monitor.main backtest --compare 002594,01211 --dca        # 多标的对比
+python -m ashare_monitor.main portfolio --codes 600519,000001,300750,002594  # 组合定投
+
+# 基本面与资讯
+python -m ashare_monitor.main financial 600519          # 财报（近 6 报告期）
+python -m ashare_monitor.main news 600519               # 公告与研报
+python -m ashare_monitor.main ipo                       # IPO 列表/详情/报告
+python -m ashare_monitor.main events                    # 解禁/除权/业绩日历
 ```
 
-数据源自动降级：东财直连接口 → akshare。收盘复盘报告自动附「公告与研报」板块，
-每只自选股展示最近公告与研报标题及原文链接（拉取时同步入库）——复盘时快速定位"异动是否有消息面支撑"。
-
-## 技术指标监控（indicator）
-
-`indicator` 命令输出四类指标（纯 pandas 实现，无 TA-Lib 依赖）：
-
-- **MACD(12,26,9)**：DIF/DEA/柱，金叉/死叉状态、最近交叉日期与距今天数
-- **RSI(14)**：含 6/24 日多周期值，超买（≥70）/ 超卖（≤30）判定
-- **KDJ(9,3,3)**：K/D/J 值，金叉/死叉与超买超卖
-- **BOLL(20,2)**：上中下轨、现价位置（超上轨/中上/中下/超下轨）、带宽
-
-`advice` 命令同样附带指标板块；**监控预警的波动画像中也自动带上指标摘要**
-（如 `MACD死叉(2日前) | RSI 48 | KDJ死叉 | BOLL中下`），实现"指标状态入预警"。
-
-## 交易信号（advice）
-
-`advice` 命令结合**实时行情 + 历史分析**，输出规则化信号：
-
-- **均线信号**：MA5/10/20 多空排列、现价相对 MA20/MA60 位置
-- **量能信号**：量比放量 / 缩量（`signals.volume_ratio_high/low` 配置）
-- **波动信号**：近 20 日波动相对年化放大（风险上升）/ 收窄（临近变盘）
-- **动量信号**：近 N 日累计涨跌（`signals.momentum_window/pct` 配置）
-
-每条信号带方向与得分，最后给出综合研判（偏多/中性/偏空 + 信号一致度）。
-`analyze` 报告同样附带信号板块。
-
-> **重要提示**：本模块输出为规则化参考信号，**不构成投资建议**。所有输出均附完整免责声明，
-> 交易决策请结合个人风险承受能力独立判断。
-
-## 全市场异动扫描（scan）
-
-从自选股盯盘升级到全市场发现，输出五个榜单：**涨幅榜 / 跌幅榜 / 放量异动（量比≥阈值）/ 高换手 / 高振幅**。
-
-- 数据源：优先东财全市场快照（字段全，含量比/换手率），失败自动降级新浪（仅基础字段，放量/换手榜不可用）
-- 默认剔除 ST 与低价股（`scan.exclude_st` / `scan.min_price` 配置）
-
-## 历史复盘数据积累（SQLite + report）
-
-- 监控期间预警双写：JSONL 审计日志 + **SQLite**（`data/ashore_monitor.db`），支持按日期/规则/标的聚合查询
-- 每日复盘报告生成后自动入库（行情摘要、预警统计）
-- `report --weekly/--monthly` 输出汇总报告：区间行情表现、预警规则分布 / 每日预警数 / 标的排行（ECharts 柱状图）、每日复盘记录、预警明细
-
-## 收盘复盘报告（review）
-
-监控运行期间，触发的预警实时落盘到 `logs/alerts/alerts-YYYY-MM-DD.jsonl`；
-收盘后（15:00 后）自动生成 HTML 复盘报告到 `output/review-YYYY-MM-DD.html`，包含：
-
-- **大盘指数对照**：上证 / 深成 / 创业板当日点位、涨跌幅与近 60 日 K 线
-- **技术指标状态**：每只自选股当日 MACD / RSI / KDJ / BOLL 一览
-- **自选股当日表现**：收盘、涨跌幅、振幅、量能
-- **预警时间线**：全天触发的预警（含各股波动画像）
-- **财报速览**：每只 A 股自选股最新报告期的营收/净利及同比、ROE、毛利率
-- **公告与研报**：最近公告与研报（含原文链接）
-- **近期 IPO**：待申购/待上市新股列表（发行价、行业 PE、募资）
-- **近期 K 线**：每只自选股近 60 日蜡烛图 + 成交量（ECharts，涨红跌绿），图题标注波动画像与指标摘要
-
-`monitor.auto_review: false` 可关闭自动生成，随时可用 `review` 命令手动补生成。
-若配置了 `ASHARE_MONITOR_WEBHOOK`，报告生成后会自动推送一条复盘摘要到 webhook。
-指数列表与 K 线天数在 `review.indexes` / `review.kline_days` 配置。
-
-## 数据回填与上市以来统计（backfill / history）
+### 5.5 低频自动化交易（模拟盘）
 
 ```bash
-python -m ashare_monitor.main backfill 002594        # 回填全部维度（日K全量/公告/研报/财报）
-python -m ashare_monitor.main backfill 002594 --kline # 仅日 K（akshare 优先，腾讯 K 线分段降级）
-python -m ashare_monitor.main history 002594          # 上市以来统计
+python -m ashare_monitor.main strategy dividend        # 股息轮动 → 目标持仓
+python -m ashare_monitor.main strategy backtest        # 策略回测（涨跌停/成本约束）
+python -m ashare_monitor.main strategy rebalance       # 月度再平衡差额指令
+python -m ashare_monitor.main strategy orders          # 订单历史（状态机）
+python -m ashare_monitor.main strategy risk            # 止损检查（-15%）
+python -m ashare_monitor.main strategy breaker         # 组合熔断（-20%）
+python -m ashare_monitor.main strategy track           # 净值记录
+python -m ashare_monitor.main strategy navreport       # 净值报告 HTML
 ```
 
-- 日 K 入库 `klines` 表（market+code+date 唯一，可增量重跑去重）
-- `history` 输出：上市首日/交易天数/上市以来涨幅（年化）/历史最高最低及日期/当前价历史区间位置/距高点回撤/近一年
-- 公告/研报/财报分别入库 `announcements` / `research_reports` / `financials` 表
+回测引擎能力：涨跌停成交约束 · T+1 · 交易成本（bp）· 再平衡频率参数化 · IC/IR 因子检验 ·
+参数网格优化 · 绩效统计 9 项 · HTML 报告（净值/水下/月度热力图）。
 
-## 持有期回测（backtest）
+### 5.6 数据回填与企业数据导入
 
 ```bash
-python -m ashare_monitor.main backtest 002594 --buy-date 2024-01-02 --amount 100000 --hold-days 60,120,250
+# 历史数据回填（建议先 backfill 再分析）
+python -m ashare_monitor.main backfill --kline --all        # 全量 K 线（A 股 1990 起）
+python -m ashare_monitor.main backfill --financial          # 财报
+python -m ashare_monitor.main backfill_dividend             # 历史股息率（1990 起）
+python -m ashare_monitor.main backfill_sgr                  # SGR 历史（1995 起）
 ```
 
-按"某日买入 X 元 → 持有 N 个交易日 → 卖出"模拟，输出：买入/卖出价与日期、实际成交股数
-（按整手：A 股 100 股、港股按每手）、买卖金额、**收益率**、年化、持有期最高/最低价。
-支持逗号分隔多档持有期对比；数据优先用已回填的全量 K 线（离线快速）。
-注：未计佣金与税费，回测为历史价格模拟，不构成投资建议。
+**企业级数据（Wind / 天眼查 / 智慧芽）**——MCP 连接器会话内拉取 → `import_data.py` 落库 → check/复盘消费：
 
-**定投模式（`--dca`）**：每月首个交易日买入固定金额、持有 N 个交易日后卖出（逐笔独立不复利），
-统计交易笔数、平均/中位数收益率、胜率、最好/最差一笔、平均年化；`--detail` 看逐笔明细。
+```python
+from ashare_monitor.import_data import (
+    import_klines_json,        # Wind K 线 → klines 表（幂等）
+    import_company_profile,    # 天眼查画像 → company_profiles 表
+    import_ip_assets,          # 智慧芽专利/论文 → ip_assets 表
+)
+```
 
-**多标的对比（`--compare`）**：同参数跑多个标的的定投统计并列表对比（市场按代码位数自动推断）。
+回填脚本样例：`scripts/backfill_profiles.py` / `backfill_ip.py` / `backfill_wind_kline.py` /
+`backfill_screener_pipeline.py`（高股息选股 → 待回填队列）。
+专利横向对比报告自动生成：`python scripts/patent_report.py` → `docs/patent_landscape.md`。
 
-**可视化（`--chart`）**：单笔回测生成 HTML——K 线图（ECharts，涨红跌绿）+ 买卖点标注 +
-区间收益大字，成交量高亮持有区间；输出到 `output/backtest-{code}-{date}-{hold}.html`。
+### 5.7 Python API（22 函数）
 
-## 历史数据分析（analyze）
-拉取个股历史 K 线（优先东财 akshare，失败自动降级腾讯 K 线），支持**日 / 周 / 月线**多周期
-（`--period daily|weekly|monthly`，年化波动率按周期数自动换算：日线 250/365、周线 52、月线 12），输出：
+```python
+import ashare_monitor.api as am
 
-- **概览**：最新收盘、区间涨跌幅、上涨/下跌天数与胜率
-- **波动指标**：年化波动率、近 20 周期波动率、最大回撤、平均振幅
-- **趋势**：MA5/10/20/60 与收盘价相对位置
-- **量能**：近 5 / 20 周期均量与量比
+am.quote("002594")                  # 实时行情
+am.quotes(["600519", "00700"])      # 多标的行情
+am.kline("002594")                  # 本地 K 线
+am.history("002594")                # 上市以来统计
+am.profile("NVDA")                  # 五维资产画像
+am.check("002594")                  # 22 维体检
+am.screen(market="ashare", metric="dividend")   # 选股
+am.backtest(...)                    # 组合回测
+am.paper_trade("002594", 100, 10000)   # 模拟买入
+am.paper_positions()                # 模拟持仓
+am.factor_ic("momentum")            # 因子 IC 检验
+```
 
-`indicator` 同样支持 `--period`（周线 MACD 金叉/死叉是中期趋势信号，月线看大级别）。
-
-分析能力已接入监控流程：监控启动时输出自选股波动基线表；预警触发时自动附带
-该股一行波动画像（近 N 日涨跌 / 年化波动 / 最大回撤 / 日均振幅 / MA20 位置 / 量比），
-按交易日缓存，每只股票每天只拉取一次历史数据，不影响轮询性能。
-
-## 配置说明（config.yaml）
-
-| 配置项 | 说明 |
-| --- | --- |
-| `watchlist` | 自选标的列表，每项 `code` + 可选 `market`（ashare 默认 / hk / crypto） |
-| `alerts.change_pct_threshold` | 涨跌幅预警阈值（%），默认 ±3% |
-| `alerts.price_above / price_below` | 按代码设置价格上破 / 下破提醒 |
-| `alerts.weibi_threshold` | 委比绝对值超阈值预警（%），需五档数据，不设则关闭 |
-| `alerts.big_order_threshold` | 单档挂单量（手）超阈值预警，不设则关闭 |
-| `alerts.amplitude_threshold` | 当日振幅（%）超阈值波动预警，不设则关闭 |
-| `monitor.interval_seconds` | 轮询间隔，默认 30s |
-| `monitor.trading_hours_only` | 是否仅在交易时段运行 |
-| `monitor.startup_profile` | 启动时输出自选股历史波动基线，默认开 |
-| `monitor.alert_profile` | 预警触发时附带该股近期波动画像（按交易日缓存），默认开 |
-| `monitor.profile_days` | 画像回看交易日数，默认 120 |
-| `quotes.sources` | 行情数据源及优先级，默认 `["sina", "tencent", "eastmoney"]` |
-
-如需本地私有配置，复制为 `config.local.yaml`（已被 gitignore）。
-
-## Webhook 通知
-
-设置环境变量 `ASHARE_MONITOR_WEBHOOK` 为企业微信 / 钉钉机器人地址，预警会同时推送到 webhook。
-
-## 运行测试
+### 5.8 MCP / AI Agent 查询（23 工具）
 
 ```bash
-pytest
+python -m ashare_monitor.main mcp     # 启动 MCP Server（stdio）
 ```
 
-## 免责声明
+工具清单：`quote / quotes / kline / history / profile / check / screen / backtest /
+backtest_rebalanced / factor_expr / factor_ic / factor_list / paper_*（trade/positions/
+report/orders）/ detect_market / ad_*（quote/hot/lockup/margin/reports/financial）`。
+任何 MCP 客户端（Claude Code / WorkBuddy 等）接入后，AI 可直接问"比亚迪体检怎么样"
+"高股息 Top10 有哪些"。
 
-本项目仅供学习与技术研究，行情数据来源于公开接口，不构成任何投资建议。
+### 5.9 A 股全栈数据（ad 命令）
 
-# 择时买入提醒（收盘后扫描自选股技术性买点信号）
-python -m ashare_monitor.main timing               # 扫描全部自选股
-python -m ashare_monitor.main timing 002594 --report
-python -m ashare_monitor.main timing --push        # 有信号推送 webhook（需 ASHARE_MONITOR_WEBHOOK）
-# 信号规则：强势回踩MA20 / 深度回调止跌 / MACD金叉 / RSI超卖回升 / 放量突破
-# 每个信号标注历史命中率（该规则在标的上近 5 年信号触发后 5 日收益为正比例）
-# 信号同时自动出现在当日复盘报告的「择时买入信号」板块
+```bash
+python -m ashare_monitor.main ad quote 002594      # 腾讯富字段（PE/PB/市值）
+python -m ashare_monitor.main ad hot               # 同花顺当日强势股
+python -m ashare_monitor.main ad lhb 002594        # 龙虎榜席位
+python -m ashare_monitor.main ad unlock 002594     # 解禁日历
+python -m ashare_monitor.main ad margin 002594     # 两融明细
+python -m ashare_monitor.main ad fundflow 002594   # 资金流 120 日
+python -m ashare_monitor.main ad fin 002594        # 新浪三表
+python -m ashare_monitor.main ad announce 002594   # 巨潮公告
+python -m ashare_monitor.main ad reports 002594    # 东财研报 + PDF
+python -m ashare_monitor.main ad eps 002594        # 一致预期
+```
 
-# 持仓管理与盈亏日报（positions 配置在 config.local.yaml）
-python -m ashare_monitor.main position            # 收盘价盈亏
-python -m ashare_monitor.main position --live --report
-python -m ashare_monitor.main position --push     # 推送盈亏日报 webhook
+---
 
-# 事件日历提醒（解禁/分红除权/业绩预告，未来 N 天）
-python -m ashare_monitor.main events --days 30 --report --push
+## 📚 命令速查（54 命令，按板块）
 
-# 资金面监控（个股主力资金流 + 沪深港通概要）
-python -m ashare_monitor.main fundflow --report --push
-# 注意：北向净买入额度自 2024-08 起停止披露；个股资金流 push2 接口偶发不稳（本机运行较稳定）
+| 板块 | 命令 |
+|---|---|
+| **监控** | `monitor` `once` `scan` `radar` `fundflow` `holders` `litigation` `insider` `pledge` `rating` `lhb` `north` `block` `events` |
+| **体检分析** | `check` `doctor` `analyze` `advice` `indicator` `verify` `timing` `profile` `valuation` |
+| **选股** | `screen`（六因子）`dividend_rank` |
+| **回测交易** | `backtest` `portfolio` `position` `strategy`（10 子命令）`buyer` `insider_view` |
+| **数据回填** | `backfill` `backfill_kline` `backfill_indicators` `backfill_sgr` `backfill_dividend` `history` |
+| **报告导出** | `review` `daily` `report` `period` `export` `obsidian` |
+| **数据资讯** | `news` `financial` `ipo` `ad`（12 子命令）`arxiv` `hf` |
+| **行业** | `sector` `industry` `gov` `site` |
+| **开放接口** | `mcp` |
 
-# 股东分析（十大股东 + 股东户数趋势）
-python -m ashare_monitor.main holders 002594 --report --push
-# 解读：户数半年减少>10% → 筹码集中（潜在看涨信号）；增加>10% → 分散（潜在承压）
-# 数据源：东方财富 F10（十大股东）/ RPT_HOLDERNUM_DET（户数历史）
+> 完整参数见 `docs/commands.md`（自动生成，与 `--help` 一致）。
 
-# 个股全方位体检（行情/技术/基本面/筹码/资金/事件/择时 一键评分）
-python -m ashare_monitor.main doctor 002594 --report
+---
 
-# 组合定投回测（多标的按权重，月度对齐合成组合收益）
-python -m ashare_monitor.main portfolio 002594,01211 --weights 60,40 --amount 100000 --report
-# 注意：港股 1 手 500 股，月投金额需买得起整手（如比亚迪H约3.7万港元/手）
-# 盘中预警实时推送：monitor 已支持 webhook（设置 ASHARE_MONITOR_WEBHOOK 环境变量即可）
+## 📁 项目结构
 
-# arXiv 论文监测（以指定股票代码对应公司为主题/署名单位）
-python -m ashare_monitor.main arxiv 002594 --report     # 比亚迪（内置 BYD 映射，默认覆盖近 40 年）
-python -m ashare_monitor.main arxiv 000000 --name Huawei --report  # 自定义英文名
-# 检索策略：arXiv API abs: 摘要含公司名（API 不返回 affiliation 字段，内容匹配）；--days 可调范围
-# 内置映射：002594/01211→BYD 300750→CATL 600519→Moutai 等；config.local.yaml 的 arxiv 段可覆盖
-# 用途：跟踪上市公司 AI/技术研发动态（华为诺亚方舟：SysEvolve/MoE/Aicir 等）
+```
+src/ashare_monitor/
+├── main.py            # CLI 入口（54 命令）
+├── api.py             # Python API（22 函数，与 CLI 同源）
+├── mcp_server.py      # MCP Server（23 工具，零依赖 stdio）
+├── import_data.py     # 企业数据导入（Wind/天眼查/智慧芽落库）
+├── check.py           # 个股体检（A 股 22 维）
+├── screen.py          # 六因子选股器
+├── strategy.py        # 低频策略引擎（dividend 轮动等）
+├── broker.py          # PaperBroker 订单状态机
+├── factor_dsl.py      # 因子表达式 DSL
+├── review.py          # 收盘复盘 HTML
+├── obsidian_vault.py  # Obsidian 知识库
+├── providers/         # 多市场数据源（四市场统一抽象）
+├── profile.py         # 五维资产画像（市值/供给/增长/收益/估值）
+└── a_stock_data.py    # A 股全栈数据（ad 命令）
+scripts/               # 定时任务 / 回填 / 报告生成
+docs/                  # commands.md / patent_landscape.md / compliance_checklist.md
+tests/                 # 356 项测试
+```
 
-# HuggingFace 监测（模型 + 收录论文）
-python -m ashare_monitor.main hf 00700 --report     # 腾讯（tencent 组织）
-python -m ashare_monitor.main hf 09988 --report     # 阿里（Qwen 组织）
-python -m ashare_monitor.main hf 002594 --org BYD-Auto  # 自定义组织
-# 数据源：HF API（默认 hf-mirror.com 国内镜像，可设 HF_ENDPOINT 覆盖）
-# 内置组织映射：00700→tencent 09988→Qwen 03690→bytedance-research 等；config 的 hf 段可覆盖
+---
 
-# 诉讼监控（自选股重大诉讼披露）
-python -m ashare_monitor.main litigation --report --push
-# 数据源：巨潮资讯 p_sysapi1055（经 akshare）；入库 SQLite 去重（code+period）
-# 注意：仅覆盖达到重大诉讼披露标准的公司；未出现=近 N 天无重大诉讼（正常）
-# 专利数据：免费源不可用（Google Patents 被墙/CNIPA 需登录），需天眼查/智慧芽连接器
+## 🧪 测试与开发
 
-# 公司档案（工商信息 + 股权结构）
-python -m ashare_monitor.main profile 002594 --report
-# 工商来源：巨潮资讯 stock_profile_cninfo（法人/注册资本/成立上市日期/地址/主营/经营范围）
-# 股权来源：东财 F10 十大股东（复用 holders）；实控人为规则化推断（持股最多自然人）
-# 完整股权穿透需企查查/天眼查连接器
+```bash
+python -m pytest tests/ -q                # 356 项全量测试
+python scripts/check_health.py            # CI 健康检查（MCP 工具数 + 3.10 语法扫描）
+```
 
-# 政府侧企业动态（中标/拿地/补助/税收优惠公告）
-python -m ashare_monitor.main gov --report --push
-# 数据源：东财公告标题关键词过滤（招投标/拿地/补助补贴/资质税收四类）
-# 注意：为公告侧动态（公司主动披露）；完整政府数据（纳税信用/社保人数/招投标记录/拿地档案）
-# 免费源全反爬（政府采购网403/土地市场网418），需天眼查/上奇/帆软连接器
+CI（GitHub Actions）：Python 3.10/3.11/3.12 矩阵 + 覆盖率 + 健康检查。
+贡献新维度时，请同步暴露为 API 函数与 MCP 工具（健康检查会拦截遗漏）。
 
-# 官方网站链接档案 + 官网公告监控
-python -m ashare_monitor.main site --report
-# 官网链接：工商档案自动获取（巨潮）+ config.local.yaml 的 sites 段扩展
-#   sites: {002594: {website: ..., notice_url: ..., ir_url: ..., social: ...}}
-# 公告监控：可配置 notice_url 抓取（多数官网公告页为 JS 动态加载，抓不到时如实提示，
-# 权威官方公告以东财公告为准）
+---
 
-# 公司信号监控（8 个新命令）
-python -m ashare_monitor.main insider 002594 --report   # 增减持+回购（公告信号）
-python -m ashare_monitor.main pledge --report           # 股权质押（巨潮）
-python -m ashare_monitor.main rating 002594 --report    # 券商研报（含EPS预测）
-python -m ashare_monitor.main lhb 002594                # 龙虎榜（自选股上榜）
-python -m ashare_monitor.main north 002594              # 北向持股（2024-08-16后停每日披露，历史保留）
-python -m ashare_monitor.main block 002594              # 大宗交易（折溢率）
-python -m ashare_monitor.main valuation 002594 --report # 估值分位（PE/PB 历史百分位）
-python -m ashare_monitor.main sector 002594 --report    # 月度产销快报（行业景气先行指标）
-# 说明：产销快报销量在公告正文（东财内容 API 提取，沙箱偶发空体需本机验证）
+## ❓ FAQ
 
-# 信号聚合雷达 + 一键日报（汇总裁决层）
-python -m ashare_monitor.main radar --report --push   # 18 维信号多空计分（≥+2偏多/≤-2偏空）
-python -m ashare_monitor.main daily --report --push   # 一键日报（行情+雷达+择时+事件+估值+研报+增减持+K线健康）
-# radar 计分：技术/筹码/资金/估值/事件/增减持/质押/研报/产销；缺失维度不计分
+**Q：数字货币需要翻墙吗？** 币安行情走双域回退，CoinGecko 等境外源在受限网络不可达时会
+自动降级；链上数据需本机直连验证（沙箱受限，如实标注）。
 
-# 汽车行业景气数据（乘联会 CPCA）
-python -m ashare_monitor.main industry --report --push
-# 月度总销量/新能源渗透率/厂商排名TOP10；口径：批发量
-# 说明：中汽研(catarc.info)官方数据产品需授权；本命令用乘联会公开数据
-# industry --detail 分析师版（细分市场/国别结构/碳酸锂）
-python -m ashare_monitor.main industry --detail --report
-# 细分市场：A00/A0/A/B/C 级别销量；国别结构：自主/德系/日系/美系份额
-# 碳酸锂：广期所 LC0 主力价格（比亚迪核心成本变量，60 日变化）
+**Q：专利/工商画像数据哪来的？** 天眼查（工商）+ 智慧芽（专利/论文）通过 MCP 连接器在
+会话内拉取，由 `import_data.py` 落库；每标的专利为最新 15 件采样快照，非全量。
 
-# 买方视角（预测修正 / 基金重仓 / 风险收益 / 相关性）
-python -m ashare_monitor.main buyer --report --push
-# 预期：研报 EPS 最新 vs 平均 → 上修/下修方向
-# 资金：公募基金季度重仓（家数/持股/增减仓）
-# 风险：年化波动率/最大回撤/夏普（无风险利率2%）；组合相关性（日期对齐）
+**Q：可以实盘交易吗？** 当前仅模拟盘。实盘需券商开通 QMT/PTrade + 按 2024《程序化交易
+管理规定》报备，流程见 `docs/compliance_checklist.md`。
 
-# 周期报告（日报/周报/月报，多视角）
-python -m ashare_monitor.main period --period daily --push    # 日报
-python -m ashare_monitor.main period --period weekly --push   # 周报（含行业）
-python -m ashare_monitor.main period --period monthly --push  # 月报（含行业）
-# 一屏多视角：卖方（行业渗透率/份额）· 买方（预测修正/基金）· 大股东（倾向）· 雷达（裁决）
+**Q：数据会过期吗？** 行情实时；画像/专利在 check 中标注"X 天前更新"，>90 天提示回补。
 
-# 个股资料完整性体检（check）
-python -m ashare_monitor.main check 002594 --report
-# 18 维度：K线/基本面/估值/筹码/基金/研报/事件/诉讼/工商/官网/产销/行业/北向/增减持/质押/龙虎榜/大宗/研发
-# 状态：OK/WARN/MISSING + 原因（数据源受限如实标注）
+---
 
-# 港股研究（按比亚迪标准）
-python -m ashare_monitor.main backfill 01810    # 回填小米 K 线（自动补上市日）
-python -m ashare_monitor.main check 01810 --report  # 港股 11 维体检
-python -m ashare_monitor.main radar 01810           # 雷达（技术面/择时）
-# 港股支持：K线/基本面(东财港股财务)/估值近似(EPS×现价)/择时/事件/诉讼
-# 如实标注：公告/研报/事件接口港股暂不可用；开曼实体无工商档案；官网需 config sites 段
+## ⚠️ 免责声明
 
-# A 股市场扫描选股（首个指标：高股息率）
-python -m ashare_monitor.main screen --top 60 --min-yield 3 --report
-# 东财 push2 全市场按股息率(f133 TTM)降序；过滤 ST/市值区间（--min-mv/--max-mv 亿）
-# 注意：东财 push2 在部分沙箱/受限网络 RemoteDisconnected（已知），本机直连通常可用
-
-# 历史股息率回填（近 6 年年度）
-python -m ashare_monitor.main backfill_dividend --report
-# 年度每股派息（同年多笔累加）/年末价 → 年度股息率，入库 dividend_history 表
-# 说明：东财分红报表在部分沙箱不可用（已知），本机直连通常可用
-# 历史股息率：自 1990 年开市以来全历史（A 股 <40 年，如实）
-python -m ashare_monitor.main backfill_dividend --report
-# 按年循环东财分红报表（1990~今年）；报告仅列有分红年份 + 分红年数/均值
-
-# 股息率榜单时长（占据高股息榜单最久的股票）
-python -m ashare_monitor.main dividend_rank --years 10 --top-k 20 --report
-# 逐年拉东财分红报表 → 每年 TOP K（或 ≥3%）→ 累计上榜年数排名
-# 真实结果（2017-2026）：冀中能源 5/9 年居首（煤炭钢铁周期高股息）
-# 口径：东财"现金分红-股息率"字段为小数（0.026=2.61%，实测验证）
-# 累计股息率排序（N 年累计派息 ÷ 当前价）
-python -m ashare_monitor.main dividend_rank --sort cum-yield --report
-# 真实结果（2017-2026）：三钢闽光 146%、方大特钢 132%、冀中能源 77%
-# 口径：上榜年份累计每股派息 / 现价（datacenter 逐只取价，降级本地 K 线）
-
-# 指标 2：持续增长率 SGR（ROE × 留存率）
-python -m ashare_monitor.main screen --metric sgr --top 30 --min-yield 15 --report
-# SGR = 2025年报加权ROE × (1-支付率)；支付率=2025年度每股派息/EPS(clamp 0~1)
-# 真实结果：新易盛 65%（ROE 72.8 支付率 10%）、华图山鼎 83%
-# 过滤：剔除北交所（小票 ROE 极端值）/ROE>100 异常/ST
-
-# 回填 SGR 持续增长率历史（1995 年报起）
-python -m ashare_monitor.main backfill_sgr --report
-# 逐年：业绩报表(REPORTDATE 带横线) ROE/EPS + 分红报表 每股派息 → SGR=ROE×(1-支付率)
-# 真实：比亚迪 最新 SGR 13.8% / 均值 8.0% / 分红 10 年
-# 覆盖说明：东财业绩数据 1995 起；A 股 1990 开市，40 年不可能（如实）
-
-# 指标 3：高利润率（净利率 = 归母净利/营收）
-python -m ashare_monitor.main screen --metric margin --top 30 --min-yield 20 --report
-# 真实（2026H1）：东方财富 76.8%、金山办公 76%（毛利率 84.9%）、兆易创新 59.3%
-# 过滤：净利率>100 异常/ST/北交所/营收<1亿
-
-# 指标 3：市场占有率（营收 / 行业已披露总营收）
-python -m ashare_monitor.main screen --metric share --top 30 --min-yield 20 --report
-# 真实（2026H1 样本）：贵州茅台 86.5% 白酒、大秦铁路 84.3%、工业富联 81.3%
-# 口径：东财 BOARD_NAME 行业分组；行业披露样本<5 跳过；缺失行业跳过（如实）
-
-# 指标 5/6：低估（lowval）/ 高成长（growth）
-python -m ashare_monitor.main screen --metric lowval --top 30          # PE 5~25 + PB≤5
-python -m ashare_monitor.main screen --metric growth --top 30 --min-yield 50  # 净利增速≥50%
-# 真实：低估榜=银行（平安银行 PE 5.1/PB 0.47）；成长榜=江波龙 71528%（存储周期爆发）
-# 口径：低估=当日估值(TRADE_DATE 最近交易日)；成长=2026H1 净利同比 SJLTZ
-
-# 回填选股指标历史（增速 / 估值）
-python -m ashare_monitor.main backfill_indicators --report
-# 增速：净利/营收同比（1995 年报起）→ growth_history 表
-# 估值：年末交易日 PE/PB（2018 起，东财可得期）→ valuation_history 表
-# 真实（比亚迪）：增速 23 条（2002-2025，最新 -19%）；估值 8 条（2018-2025，PE 23.2）
-
-# 资产画像统一接口（AssetProfile）——跨领域通用化 Phase 1
-# 五维抽象：市值/总供给/增长/收益/估值；build_profile(code, market) 按市场分发
-# 股票实现：财报(ROE/增速) + 估值(PE/PB) + 股息率；crypto 占位待 Phase 2
-# check 命令的基本面/估值维度已改走统一接口（股票行为零变化，回归验证）
-
-# 数字货币进入多视角日报（跨领域打通）
-python -m ashare_monitor.main period --period daily
-# watchlist 加 market: crypto 条目（如 BTCUSDT）→ 日报/雷达自动包含
-# 币 K 线走 Binance 直拉（7×24）；买方/基金/大股东维度对币为"数据缺失"（如实）
-# 真实：比特币 77,028 USDT（-1.67%）K线 2026-08-22 正常
-
-# 回填数字货币历史 K 线（Binance 分段）
-python -m ashare_monitor.main backfill BTCUSDT --market crypto
-python -m ashare_monitor.main backfill ETHUSDT --market crypto
-# 真实：BTC/ETH 各 3293 根（2017-08-17 币安上线 ~ 2026-08-22，接近 10 年上限）
-# 币安 2017-08 前无 BTCUSDT 数据（BTC 更早价格需其他源，如实）
-# 修复：load_klines code[-6:] 截断对 7 位交易对错误（BTCUSDT→TCUSDT）→ 数字代码才截断
-
-# CoinGecko 补更早历史（Binance 上线前）
-python -m ashare_monitor.main backfill BTCUSDT --market crypto   # 自动补
-python -m ashare_monitor.main backfill ETHUSDT --market crypto
-# 流程：Binance（2017-08 起真实 OHLC）+ CoinGecko 补 2017 前（BTC 2010 起/ETH 2015 起）
-# 如实：CoinGecko market_chart 仅收盘价 → 补充段 OHLC 用收盘近似、volume=0
-# 沙箱境外 API 不可达（已知）→ 本机直连跑一次即可补全
-
-# 美股接入（英伟达 NVDA）
-python -m ashare_monitor.main backfill NVDA --market us    # 5748 根（1999 起）
-python -m ashare_monitor.main check NVDA                   # 行情/K线/择时
-python -m ashare_monitor.main period --period daily        # 四市场同屏日报
-# 行情：新浪/腾讯美股双源（sina_us/tencent_us）；K线：akshare stock_us_daily
-# 美股财务/估值需境外源（yfinance）暂不接入（如实）
-# 性能修复：timing 逐 i 重算 EMA/RSI O(n²) → 预计算 O(n)，5748 根 47s→0.06s
-
-# 美股财务接入（东财美股财务指标）
-python -m ashare_monitor.main check NVDA
-# 真实：英伟达 ROE 101.5% / 净利同比 +64.7% / 毛利率 71.1%（2026 年报）
-# 估值：市值需东财美股行情接口（沙箱 RemoteDisconnected，本机直连可用）
-
-# 美股选股（momentum 动量）+ 链上数据占位
-python -m ashare_monitor.main screen --market us --top 30   # 美股当日涨幅榜
-# 美股低估待估值源（东财美股行情无 PE/市值，如实）；百度估值为单只接口
-# 链上（质押收益/通胀率）：fetch_onchain_profile 占位，免费源沙箱不可达（Phase 3）
-
-# 低频策略引擎 + 模拟交易（Phase A：股息轮动）
-python -m ashare_monitor.main strategy dividend --capital 100000 --top 10 --paper
-# 选股器 TOP N 等权 → 目标持仓 → 模拟买入（整手/现价撮合）→ 落库 paper_positions
-# 纯模拟（paper trading）不产生真实交易；合规：低频月度再平衡需券商通道（QMT 等）
-# 沙箱东财 push2 不可达（已知）→ 本机直连跑策略
-
-# 月度再平衡（差额调仓闭环）
-python -m ashare_monitor.main strategy rebalance --capital 100000 --top 10 --paper
-# 新目标持仓 vs 当前持仓（paper_positions）→ 差额指令（加仓/减仓/清仓/新进）
-# 整手差额；小额漂移(<500)忽略；行情缺失标 hold（如实）
-# 整手限制：高股价标的差额不足一手时跳过（合理，如茅台 65 股差额）
-
-# 风控层 + 模拟持仓报告 + 实盘通道占位
-python -m ashare_monitor.main strategy status              # 模拟持仓盈亏报告
-python -m ashare_monitor.main strategy dividend --paper     # 已自动过风控
-# 风控：单标的上限 20%（超限调降）/ ST退市黑名单剔除 / 最小市值 20 亿过滤
-# 实盘通道：executor/qmt.py + ptrade.py 占位（券商开通后接入，合规报备）
-
-# 回测增强：交易成本 + 再平衡频率 + 多策略对比
-python -m ashare_monitor.main strategy backtest --codes 600519,000001,300750,002594 \
-  --start 2024-01-01 --rebalance --frequency quarterly --cost 5
-# 成本模型：单边 bp（佣金+印花税+滑点综合）；频率 monthly/quarterly/semi_annual
-# 多策略对比：--codes 分别传不同策略标的池（如 dividend 清单 vs lowval 清单）对比
-# 真实：季度再平衡含成本年化 24.97%（成本惩罚小）；静态等权 34% 仍最优
-
-# 净值跟踪 + 组合熔断 + 自动化调度
-python -m ashare_monitor.main strategy track     # 记录今日净值（paper_history）
-python -m ashare_monitor.main strategy breaker   # 组合熔断检查（-20% 停止新开仓）
-# rebalance 自动过熔断：组合亏损 ≥20% 时停止再平衡
-# 调度建议（本机 crontab/任务计划）：
-#   每月 1 日 09:30  strategy rebalance --capital 100000 --top 10 --paper
-#   每周日 20:00   strategy risk + strategy track
-
-# 模拟运行（2026-08-24 启动）
-# 模拟仓（沙箱真实行情撮合，10 万资金）：
-#   平安银行 2100 股 @ 11.41 / 比亚迪 200 股 @ 90.47 / 宁德时代 100 股 @ 391.15
-#   总投入 81,170 元（茅台一手 12.7 万资金不足未纳入，如实）
-# 每日跟踪：strategy track（paper_history 净值）
-# 风控：周日 strategy risk（-15% 止损）+ strategy breaker（-20% 熔断）
-# 月度：strategy rebalance（差额调仓，自动过熔断）
-
-# 本机每日/每周任务（数据积累）
-# 一次性：把 config.local.yaml 放到项目根（含自选股），然后：
-bash scripts/run_daily.sh    # 工作日 15:40 后：monitor + 日报 + 净值跟踪
-bash scripts/run_weekly.sh   # 周日 20:00：止损/熔断 + 周报 + 净值
-# Windows 自动调度（管理员）：
-scripts/setup_schedule_windows.bat
-# 验证：schtasks /Query /TN "ashare-daily"
-# 数据积累：data/ashare_monitor.db（klines/paper_positions/paper_history/...）
-
-# A 股全栈数据融合（a-stock-data V3.2.3 核心能力）
-# 来源：github.com/simonlin1212/a-stock-data（Simon 林，感谢作者）
-python -m ashare_monitor.main ad quote 600519,002594   # 腾讯富字段 PE/PB/市值
-python -m ashare_monitor.main ad hot                    # 同花顺强势股+题材归因
-python -m ashare_monitor.main ad lhb 002594             # 龙虎榜席位+机构动向
-python -m ashare_monitor.main ad unlock 002594          # 限售解禁日历（90 天）
-# 融合：em_get 东财节流（防封）/腾讯不封IP富行情/同花顺热点/东财 datacenter
-
-# A 股交易规则约束（涨跌停成交 + T+1 说明）
-python -m ashare_monitor.main strategy backtest --codes ... --rebalance
-# 涨跌停约束：涨停日（≥9.5%）买入受限保留旧仓 / 跌停日卖出受限
-# 真实发现：约束后月度再平衡年化 25.15%→27.50%（涨停买不进反而保住强势仓位）
-# T+1：低频月度/季度再平衡天然满足（周期首日卖出的都是持有≥1天的仓位）
-# 关闭约束：--limit none 参数（如需对比）
-
-# 因子有效性检验（IC/IR/分层/多空）
-python -m ashare_monitor.main strategy factor --factor-name momentum \
-  --forward 20 --codes 600519,000001,300750,002594
-# 真实：动量因子在自选股 IC 0.04/IC_IR 0.06/无单调分层 → 检验为无效（如实）
-# 因子：momentum / rsi / volatility（可扩展）
-# 意义：选股前先验因子有效性，淘汰无效因子（stock-panel 同类能力）
-
-# 因子表达式 DSL（qlib 模式，因子可配置化）
-python -m ashare_monitor.main strategy factor --list      # 列出全部因子
-python -m ashare_monitor.main strategy factor --factor-name momentum60 --codes ...
-python -m ashare_monitor.main strategy factor --expr "(close/Ref(close,60)-1)*100" --codes ...
-# DSL 语法：字段 close/open/high/low/volume + 函数 Ref/SMA/EMA/RSI/STD/SUM/MEAN/MAX/MIN/
-#   ABS/SQRT/SIGN/LOG + 运算 + - * / % ** 与比较
-# 自定义因子：复制 factors.example.yaml 为 factors.local.yaml（同名覆盖内置）
-# 求值 O(n)（滚动窗口 deque 增量）；内置 momentum/rsi/volatility 与旧实现数值零偏差
-# 真实：60 日动量因子 IC 0.0118（零代码改动检验新因子）
-
-# 模拟经纪人（backtrader 模式：现金账户 + 订单状态机）
-python -m ashare_monitor.main strategy orders          # 订单历史（状态机）+ 现金/净资产
-python -m ashare_monitor.main strategy status          # 持仓盈亏 + 现金 + 净资产
-python -m ashare_monitor.main strategy dividend --paper --commission 2.5 --stamp 5   # 真实费率
-# 状态机：New → Filled / Rejected（资金不足/持仓不足）/ Canceled
-# 现金账户：买入扣款（含佣金）、卖出入账（扣佣金+印花税）；净资产=现金+持仓市值
-# 佣金：--commission 万分数（A 股参考 2.5=万2.5）/ --stamp 印花税卖出（5=0.05%）
-# 默认 0（与历史行为零变化）；旧仓位无现金记录 → 现金 0（如实），注入 --capital 开始记账
-# 真实：平安银行 11.56 元 买卖各 1 笔 + 超持仓拒单，佣金 0.29/0.35 元精确
-
-# Python API 层（OpenBB 模式：一行代码查数据）
-python -c "import ashare_monitor.api as am; print(am.quote('002594').price)"
-python -c "import ashare_monitor.api as am; print(am.history('NVDA')['annualized_pct'])"
-# 核心函数：quote/quotes/kline/history/profile/check/screen/backtest/
-#   factor_ic/factor_expr/paper_report/paper_orders/ad_quote/ad_margin/...
-# 市场自动识别：数字=A股/港股、USDT=币、其他=美股（detect_market）
-# 返回类型与 CLI 同源（Quote/ScreenHit/CheckItem/AssetProfile），零重复实现
-# 意义：任何脚本/AI Agent 可编程调用；MCP Server 只需在此之上再套一层注册表
-
-# 命令自动文档（akshare 模式：argparse 一键生成）
-python -m ashare_monitor.docs_gen            # 生成 docs/commands.md（53 命令）
-python -m ashare_monitor.docs_gen --stdout   # 打印不落盘
-# 文档从 build_parser() 自动提取（help/参数/默认值）——改命令不用改文档
-# main.py 重构：build_parser() 供 CLI 与文档生成共用（单源）
-
-# MCP Server（AI Agent 查询四市场数据）
-python -m ashare_monitor.main mcp      # 启动（stdio）
-# 客户端配置（如 WorkBuddy ~/.workbuddy/mcp.json）：
-#   {"mcpServers": {"ashare": {"command": "python",
-#     "args": ["-m", "ashare_monitor.mcp_server"],
-#     "cwd": "C:/Users/Administrator/github/ashare-monitor"}}}
-# 23 个工具自动暴露（quote/check/screen/backtest/factor_ic/paper_*/ad_*）
-# 协议：JSON-RPC 2.0 over stdio（initialize/tools/list/tools/call）
-# 零依赖实现（不装 mcp SDK）；工具注册表从 api.py 函数签名自动生成
-
-# 回测报告升级（5k-10k star 项目借鉴：优化/统计/可视化）
-python -m ashare_monitor.main strategy backtest --codes 600519,000001,300750,002594 \
-  --start 2024-01-01 --rebalance --optimize --report
-# --optimize：参数网格（频率×成本 9 组）最优按夏普——真实：半年再平衡最优
-#   （semi_annual+0bp 夏普 0.95/年化 32.78%，月度 26-28%——再平衡频率再验证）
-# 统计 4→9 项：+Sortino/日胜率/盈亏比/最佳日/最差日（pyfolio 模式）
-# --report：output/backtest-*.html（净值曲线 SVG + 月度热力图，纯标准库零依赖）
-
-# 诊断可视化补全（水下曲线 + 模拟净值报告）
-python -m ashare_monitor.main strategy backtest --codes ... --rebalance --report
-# 回测报告新增"水下曲线"（回撤面积图 + 最深回撤标注，pyfolio 模式）
-python -m ashare_monitor.main strategy navreport
-# 模拟组合净值报告：paper_history 净值 vs 沪深 300 双线 + 明细表
-# 模拟运行期间每日 track → 任意时刻 navreport 出一张净值曲线（3 个月验证）
-
-# 美股低估选股 + 链上数据（业务侧补完）
-python -m ashare_monitor.main screen --market us --metric lowval --top 30
-# 东财美股列表（流动性 top 300）→ 腾讯富字段批量 PE/市值（不封 IP）
-# 过滤：PE≤25 / 价格≥5 / 市值≥100 亿美元——真实：GOOGL PE 12.2 / AMZN 15.3
-python -c "from ashare_monitor.asset import fetch_onchain_profile; print(fetch_onchain_profile('BTCUSDT'))"
-# 链上：BTC 通胀率（blockchain.info 无 key）/ ETH 质押收益（Lido APR）
-# 沙箱境外不可达（如实）→ 本机直连验证
-
-# Wind / 天眼查数据回填（MCP 会话内导入）
-# 项目 CLI 运行时无法调用 MCP → 会话内拉取 + import_data 落库：
-python -c "from ashare_monitor.import_data import import_klines_json, import_company_profile; ..."
-# 1. Wind K 线：import_klines_json([{date,open,close,high,low,volume}], market, code)
-#    ——真实：比亚迪 58 根导入，补 8/21、8/24；7 日与 akshare 逐点一致（口径吻合）
-#    8/20 偏差 0.51（复权基准差异，如实）
-# 2. 天眼查画像：import_company_profile(全称, {工商/规模/标签/...}) → company_profiles 表
-#    ——真实：比亚迪（成立 1995-02-10/王传福/大型/新能源车整车制造）→ check 工商画像维度
-# 3. 会话内工作流：DeferExecuteTool(mcp wind/tyc) 拉数据 → Bash python 调 import_data 落库
-
-# 智慧芽专利/论文回填（知识产权维度）
-# 会话内拉取（patsnap_search patent/paper）→ import_ip_assets 落库：
-python -c "from ashare_monitor.import_data import import_ip_assets; import_ip_assets('比亚迪股份有限公司', patents=[...], papers=[...])"
-# 真实：比亚迪专利 15 件（总量 27493）+ 论文 10 篇（2026-01 最新）→ check 知识产权维度
-# 专利字段：pn/title/ipc/legal_status/date/inventors；论文：title/authors/org/date/journal
-# 最新专利：CN122619700A 负极片（快充）；比亚迪技术布局集中在 H01M 电池/电解液
+本项目为个人研究与自动化模拟工具，输出基于公开数据与量化分析，**仅供参考，不构成投资建议**。
+市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力独立判断，必要时咨询持牌专业机构。
+过往表现不预示未来收益。全部交易功能为模拟，不涉及真实资金。
