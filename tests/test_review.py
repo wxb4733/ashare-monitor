@@ -573,3 +573,15 @@ def test_backfill_reviews_financials_by_date(tmp_path, monkeypatch):
     assert "1500.0" in htmls["review-2026-08-11.html"]
     assert "2026-03-31" in htmls["review-2026-08-11.html"]
     assert "7000.0" not in htmls["review-2026-08-11.html"]
+
+
+def test_load_pool_watchlist(tmp_path):
+    """review --pool：队列 JSON → watchlist 结构（不动配置）。"""
+    from ashare_monitor import main
+
+    q = tmp_path / "pool.json"
+    q.write_text('[{"code": "600066", "name": "宇通客车", "dividend_yield": 8.34},'
+                 ' {"code": "000651", "name": "格力电器"}]', encoding="utf-8")
+    wl = main._load_pool_watchlist(str(q), None)
+    assert wl == [{"code": "600066", "name": "宇通客车", "market": "ashare"},
+                  {"code": "000651", "name": "格力电器", "market": "ashare"}]

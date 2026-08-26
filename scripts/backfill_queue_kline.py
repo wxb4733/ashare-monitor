@@ -38,8 +38,12 @@ def _fetch_sina_only(code: str, market: str, start: str) -> list:
 
 
 def run_one(code: str, name: str, start: str,
-            fetcher=None, recorder=None, counter=None) -> str:
-    """单只回填：已有 K 线则跳过；否则腾讯拉取 + 落库。返回状态描述。"""
+            fetcher=None, recorder=None, counter=None,
+            replace: bool = False) -> str:
+    """单只回填：已有 K 线则跳过；否则腾讯拉取 + 落库。返回状态描述。
+
+    :param replace: 先清空该 code 旧 K 线再拉（防新浪/腾讯前复权口径混源）
+    """
     from ashare_monitor import backfill
     from ashare_monitor.storage import count_klines, record_klines
 
@@ -48,8 +52,20 @@ def run_one(code: str, name: str, start: str,
     counter = counter or count_klines
 
     before = counter(code, "ashare")
-    if before > 0:
+    if before > 0 and not replace:
         return f"已有 {before} 根，跳过"
+    if replace and before > 0:
+        from ashare_monitor.storage import get_conn
+
+        conn = get_conn()
+        try:
+            conn.execute(
+                "DELETE FROM klines WHERE market='ashare' AND code=?",
+                (code[-6:] if code.isdigit() else code,))
+            conn.commit()
+        finally:
+            conn.close()
+        print(f"    ↳ 清空旧 {before} 根（--replace）")
     rows = fetcher(code, "ashare", start)
     new = recorder(rows, "ashare", code)
     total = counter(code, "ashare")
@@ -63,6 +79,8 @@ def main() -> int:
     ap.add_argument("--codes", default="", help="仅回填指定代码（逗号分隔，如 601939,601288）")
     ap.add_argument("--source", choices=("auto", "sina"), default="auto",
                     help="数据源：auto=腾讯→新浪兜底；sina=强制新浪（腾讯封禁时用）")
+    ap.add_argument("--replace", action="store_true",
+                    help="先清空该 code 旧 K 线再拉（防复权口径混源；限流解除后补全量用）")
     args = ap.parse_args()
 
     fetcher = _fetch_sina_only if args.source == "sina" else _fetch_with_fallback
@@ -85,7 +103,8 @@ def main() -> int:
         code, name = str(it["code"]), it["name"]
         try:
             t0 = time.time()
-            msg = run_one(code, name, args.start, fetcher=fetcher)
+            msg = run_one(code, name, args.start, fetcher=fetcher,
+                          replace=args.replace)
             tag = "⏭" if "跳过" in msg else "✅"
             print(f"[{i:>2}/{len(queue)}] {tag} {name}({code}) {msg} "
                   f"({time.time()-t0:.0f}s)")

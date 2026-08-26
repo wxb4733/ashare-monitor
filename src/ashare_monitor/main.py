@@ -640,9 +640,36 @@ def run_financial(code: str, periods: int, market: str = "ashare") -> None:
     print_disclaimer()
 
 
+def _load_pool_watchlist(pool: str, cfg) -> list[dict]:
+    """把标的池（highdiv=回填队列 / JSON 路径）转成 watchlist 结构。
+
+    用于 review --pool：以队列标的为复盘对象，不动自选股配置。
+    """
+    import json
+    from pathlib import Path
+
+    if pool == "highdiv":
+        p = Path(__file__).resolve().parents[2] / "output" / "backfill_queue.json"
+        if not p.exists():
+            raise FileNotFoundError(
+                f"高股息队列 {p} 不存在，先运行 gen_queue_westock.py")
+        data = json.loads(p.read_text(encoding="utf-8"))
+    else:
+        p = Path(pool)
+        if not p.exists():
+            raise FileNotFoundError(f"标的池文件不存在: {pool}")
+        data = json.loads(p.read_text(encoding="utf-8"))
+    wl = [{"code": str(it["code"]), "name": it["name"], "market": "ashare"}
+          for it in data]
+    console.print(f"[cyan]标的池 {pool}: {len(wl)} 只（{wl[0]['name']} ~ "
+                  f"{wl[-1]['name']}）[/cyan]")
+    return wl
+
+
 def run_review(date: str | None, config_path: str | None,
                backfill_start: str | None = None,
-               backfill_end: str | None = None) -> None:
+               backfill_end: str | None = None,
+               pool: str | None = None) -> None:
     if backfill_start:
         from .review import backfill_reviews
 
@@ -666,6 +693,8 @@ def run_review(date: str | None, config_path: str | None,
     from .review import generate_review
 
     cfg = load_config(config_path)
+    if pool:
+        cfg.watchlist = _load_pool_watchlist(pool, cfg)
     setup_logging(cfg.logging)
     console.print("[cyan]正在生成复盘报告…[/cyan]")
     try:
@@ -3989,10 +4018,13 @@ def run_timing(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
-def run_report(period: str, date: str | None, config_path: str | None) -> None:
+def run_report(period: str, date: str | None, config_path: str | None,
+               pool: str | None = None) -> None:
     from .review import generate_period_report
 
     cfg = load_config(config_path)
+    if pool:
+        cfg.watchlist = _load_pool_watchlist(pool, cfg)
     setup_logging(cfg.logging)
     console.print(f"[cyan]正在生成{period}复盘汇总报告…[/cyan]")
     try:
@@ -4113,12 +4145,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--backfill", metavar="START",
                           help="回填历史复盘：起始日期 YYYY-MM-DD（用本地 klines 库，需先 backfill --kline）")
     p_review.add_argument("--end", help="回填结束日期 YYYY-MM-DD，默认昨天")
+    p_review.add_argument("--pool", default=None,
+                          help="标的池：highdiv（回填队列 34 家）或 JSON 文件路径；"
+                               "缺省用 config 自选股")
     sub.add_parser("scan", help="全市场异动扫描（涨幅/跌幅/放量/换手/振幅榜）")
     p_report = sub.add_parser("report", help="生成周/月/年复盘汇总报告")
     p_report.add_argument("--weekly", action="store_true", help="周报（默认）")
     p_report.add_argument("--monthly", action="store_true", help="月报")
     p_report.add_argument("--yearly", action="store_true", help="年报（近 365 天）")
     p_report.add_argument("--date", help="周期结束日期 YYYY-MM-DD，默认今天")
+    p_report.add_argument("--pool", default=None,
+                          help="标的池：highdiv（回填队列）或 JSON 路径，缺省用自选股")
     p_verify = sub.add_parser("verify", help="信号命中率验证（基于回填 K 线回测）")
     p_verify.add_argument("code", help="证券代码，如 002594 / 01211")
     p_verify.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
@@ -4434,12 +4471,14 @@ def main() -> None:
                       report=args.report)
     elif args.command == "review":
         run_review(args.date, args.config,
-                   backfill_start=args.backfill, backfill_end=args.end)
+                   backfill_start=args.backfill, backfill_end=args.end,
+                   pool=getattr(args, "pool", None))
     elif args.command == "scan":
         run_scan(args.config)
     elif args.command == "report":
         period = "yearly" if args.yearly else ("monthly" if args.monthly else "weekly")
-        run_report(period, args.date, args.config)
+        run_report(period, args.date, args.config,
+                   pool=getattr(args, "pool", None))
     elif args.command == "verify":
         run_verify(args.code, args.market, args.rule, args.days,
                    args.forward, args.config, report=args.report)

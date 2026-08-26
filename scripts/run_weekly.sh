@@ -24,4 +24,9 @@ if [ -f output/paper-nav-*.html ]; then
   cp -f output/paper-nav-*.html "$OUT/paper-nav-$(date '+%Y%m%d').html" 2>/dev/null || true
   echo "[weekly] 周度净值报告 → $OUT/paper-nav-$(date '+%Y%m%d').html"
 fi
+# 6. 高股息池周报（队列 34 家，独立视角；缺队列文件则跳过）
+if [ -f output/backfill_queue.json ]; then
+  "$PY" -m ashare_monitor.main $CFG report --weekly --pool highdiv 2>/dev/null | tail -2 || true
+  echo "[weekly] 高股息池周报已生成"
+fi
 echo "[weekly] 完成 $(date '+%H:%M')"
