@@ -93,3 +93,64 @@ def test_financials_storage_roundtrip(tmp_path):
     assert len(loaded) == 2
     assert loaded[0]["report_date"] == "2026-06-30"
     assert loaded[0]["revenue"] == 922.8 and loaded[0]["roe"] == 16.8
+
+
+def test_sina_kline_parse(monkeypatch):
+    """新浪 jsonp 解析：剥离反爬前缀、生成标准行格式。"""
+    import json as _json
+
+    from ashare_monitor import backfill
+
+    payload = [{"day": "2026-08-25", "open": "10.68", "high": "10.76",
+                "low": "10.60", "close": "10.66", "volume": "126895206"},
+               {"day": "2026-08-24", "open": "10.50", "high": "10.60",
+                "low": "10.40", "close": "10.55", "volume": "100000000"}]
+    body = ("/*<script>location.href='//sina.com';</script>*/\n"
+            "var _x=(" + _json.dumps(payload) + ")")
+
+    class _Resp:
+        text = body
+
+        def raise_for_status(self):
+            pass
+
+    import requests
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+    rows = backfill._backfill_kline_sina("601939", "ashare", "2020-01-01")
+    assert len(rows) == 2
+    assert rows[0] == ("2026-08-25", 10.68, 10.66, 10.76, 10.60, 126895206)
+    assert rows[1][0] == "2026-08-24"
+
+
+def test_backfill_kline_sina_fallback(monkeypatch):
+    """backfill_kline 降级链：akshare → 腾讯 → 新浪（全失败时新浪兜底落库）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _ak_boom(*a, **k):
+        calls.append("akshare")
+        raise RuntimeError("akshare 不可达")
+
+    def _tx_boom(*a, **k):
+        calls.append("tencent")
+        raise RuntimeError("腾讯限流")
+
+    def _sina_ok(*a, **k):
+        calls.append("sina")
+        return [("2026-08-25", 1.0, 1.1, 1.2, 0.9, 100)]
+
+    monkeypatch.setattr(backfill, "record_klines",
+                        lambda rows, market, code: len(rows))
+    # akshare 函数体在 backfill_kline 内以 import 方式调用，须 patch 该函数本身
+    import akshare as ak  # noqa: F401
+
+    def _fake_zh_a_hist(*a, **k):
+        raise RuntimeError("东财不可达")
+
+    monkeypatch.setattr(ak, "stock_zh_a_hist", _fake_zh_a_hist)
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx_boom)
+    monkeypatch.setattr(backfill, "_backfill_kline_sina", _sina_ok)
+    new, _ = backfill.backfill_kline("601939", "ashare")
+    assert new == 1
+    assert calls == ["tencent", "sina"]

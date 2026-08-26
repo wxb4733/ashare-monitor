@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta
 
 from .storage import (
@@ -98,12 +99,56 @@ def backfill_kline(code: str, market: str) -> tuple[int, int]:
                 ]
         except Exception as exc:  # noqa: BLE001
             logger.warning("akshare K 线回填失败，降级腾讯分段拉取: %s", exc)
-            rows = _backfill_kline_tencent(code, market, start)
+            try:
+                rows = _backfill_kline_tencent(code, market, start)
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("腾讯 K 线降级失败，切新浪兜底: %s", exc2)
+                rows = _backfill_kline_sina(code, market, start)
 
     new = record_klines(rows, market, code)
     from .storage import count_klines
 
     return new, count_klines(code, market)
+
+
+def _backfill_kline_sina(code: str, market: str, start: str) -> list[tuple]:
+    """新浪日 K 兜底源：最近 1023 根（约 4 年，jsonp getKLineData）。
+
+    腾讯 fqkline 被限流（IP 级 501 反爬页持续数十分钟）时兜底；
+    不足全量，仅保证体检 K 线维度有数据，限流解除后可再补全量（幂等）。
+    """
+    import json as _json
+    import re
+
+    import requests
+
+    from .providers.base import get_market_prefix
+
+    if market == "hk":
+        symbol = f"hk{code[-5:]}"
+    else:
+        symbol = get_market_prefix(code) + code[-6:]
+    url = ("https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_x="
+           f"/CN_MarketDataService.getKLineData?symbol={symbol}"
+           "&scale=240&ma=no&datalen=1023")
+    resp = requests.get(url, timeout=20,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0)"})
+    resp.raise_for_status()
+    m = re.search(r"\((\[.*\])\)", resp.text)
+    if not m:
+        raise RuntimeError(f"新浪 K 线 {code} 响应解析失败")
+    try:
+        data = _json.loads(m.group(1))
+    except ValueError:
+        data = eval(m.group(1))  # noqa: S307 - 内容为受控 K 线 JSONP
+    rows = [(str(r["day"])[:10], float(r["open"]), float(r["close"]),
+             float(r["high"]), float(r["low"]), float(r["volume"]))
+            for r in data]
+    if not rows:
+        raise RuntimeError(f"新浪 K 线 {code} 无数据")
+    logger.info("新浪 K 线兜底 %s: %d 根（%s ~ %s）",
+                code, len(rows), rows[0][0], rows[-1][0])
+    return rows
 
 
 def _backfill_kline_binance(code: str, start: str) -> list[tuple]:
@@ -184,11 +229,15 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
     if market == "hk":
         symbol = f"hk{code[-5:]}"
         api = "https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get"
+        hosts = ["https://web.ifzq.gtimg.cn"]
     else:
         from .providers.base import get_market_prefix
 
         symbol = get_market_prefix(code) + code[-6:]
-        api = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+        api_path = "/appstock/app/fqkline/get"
+        # 域名级降级：web.ifzq 被限流（501 反爬页）时切 proxy.finance.qq.com
+        hosts = ["https://web.ifzq.gtimg.cn",
+                 "https://proxy.finance.qq.com/ifzqgtimg"]
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
     all_rows: list[tuple] = []
@@ -201,9 +250,31 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
         if win_start.date() >= today.date():
             break
         win_end = min(win_start + timedelta(days=1120), today)  # ≈800 交易日
-        url = (f"{api}?param={symbol},day,{win_start:%Y-%m-%d},{win_end:%Y-%m-%d},800,qfq")
-        resp = requests.get(url, timeout=20, headers=headers)
-        resp.raise_for_status()
+        url_path = (f"{api_path}?param={symbol},day,{win_start:%Y-%m-%d},"
+                    f"{win_end:%Y-%m-%d},800,qfq")
+        # 腾讯间歇性反爬：501 返回 HTML 校验页（非 JSON）→ 退避重试 + 域名降级
+        resp = None
+        for host in hosts:
+            for attempt in range(2):
+                try:
+                    resp = requests.get(host + url_path, timeout=20,
+                                        headers=headers)
+                except requests.RequestException:
+                    resp = None
+                ct = resp.headers.get("content-type", "") if resp else ""
+                if resp and resp.status_code == 200 and "json" in ct:
+                    break
+                time.sleep(4 * (attempt + 1))  # 4s / 8s 退避
+            if resp and resp.status_code == 200 and "json" in ct:
+                break
+            logger.warning("腾讯 K 线 %s 域名 %s 限流，降级切换", code, host)
+        if resp is None or resp.status_code != 200 or "json" not in (
+                resp.headers.get("content-type", "")):
+            # 全部域名重试仍被限流：视作该窗口无数据，推进窗口继续
+            logger.warning("腾讯 K 线 %s 窗口 %s 限流跳过",
+                           code, win_start.date())
+            win_start = win_end + timedelta(days=1)
+            continue
         from .analysis import _parse_tencent_kline
 
         try:
