@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wxb4733/ashare-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/wxb4733/ashare-monitor/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-356-green.svg)](https://github.com/wxb4733/ashare-monitor/actions)
+[![Tests](https://img.shields.io/badge/tests-357-green.svg)](https://github.com/wxb4733/ashare-monitor/actions)
 [![MCP Tools](https://img.shields.io/badge/MCP%20tools-23-orange.svg)](src/ashare_monitor/mcp_server.py)
 
 **个人跨市场投研平台 + 低频自动化交易模拟** —— 一个命令，覆盖 A 股 / 港股 / 美股 / 数字货币的
@@ -27,7 +27,7 @@
 | **📊 报告复盘** | 收盘复盘 HTML（含知识产权区块）、日报/周报/月报、Obsidian 知识库导出、专利横向对比报告 | `review` / `daily` / `period` / `report` / `export` |
 | **🔌 开放接口** | Python API（22 函数）、MCP Server（23 工具，AI Agent 查询）、企业数据导入（Wind/天眼查/智慧芽） | `mcp` / `import_data.py` |
 
-> 规模：**54 个 CLI 命令 · 22 个 Python API · 23 个 MCP 工具 · 356 项测试 · 122+ commits**
+> 规模：**54 个 CLI 命令 · 22 个 Python API · 23 个 MCP 工具 · 357 项测试 · 129+ commits**
 
 ---
 
@@ -87,7 +87,7 @@ L5 跟踪层   净值记录 / 周度风控 / 月度换仓
 | K 线历史 | 1990 起 | 2002 起 | 1999 起（5748 根）| 2017 起（币安）+ 2010 起（CoinGecko）|
 | 体检维度 | **22 维** | 11 维 | 5 维 | 4 维 |
 | 选股因子 | 6 个 + DSL 自定义 | — | momentum / lowval | — |
-| 企业画像/专利 | ✅ 5 家回填 | ⚠️ 小米 | ⚠️ 英伟达 | — |
+| 企业画像/专利 | ✅ 40 家回填 | ✅ 小米 | ✅ 英伟达 | — |
 
 ### 数据源与边界（如实标注）
 
@@ -101,8 +101,8 @@ L5 跟踪层   净值记录 / 周度风控 / 月度换仓
 | Binance / CoinGecko | 币行情/K 线/链上 | ✅ 双域回退（境外源沙箱受限时需本机）|
 | akshare | 全市场数据兜底 | ⚠️ 部分接口受限 |
 
-> 诚实说明：专利数据为每标的最新 15 件采样快照（非全量）；境外 API（CoinGecko 等）
-> 在受限网络下不可达，程序自动降级并以 mock 测试覆盖。
+> 诚实说明：专利数据为每标的最新 8~15 件采样快照（非全量，高股息队列为 8~12 件）；
+> 境外 API（CoinGecko 等）在受限网络下不可达，程序自动降级并以 mock 测试覆盖。
 
 ### 关键验证记录（真实数据）
 
@@ -246,8 +246,11 @@ from ashare_monitor.import_data import (
 ```
 
 回填脚本样例：`scripts/backfill_profiles.py` / `backfill_ip.py` / `backfill_wind_kline.py` /
-`backfill_screener_pipeline.py`（高股息选股 → 待回填队列）。
+`backfill_screener_pipeline.py`（高股息选股 → 待回填队列）/ `gen_queue_westock.py`
+（东财不可达时用腾讯自选股富字段构造真实队列）。
 专利横向对比报告自动生成：`python scripts/patent_report.py` → `docs/patent_landscape.md`。
+> 已回填规模（2026-08-26）：**40 家工商画像 · 40 家知识产权（410 件专利采样 + 79 篇论文）**，
+> 覆盖核心 6 家 + 高股息队列 34 家。
 
 ### 5.7 Python API（22 函数）
 
@@ -334,7 +337,7 @@ src/ashare_monitor/
 └── a_stock_data.py    # A 股全栈数据（ad 命令）
 scripts/               # 定时任务 / 回填 / 报告生成
 docs/                  # commands.md / patent_landscape.md / compliance_checklist.md
-tests/                 # 356 项测试
+tests/                 # 357 项测试
 ```
 
 ---
@@ -342,7 +345,7 @@ tests/                 # 356 项测试
 ## 🧪 测试与开发
 
 ```bash
-python -m pytest tests/ -q                # 356 项全量测试
+python -m pytest tests/ -q                # 357 项全量测试
 python scripts/check_health.py            # CI 健康检查（MCP 工具数 + 3.10 语法扫描）
 ```
 

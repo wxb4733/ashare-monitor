@@ -153,6 +153,37 @@ def test_check_ip_dim(monkeypatch):
     assert "30 天内更新" in d          # 新鲜度
 
 
+def test_check_ip_dim_code_fallback(monkeypatch, tmp_path):
+    """check 知识产权/工商画像：非自选股（name=纯代码）经队列兜底匹配。"""
+    from ashare_monitor.check import check_stock
+
+    ips = {"宇通客车股份有限公司": {
+        "patents": [{"pn": "CN1", "title": "t", "date": "2026-08-01",
+                     "legal_status": "active", "ipc": "B60K1/00"}],
+        "papers": [], "updated": "2026-08-25"}}
+    profs = {"宇通客车股份有限公司": {"规模": "大型"}}
+    ip_meta = {"宇通客车股份有限公司": {"updated": "2026-08-25", "source": "智慧芽"}}
+    # 队列产物：code→name 映射
+    q = tmp_path / "output" / "backfill_queue.json"
+    q.parent.mkdir(parents=True)
+    q.write_text('[{"code": "600066", "name": "宇通客车"}]', encoding="utf-8")
+    monkeypatch.setattr("ashare_monitor.import_data.get_all_ip_assets",
+                        lambda db_path=None: ips)
+    monkeypatch.setattr("ashare_monitor.import_data.get_ip_meta",
+                        lambda db_path=None: ip_meta)
+    monkeypatch.setattr("ashare_monitor.import_data.get_all_company_profiles",
+                        lambda db_path=None: profs)
+    monkeypatch.setattr(
+        "ashare_monitor.check._lookup_name_by_code",
+        lambda code: "宇通客车" if code == "600066" else None)
+    checks = check_stock("600066", "600066", "ashare")  # name 退化为代码
+    names = {c.name for c in checks}
+    assert "工商画像" in names
+    assert "知识产权" in names
+    ip = next(c for c in checks if c.name == "知识产权")
+    assert "专利 1 件" in str(ip.detail)
+
+
 def test_profile_ip_meta(tmp_path, monkeypatch):
     """get_profile_meta / get_ip_meta：返回 updated + source。"""
     from ashare_monitor import storage

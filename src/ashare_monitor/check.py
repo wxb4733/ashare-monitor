@@ -39,6 +39,43 @@ def _miss(name: str, detail: str = "") -> CheckItem:
     return CheckItem(name, "MISSING", detail)
 
 
+def _lookup_name_by_code(code: str) -> str | None:
+    """本地库 code→股票名兜底（高股息/基本面/产销回填表 + 队列产物）。
+
+    当标的不在自选股时，check 的 name 退化为纯代码，无法与库内公司全名
+    做双向包含匹配；从本地回填表/队列反查真实名称以匹配画像/知识产权。
+    """
+    from pathlib import Path
+
+    import json
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    try:
+        for t in ("dividend_history", "sgr_history", "sector_sales"):
+            try:
+                row = conn.execute(
+                    f"SELECT name FROM {t} WHERE code=? AND name != '' "
+                    "LIMIT 1", (code,)).fetchone()
+            except Exception:  # noqa: BLE001
+                continue
+            if row and row[0]:
+                return str(row[0])
+    finally:
+        conn.close()
+    # 回填管线产物（output/backfill_queue.json，含 code→name 映射）
+    try:
+        q = Path(__file__).resolve().parents[2] / "output" / "backfill_queue.json"
+        if q.exists():
+            for it in json.loads(q.read_text(encoding="utf-8")):
+                if str(it.get("code")) == str(code):
+                    return str(it.get("name"))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
     """体检单只标的（股票/港股/数字货币）。"""
     checks: list[CheckItem] = []
@@ -368,12 +405,18 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
     try:
         from .import_data import get_all_company_profiles, get_profile_meta
 
+        # name 兜底：非自选股时 name 为纯代码，反查本地库真实股票名
+        mname = name
+        if mname.isdigit():
+            resolved = _lookup_name_by_code(code)
+            if resolved:
+                mname = resolved
         profiles = get_all_company_profiles()
         meta = get_profile_meta()
         match = None
         match_key = None
         for full_name, prof in profiles.items():
-            if name in full_name or full_name in name:
+            if mname in full_name or full_name in mname:
                 match = prof
                 match_key = full_name
                 break
@@ -423,8 +466,14 @@ def check_stock(code: str, name: str, market: str, cfg=None) -> list[CheckItem]:
         ip_meta = get_ip_meta()
         ip_match = None
         ip_key = None
+        # 同样用兜底解析后的名称匹配（非自选股场景）
+        mname2 = name
+        if mname2.isdigit():
+            resolved2 = _lookup_name_by_code(code)
+            if resolved2:
+                mname2 = resolved2
         for full_name, ip in ip_assets.items():
-            if name in full_name or full_name in name:
+            if mname2 in full_name or full_name in mname2:
                 ip_match = ip
                 ip_key = full_name
                 break
