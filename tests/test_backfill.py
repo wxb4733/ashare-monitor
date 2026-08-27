@@ -154,3 +154,20 @@ def test_backfill_kline_sina_fallback(monkeypatch):
     new, _ = backfill.backfill_kline("601939", "ashare")
     assert new == 1
     assert calls == ["tencent", "sina"]
+
+
+def test_parse_wind_rows():
+    """Wind 落盘 JSON → 标准行格式（含停牌空量容错）。"""
+    import json
+
+    from scripts.wind_kline_to_db import parse_wind_rows
+
+    payload = {"data": {"rows": [
+        ["2007-09-25T00:00:00.000+02:00", "3.36", "3.35", "3.56", "3.32",
+         "23766599052", "2736229727", "43.43", "3.42"],
+        ["2007-09-26T00:00:00.000+02:00", "3.39", "3.37", "3.45", "3.34",
+         None, None, None, None],  # 停牌日量价为空
+    ]}}
+    rows = parse_wind_rows(json.dumps(payload))
+    assert rows[0] == ("2007-09-25", 3.36, 3.35, 3.56, 3.32, 2736229727)
+    assert rows[1] == ("2007-09-26", 3.39, 3.37, 3.45, 3.34, 0.0)  # 空量→0
