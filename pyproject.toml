@@ -21,6 +21,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# OpenBB Open Data Platform：全球资产/宏观聚合数据源（美股/加密/宏观等）。
+# 体积大（~80 依赖包），按需安装：pip install -e ".[openbb]"
+openbb = [
+    "openbb==4.7.2",
+]
 
 [project.scripts]
 ashare-monitor = "ashare_monitor.main:main"

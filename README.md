@@ -39,6 +39,9 @@ cd ashare-monitor
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev]"        # Windows；macOS/Linux 用 .venv/bin/pip
 
+# 可选：OpenBB 全球数据聚合层（美股/加密/全球宏观；~80 依赖包，按需安装）
+.venv/Scripts/pip install -e ".[openbb]"     # 装后跑冒烟: python scripts/obb_smoke.py
+
 # 2. 配置自选股与预警（编辑 config.yaml 的 watchlist / alerts）
 #    A 股 6 位代码 / 港股 5 位 + market: hk / 币安交易对 + market: crypto / 美股代码
 
@@ -100,6 +103,7 @@ L5 跟踪层   净值记录 / 周度风控 / 月度换仓
 | **智慧芽** | 专利/论文（含法律状态/IPC）| ✅ MCP 会话内回填（采样快照）|
 | Binance / CoinGecko | 币行情/K 线/链上 | ✅ 双域回退（境外源沙箱受限时需本机）|
 | akshare | 全市场数据兜底 | ⚠️ 部分接口受限 |
+| **OpenBB**（可选）| 全球资产/宏观聚合层（美股/加密/宏观 100+ 命令）| ✅ 依赖已接入，数据通道见 `scripts/obb_smoke.py` 探测 |
 
 > 诚实说明：专利数据为每标的最新 8~15 件采样快照（非全量，高股息队列为 8~12 件）；
 > 境外 API（CoinGecko 等）在受限网络下不可达，程序自动降级并以 mock 测试覆盖。
