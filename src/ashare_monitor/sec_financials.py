@@ -11,9 +11,11 @@
 
 单位约定
 --------
-落库金额列 = 该币种"亿"（A 股 CNY 亿元 / 美股 USD 亿美元），由
-``financials.currency`` 列标注（'CNY' / 'USD'）；比率列为百分数；eps 为每股原值。
-ocf_per_share：SEC 三表无加权股数，诚实置 ``None``（不估算）。
+落库金额列 = "该币种的亿"：美国本土公司 USD 亿美元；**SEC 20-F 外国发行人
+（TSM/ASML 等）按本币列报，OpenBB sec provider 不做折算**——金额为报告货币
+原值，调用方须按报告货币标注真实 currency（TWD/EUR…），禁止一律标 USD
+（TSM 曾因此把 2.89 万亿新台币误记为 2.89 万亿美元）。比率列为百分数；
+eps 为每股原值。ocf_per_share：SEC 三表无加权股数，诚实置 ``None``（不估算）。
 
 解析函数与网络解耦（``_obb_fetch`` 为模块级薄封装，测试可 mock）。
 

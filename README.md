@@ -103,7 +103,7 @@ L5 跟踪层   净值记录 / 周度风控 / 月度换仓
 | **智慧芽** | 专利/论文（含法律状态/IPC）| ✅ MCP 会话内回填（采样快照）|
 | Binance / CoinGecko | 币行情/K 线/链上 | ✅ 双域回退（境外源沙箱受限时需本机）|
 | akshare | 全市场数据兜底 | ⚠️ 部分接口受限 |
-| **OpenBB**（可选）| 美股/港股 K 线降级源 + **SEC 财报落库**（`scripts/backfill_sec_financials.py`，USD 亿美元，currency 列标注）+ 美联储/OECD 宏观（免 key）| ✅ 降级链已接入；NVDA 6 期 FY2021-26 实测落库；yfinance 跨境需本机 |
+| **OpenBB**（可选）| 美股/港股 K 线降级源 + **SEC 财报落库**（`scripts/backfill_sec_financials.py --codes "..."` 批量；currency 列标注口径：USD 亿美元 / TWD 亿新台币 / EUR 亿欧元）+ 美联储/OECD 宏观（免 key）| ✅ 11 家美股 FY2020-26 实测落库（NVDA/MSFT/AAPL/GOOGL/AMZN/META/AVGO/AMD/TSM/MU/ASML）；yfinance 跨境需本机 |
 
 > 诚实说明：专利数据为每标的最新 8~15 件采样快照（非全量，高股息队列为 8~12 件）；
 > 境外 API（CoinGecko 等）在受限网络下不可达，程序自动降级并以 mock 测试覆盖。
