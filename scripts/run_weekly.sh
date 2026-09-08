@@ -8,6 +8,10 @@ CFG="--config config.local.yaml"
 OUT="output/weekly"
 mkdir -p "$OUT"
 
+# 港股财务缓存刷新标的（东财 HKF10 双口径：年报+中报）。
+# 新增标的直接在此追加代码（5 位，前导零保留），回填后本地画像优先自动生效。
+HK_FIN_CODES="01211 01810 00700 03690"
+
 echo "[weekly] $(date '+%Y-%m-%d %H:%M') 开始"
 # 1. 止损检查（-15%）
 "$PY" -m ashare_monitor.main $CFG strategy risk 2>/dev/null | tail -10 || true
@@ -31,9 +35,9 @@ if [ -f output/backfill_queue.json ]; then
 fi
 # 7. 港股财务缓存刷新（周频幂等：中报/年报新披露自动补库，
 #    本地画像优先源保持最新报告期——如 2026-06-30 中报）
-for hk_code in 01211 01810; do
+for hk_code in $HK_FIN_CODES; do
   "$PY" -m ashare_monitor.main backfill "$hk_code" --market hk --financial \
     2>/dev/null | grep -E "financial" | head -1 || true
 done
-echo "[weekly] 港股财务缓存已刷新（01211/01810）"
+echo "[weekly] 港股财务缓存已刷新（$HK_FIN_CODES）"
 echo "[weekly] 完成 $(date '+%H:%M')"
