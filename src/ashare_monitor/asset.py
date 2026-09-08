@@ -177,11 +177,51 @@ def crypto_profile(code: str, name: str = "") -> AssetProfile:
     return p
 
 
-def us_profile(code: str, name: str = "") -> AssetProfile:
-    """美股画像（东财美股财务指标：ROE/毛利率/净利增速/EPS）。"""
+def _round_f(v: float | None, nd: int = 4) -> float | None:
+    """数值安全保留位（None 透传）。"""
+    if v is None:
+        return None
+    return round(float(v), nd)
+
+
+def _fill_from_local_sec(p: AssetProfile, code: str) -> bool:
+    """本地 SEC financials 权威财报（已落库标的优先；填充成功返回 True）。
+
+    - 来源：scripts/backfill_sec_financials.py 落库（SEC EDGAR，免 key）
+    - 口径：金额以"报告币种元"存入 extra（与东财美股元口径一致，check PE
+      近似可复用）；currency/data_source 标注 provenance。
+    """
+    try:
+        from .storage import load_financials
+
+        rows = load_financials(code)
+    except Exception:  # noqa: BLE001
+        return False
+    if not rows:
+        return False
+    r = rows[0]  # 最新报告期（load 已按 report_date 倒序）
+    currency = r.get("currency", "USD")
+    p.growth_rate = _round_f(r.get("profit_yoy"))
+    p.extra["roe"] = _round_f(r.get("roe"))
+    p.extra["gross_margin"] = _round_f(r.get("gross_margin"))
+    p.extra["net_margin"] = _round_f(r.get("net_margin"))
+    p.extra["eps"] = _round_f(r.get("eps"))
+    p.extra["report_date"] = r.get("report_date")
+    # 亿 → 币种元（×1e8），与东财美股元口径对齐，供 PE≈市值/净利 复用
+    rev = r.get("revenue")
+    npf = r.get("net_profit")
+    p.extra["revenue"] = _round_f(rev * 1e8) if rev is not None else None
+    p.extra["net_profit"] = _round_f(npf * 1e8) if npf is not None else None
+    p.extra["currency"] = currency
+    p.extra["data_source"] = "SEC"
+    p.note = f"SEC 财报落库（{currency} 币种元口径）"
+    return True
+
+
+def _fill_from_akshare(p: AssetProfile, code: str) -> None:
+    """东财美股财务兜底（未落 SEC 库标的的实时源；沙箱受限时降级为空）。"""
     import akshare as ak
 
-    p = AssetProfile(code=code, name=name, market="us")
     try:
         df = ak.stock_financial_us_analysis_indicator_em(
             symbol=code, indicator="年报")
@@ -205,10 +245,22 @@ def us_profile(code: str, name: str = "") -> AssetProfile:
         p.extra["report_date"] = str(r.get("REPORT_DATE"))[:10]
         p.extra["revenue"] = _f(r.get("OPERATE_INCOME"))
         p.extra["net_profit"] = _f(r.get("PARENT_HOLDER_NETPROFIT"))
+        p.extra["data_source"] = "eastmoney"
         p.note = "东财美股财务（年报口径）"
     except Exception as exc:  # noqa: BLE001
         p.status = "WARN"
         p.note = f"美股财务获取失败：{str(exc)[:50]}"
+
+
+def us_profile(code: str, name: str = "") -> AssetProfile:
+    """美股画像：本地 SEC 权威财报优先（落库标的）→ akshare 东财兜底。
+
+    五维 growth 维度权威校准：SEC EDGAR 数据经 backfill_sec_financials 落库后
+    直接本地读取（不触网），ROE/毛利率/净利同比为 SEC XBRL 权威口径。
+    """
+    p = AssetProfile(code=code, name=name, market="us")
+    if not _fill_from_local_sec(p, code):
+        _fill_from_akshare(p, code)
     return p
 
 

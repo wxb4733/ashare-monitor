@@ -96,36 +96,65 @@ def test_build_profile_dispatch(monkeypatch):
     assert build_profile("BTC", "Bitcoin", "crypto") == "CRYPTO"
 
 
-def test_us_profile(monkeypatch):
+def test_us_profile_sec_local_first(monkeypatch):
+    """本地 SEC 落库优先：ROE/增速/毛利率来自 financials（权威），不触网。"""
+    from ashare_monitor.asset import us_profile
+
+    sec_rows = [{
+        "report_date": "2026-01-25", "revenue": 2159.38, "net_profit": 1200.67,
+        "revenue_yoy": 65.47, "profit_yoy": 64.75, "roe": 76.33,
+        "gross_margin": 71.07, "net_margin": 55.6, "eps": 4.9,
+        "ocf_per_share": None, "currency": "USD",
+    }]
+    # akshare 若被误调应抛错（SEC 路径不应触网）
+    monkeypatch.setattr(
+        "akshare.stock_financial_us_analysis_indicator_em",
+        lambda symbol, indicator="年报": (_ for _ in ()).throw(
+            RuntimeError("should not touch akshare")))
+    monkeypatch.setattr("ashare_monitor.storage.load_financials",
+                        lambda code, **kw: sec_rows)
+    p = us_profile("NVDA", "英伟达")
+    assert p.status == "OK"
+    assert p.extra["roe"] == pytest.approx(76.33)
+    assert p.growth_rate == pytest.approx(64.75)
+    assert p.extra["gross_margin"] == pytest.approx(71.07)
+    assert p.extra["data_source"] == "SEC"
+    assert p.extra["currency"] == "USD"
+    # 金额口径 = 币种元（亿美元 ×1e8 → 美元元），供 PE≈市值/净利 复用
+    assert p.extra["net_profit"] == pytest.approx(1200.67e8)
+    assert p.extra["revenue"] == pytest.approx(2159.38e8)
+
+
+def test_us_profile_local_empty_falls_to_akshare(monkeypatch):
+    """本地无 SEC 数据 → akshare 东财兜底（实时源）。"""
     import pandas as pd
 
     from ashare_monitor.asset import us_profile
 
+    monkeypatch.setattr("ashare_monitor.storage.load_financials",
+                        lambda code, **kw: [])
     df = pd.DataFrame([{
         "REPORT_DATE": "2026-01-31", "ROE_AVG": 101.5,
         "PARENT_HOLDER_NETPROFIT_YOY": 64.7,
         "GROSS_PROFIT_RATIO": 71.1, "BASIC_EPS": 3.6,
         "OPERATE_INCOME": 1.3e11, "PARENT_HOLDER_NETPROFIT": 6.0e10,
-    }, {
-        "REPORT_DATE": "2025-01-31", "ROE_AVG": 88.0,
-        "PARENT_HOLDER_NETPROFIT_YOY": 120.0,
-        "GROSS_PROFIT_RATIO": 70.0, "BASIC_EPS": 2.1,
-        "OPERATE_INCOME": 6.0e10, "PARENT_HOLDER_NETPROFIT": 3.5e10,
     }])
     monkeypatch.setattr(
         "akshare.stock_financial_us_analysis_indicator_em",
         lambda symbol, indicator="年报": df)
-    p = us_profile("NVDA", "英伟达")
+    p = us_profile("SOME_NEW", "新标的")
     assert p.status == "OK"
     assert p.extra["roe"] == pytest.approx(101.5)
-    assert p.growth_rate == pytest.approx(64.7)
-    assert p.extra["gross_margin"] == pytest.approx(71.1)
-    assert p.extra["net_profit"] == pytest.approx(6.0e10)
+    assert p.extra["data_source"] == "eastmoney"
+    assert p.note.startswith("东财")
 
 
 def test_us_profile_fallback(monkeypatch):
+    """本地空 + akshare 失败 → WARN（如实）。"""
     from ashare_monitor.asset import us_profile
 
+    monkeypatch.setattr("ashare_monitor.storage.load_financials",
+                        lambda code, **kw: [])
     monkeypatch.setattr(
         "akshare.stock_financial_us_analysis_indicator_em",
         lambda symbol, indicator="年报": (_ for _ in ()).throw(

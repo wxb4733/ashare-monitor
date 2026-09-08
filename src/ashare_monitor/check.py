@@ -778,11 +778,13 @@ def _check_us(code: str, name: str, checks: list) -> list:
 
         prof = build_profile(code, name, "us")
         if prof.extra.get("roe") is not None:
+            src = "SEC" if prof.extra.get("data_source") == "SEC" else "东财"
             detail = f"ROE {prof.extra['roe']:.1f}%"
             if prof.growth_rate is not None:
                 detail += f" 净利同比 {prof.growth_rate:+.1f}%"
             if prof.extra.get("gross_margin") is not None:
                 detail += f" 毛利率 {prof.extra['gross_margin']:.1f}%"
+            detail += f"（{src}权威源）"
             checks.append(_ok("基本面", detail))
         else:
             checks.append(_warn("基本面", prof.note or "美股财务缺失"))
@@ -795,6 +797,13 @@ def _check_us(code: str, name: str, checks: list) -> list:
         prof = build_profile(code, name, "us")
         npf = prof.extra.get("net_profit")
         if npf:
+            # SEC 20-F 外国发行人（TSM/ASML 等）报告币种非 USD：市值(USD)与
+            # 净利(TWD/EUR)不可比，PE 近似不适用，如实告警
+            if prof.extra.get("currency", "USD") != "USD":
+                checks.append(_warn(
+                    "估值(近似)",
+                    f"报告币种 {prof.extra['currency']} ≠ 市值币种 USD，PE 近似不适用"))
+                return checks
             import akshare as ak
 
             spot = ak.stock_us_spot_em()
