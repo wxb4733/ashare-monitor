@@ -29,4 +29,11 @@ if [ -f output/backfill_queue.json ]; then
   "$PY" -m ashare_monitor.main $CFG report --weekly --pool highdiv 2>/dev/null | tail -2 || true
   echo "[weekly] 高股息池周报已生成"
 fi
+# 7. 港股财务缓存刷新（周频幂等：中报/年报新披露自动补库，
+#    本地画像优先源保持最新报告期——如 2026-06-30 中报）
+for hk_code in 01211 01810; do
+  "$PY" -m ashare_monitor.main backfill "$hk_code" --market hk --financial \
+    2>/dev/null | grep -E "financial" | head -1 || true
+done
+echo "[weekly] 港股财务缓存已刷新（01211/01810）"
 echo "[weekly] 完成 $(date '+%H:%M')"

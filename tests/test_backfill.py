@@ -171,3 +171,58 @@ def test_parse_wind_rows():
     rows = parse_wind_rows(json.dumps(payload))
     assert rows[0] == ("2007-09-25", 3.36, 3.35, 3.56, 3.32, 2736229727)
     assert rows[1] == ("2007-09-26", 3.39, 3.37, 3.45, 3.34, 0.0)  # 空量→0
+
+
+
+def test_backfill_financial_hk_two_date_types(monkeypatch):
+    """港股财报回填双口径：年报(001)+中报(002)都拉取且新增数累加。
+
+    回归防护：DATE_TYPE_CODE 只拉 001（年报）会让缓存停在 2025-12-31，
+    刷不到 2026-06-30 中报（refresh 到最新半年报的需求）。
+    """
+    from ashare_monitor import backfill
+
+    filters = []          # 记录每次请求的 filter
+    recorded = []         # 记录每次落库的条数
+
+    def _fake_get(url, params, headers, timeout=15):
+        filt = params["filter"]
+        filters.append(filt)
+        if 'DATE_TYPE_CODE="001"' in filt:     # 年报
+            rows = [
+                {"REPORT_DATE": "2025-12-31", "OPERATE_INCOME": 8.0e10,
+                 "HOLDER_PROFIT": 3.0e9},
+                {"REPORT_DATE": "2024-12-31", "OPERATE_INCOME": 7.7e10,
+                 "HOLDER_PROFIT": 4.0e9},
+            ]
+        else:                                    # 002 中报
+            rows = [{"REPORT_DATE": "2026-06-30", "OPERATE_INCOME": 3.4e10,
+                     "HOLDER_PROFIT": 1.2e9}]
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"result": {"data": rows}}
+
+        return _Resp()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    monkeypatch.setattr(
+        "ashare_monitor.backfill.record_financials",
+        lambda items, code, **kw: recorded.append(len(items)) or (len(items), 0))
+    # backfill_financial 尾部延迟 import load_financials（读 storage 模块属性）
+    monkeypatch.setattr("ashare_monitor.storage.load_financials",
+                        lambda code, **kw: [None] * 40)
+
+    new, total = backfill.backfill_financial("01211", "hk")
+    # 两口径都被请求（001 年报 + 002 中报），且 filter 正确
+    assert len(filters) == 2
+    assert sum('DATE_TYPE_CODE="001"' in f for f in filters) == 1
+    assert sum('DATE_TYPE_CODE="002"' in f for f in filters) == 1
+    assert 'SECUCODE="01211.HK"' in filters[0]
+    # 两批都落库（2 条年报 + 1 条中报），new 累加非覆盖
+    assert recorded == [2, 1]
+    assert new == 3
+    assert total == 40

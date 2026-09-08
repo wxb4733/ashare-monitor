@@ -441,7 +441,9 @@ def backfill_news(code: str, years: int = 30) -> dict:
 def backfill_financial(code: str, market: str = "ashare") -> tuple[int, int]:
     """回填财报全量页。
 
-    :param market: ashare（东财业绩报表分页）/ hk（东财港股财务指标，年度）
+    :param market: ashare（东财业绩报表分页）/ hk（东财港股财务指标，
+        年报 DATE_TYPE_CODE=001 + 中报 002 双口径——港股半年披露节奏，
+        新披露的 2026-06-30 中报等自动入缓存）
     :return: (本次新增条数, 库内总条数)
     """
     from .fundamentals import (
@@ -456,25 +458,28 @@ def backfill_financial(code: str, market: str = "ashare") -> tuple[int, int]:
     code6 = code[-6:]
     new = 0
     if market == "hk":
-        resp = requests.get(
-            _FIN_API_HK,
-            params={
-                "reportName": "RPT_HKF10_FN_MAININDICATOR",
-                "columns": "HKF10_FN_MAININDICATOR",
-                "quoteColumns": "",
-                "pageNumber": "1", "pageSize": "20",
-                "sortTypes": "-1", "sortColumns": "STD_REPORT_DATE",
-                "filter": f'(SECUCODE="{code6}.HK")(DATE_TYPE_CODE="001")',
-                "source": "F10", "client": "PC",
-            },
-            headers=_HEADERS, timeout=15,
-        )
-        resp.raise_for_status()
-        items = parse_financials_hk(
-            (resp.json().get("result") or {}).get("data") or []
-        )
-        if items:
-            new, _ = record_financials(items, code)
+        for date_type in ("001", "002"):   # 年报 + 中报（含最新半年度报告）
+            resp = requests.get(
+                _FIN_API_HK,
+                params={
+                    "reportName": "RPT_HKF10_FN_MAININDICATOR",
+                    "columns": "HKF10_FN_MAININDICATOR",
+                    "quoteColumns": "",
+                    "pageNumber": "1", "pageSize": "20",
+                    "sortTypes": "-1", "sortColumns": "STD_REPORT_DATE",
+                    "filter": f'(SECUCODE="{code6}.HK")'
+                              f'(DATE_TYPE_CODE="{date_type}")',
+                    "source": "F10", "client": "PC",
+                },
+                headers=_HEADERS, timeout=15,
+            )
+            resp.raise_for_status()
+            items = parse_financials_hk(
+                (resp.json().get("result") or {}).get("data") or []
+            )
+            if items:
+                n, _ = record_financials(items, code)
+                new += n
     else:
         for page in range(1, 10):
             resp = requests.get(
