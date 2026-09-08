@@ -1,4 +1,9 @@
-"""OpenBB 集成冒烟测试：框架加载 + 免费数据源（yfinance）可达性探测。
+"""OpenBB 集成冒烟测试：框架加载 + 免费数据源可达性探测。
+
+免费（免 API key）源分两类：
+- yfinance（雅虎）：美股/加密 K 线；跨境网络下常被 IP 限流（YFRateLimitError）
+- sec / federal_reserve / oecd（美官方/国际组织）：权威基本面与宏观；
+  实测受限网络（沙箱）下可用，是本项目 OpenBB 主数据通道
 
 用法:
     python scripts/obb_smoke.py            # 全量探测
@@ -17,7 +22,7 @@ import time
 from pathlib import Path
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "output"
-PER_CALL_TIMEOUT = 90  # 秒，yfinance 跨境慢
+PER_CALL_TIMEOUT = 90  # 秒，跨境/年报解析慢
 
 
 def probe_framework() -> dict:
@@ -86,6 +91,58 @@ def probe_crypto_hist() -> dict:
     }
 
 
+def probe_sec_balance() -> dict:
+    """美股权威基本面（SEC EDGAR 免 key）：NVDA 年报资产负债表。"""
+    from openbb import obb
+
+    t0 = time.time()
+    res = obb.equity.fundamental.balance(
+        "NVDA", provider="sec", period="annual", limit=1,
+    )
+    df = res.to_dataframe()
+    if df is None or len(df) == 0:
+        return {"ok": False, "error": "空结果", "elapsed_s": round(time.time() - t0, 1)}
+    row = df.iloc[0].to_dict()
+    return {
+        "ok": True,
+        "rows": int(len(df)),
+        "period_ending": str(row.get("period_ending", "")),
+        "fiscal_year": str(row.get("fiscal_year", "")),
+        "total_assets": float(row["total_assets"]) if row.get("total_assets") is not None else None,
+        "total_liabilities": float(row["total_liabilities"]) if row.get("total_liabilities") is not None else None,
+        "elapsed_s": round(time.time() - t0, 1),
+    }
+
+
+def probe_fed_money() -> dict:
+    """美联储货币度量（免 key）：M1/M2 近月序列。"""
+    from openbb import obb
+
+    t0 = time.time()
+    res = obb.economy.money_measures(provider="federal_reserve")
+    df = res.to_dataframe()
+    return {
+        "ok": True,
+        "rows": int(len(df)),
+        "cols": [str(c) for c in df.columns][:6],
+        "elapsed_s": round(time.time() - t0, 1),
+    }
+
+
+def probe_oecd_cpi() -> dict:
+    """OECD 通胀（免 key）：美国 CPI 序列。"""
+    from openbb import obb
+
+    t0 = time.time()
+    res = obb.economy.cpi(provider="oecd", country="united_states")
+    df = res.to_dataframe()
+    return {
+        "ok": True,
+        "rows": int(len(df)),
+        "elapsed_s": round(time.time() - t0, 1),
+    }
+
+
 def run_with_timeout(fn, timeout: int) -> dict:
     """子线程执行 + 超时保护。"""
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -115,6 +172,12 @@ def main() -> int:
         report["equity_hist_nvda"] = run_with_timeout(probe_equity_hist, PER_CALL_TIMEOUT)
         print("[..] 探测加密日K BTC-USD(yfinance) …")
         report["crypto_hist_btc"] = run_with_timeout(probe_crypto_hist, PER_CALL_TIMEOUT)
+        print("[..] 探测 NVDA 年报资产负债表(sec) …")
+        report["sec_balance_nvda"] = run_with_timeout(probe_sec_balance, PER_CALL_TIMEOUT)
+        print("[..] 探测美联储货币度量(federal_reserve) …")
+        report["fed_money"] = run_with_timeout(probe_fed_money, PER_CALL_TIMEOUT)
+        print("[..] 探测 OECD 美国 CPI(oecd) …")
+        report["oecd_cpi_us"] = run_with_timeout(probe_oecd_cpi, PER_CALL_TIMEOUT)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / "obb_smoke_report.json"
