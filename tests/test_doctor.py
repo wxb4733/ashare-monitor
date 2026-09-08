@@ -97,6 +97,10 @@ def test_run_doctor(monkeypatch):
                         lambda code: (None, ""))
     monkeypatch.setattr("ashare_monitor.fundflow.fetch_fundflow",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
+    # 主路径失败后 doctor 会走 akshare 兜底——一并 patch，防真实网络
+    # （沙箱东财可达时兜底会返回真实分数，测试意图是"资金维度失败→不计分"）
+    monkeypatch.setattr("ashare_monitor.fundflow.fetch_fundflow_ak",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     monkeypatch.setattr("ashare_monitor.events.fetch_events",
                         lambda code, market, days=30: [])
 

@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS financials (
     net_margin REAL,
     eps REAL,
     ocf_per_share REAL,
+    currency TEXT NOT NULL DEFAULT 'CNY',
     UNIQUE(code, report_date)
 );
 CREATE INDEX IF NOT EXISTS idx_financials_code ON financials(code, report_date);
@@ -111,7 +112,21 @@ def _connect(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.executescript(_SCHEMA)
+    _ensure_currency_col(conn)  # 老库迁移：financials 补 currency 列（幂等）
     return conn
+
+
+def _ensure_currency_col(conn: sqlite3.Connection) -> None:
+    """老库迁移 guard：financials 若缺 currency 列则 ALTER 补上（默认 CNY）。
+
+    幂等：PRAGMA table_info 判列存在即跳过；多连接并发 ALTER 由 SQLite 锁串行化。
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(financials)")}
+    if "currency" not in cols:
+        conn.execute(
+            "ALTER TABLE financials ADD COLUMN currency TEXT NOT NULL DEFAULT 'CNY'"
+        )
+        conn.commit()
 
 
 def get_conn(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
@@ -507,10 +522,13 @@ def record_financials(
     code: str,
     name: str = "",
     db_path: str | Path = DB_PATH,
+    currency: str = "CNY",
 ) -> tuple[int, int]:
     """入库财报（code+report_date 唯一去重）。
 
     :param items: FinancialPeriod 列表
+    :param currency: 币种（'CNY' 金额单位=亿元；'USD' 单位=亿美元）。美股等
+        境外源经 sec_financials 落库时传 'USD'，A/H 股默认 'CNY' 零影响。
     :return: (新增条数, 已存在条数)
     """
     if not items:
@@ -522,11 +540,12 @@ def record_financials(
             cur = conn.execute(
                 "INSERT OR IGNORE INTO financials "
                 "(code, name, report_date, revenue, net_profit, revenue_yoy, "
-                "profit_yoy, roe, gross_margin, net_margin, eps, ocf_per_share) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "profit_yoy, roe, gross_margin, net_margin, eps, ocf_per_share, "
+                "currency) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (code, name or "", p.report_date, p.revenue, p.net_profit,
                  p.revenue_yoy, p.profit_yoy, p.roe, p.gross_margin,
-                 p.net_margin, p.eps, p.ocf_per_share),
+                 p.net_margin, p.eps, p.ocf_per_share, currency),
             )
             new += cur.rowcount
         conn.commit()
@@ -539,12 +558,16 @@ def record_financials(
 
 
 def load_financials(code: str, db_path: str | Path = DB_PATH) -> list[dict]:
-    """查询某标的全部入库财报（按报告期倒序）。"""
+    """查询某标的全部入库财报（按报告期倒序）。
+
+    返回 dict 含 currency 键（'CNY' 金额单位亿元 / 'USD' 亿美元），
+    境外标的数据消费方可按币种区分口径。
+    """
     conn = _connect(db_path)
     try:
         rows = conn.execute(
             "SELECT report_date, revenue, net_profit, revenue_yoy, profit_yoy, "
-            "roe, gross_margin, net_margin, eps, ocf_per_share "
+            "roe, gross_margin, net_margin, eps, ocf_per_share, currency "
             "FROM financials WHERE code=? ORDER BY report_date DESC",
             (code[-6:],),
         ).fetchall()
@@ -552,7 +575,7 @@ def load_financials(code: str, db_path: str | Path = DB_PATH) -> list[dict]:
             {"report_date": r[0], "revenue": r[1], "net_profit": r[2],
              "revenue_yoy": r[3], "profit_yoy": r[4], "roe": r[5],
              "gross_margin": r[6], "net_margin": r[7], "eps": r[8],
-             "ocf_per_share": r[9]}
+             "ocf_per_share": r[9], "currency": r[10]}
             for r in rows
         ]
     finally:
