@@ -58,25 +58,31 @@ def stock_profile(code: str, name: str = "", market: str = "ashare",
                   cfg=None) -> AssetProfile:
     """股票画像：聚合财报(ROE/增速) + 估值(PE/PB) + 现价/市值。"""
     p = AssetProfile(code=code, name=name, market=market)
-    try:
-        from .fundamentals import fetch_financials
+    # 港股：本地 financials 落库优先（backfill 回填的东财缓存——离线可用且
+    # currency 随库标注），未命中才走实时东财/akshare；对标美股 us_profile 的
+    # 本地权威源优先模式（美股 source='SEC'，港股 source='eastmoney-cache'）。
+    local_hit = market == "hk" and _fill_from_local_financials(
+        p, code, source="eastmoney-cache")
+    if not local_hit:
+        try:
+            from .fundamentals import fetch_financials
 
-        fins = fetch_financials(code, periods=2, market=market)
-        if fins and fins[0].roe is not None:
-            f0 = fins[0]
-            p.growth_rate = f0.profit_yoy
-            p.extra["roe"] = f0.roe
-            p.extra["report_date"] = f0.report_date
-            if f0.gross_margin is not None:
-                p.extra["gross_margin"] = f0.gross_margin
-            if f0.net_margin is not None:
-                p.extra["net_margin"] = f0.net_margin
-        else:
+            fins = fetch_financials(code, periods=2, market=market)
+            if fins and fins[0].roe is not None:
+                f0 = fins[0]
+                p.growth_rate = f0.profit_yoy
+                p.extra["roe"] = f0.roe
+                p.extra["report_date"] = f0.report_date
+                if f0.gross_margin is not None:
+                    p.extra["gross_margin"] = f0.gross_margin
+                if f0.net_margin is not None:
+                    p.extra["net_margin"] = f0.net_margin
+            else:
+                p.status = "WARN"
+                p.note = "财报字段缺失"
+        except Exception as exc:  # noqa: BLE001
             p.status = "WARN"
-            p.note = "财报字段缺失"
-    except Exception as exc:  # noqa: BLE001
-        p.status = "WARN"
-        p.note = f"财报获取失败：{str(exc)[:40]}"
+            p.note = f"财报获取失败：{str(exc)[:40]}"
 
     try:
         from .valuation import fetch_valuation
@@ -116,7 +122,8 @@ def stock_profile(code: str, name: str = "", market: str = "ashare",
     except Exception:  # noqa: BLE001
         pass
 
-    if market != "ashare":
+    # 港股部分字段受限：仅当财报维度未取到时如实 WARN（本地落库命中则不再降级）
+    if market != "ashare" and p.extra.get("roe") is None:
         p.status = "WARN"
         p.note = "港股部分字段受限（如实）"
     return p
@@ -184,12 +191,16 @@ def _round_f(v: float | None, nd: int = 4) -> float | None:
     return round(float(v), nd)
 
 
-def _fill_from_local_sec(p: AssetProfile, code: str) -> bool:
-    """本地 SEC financials 权威财报（已落库标的优先；填充成功返回 True）。
+def _fill_from_local_financials(p: AssetProfile, code: str,
+                                source: str = "SEC") -> bool:
+    """本地 financials 落库财报优先（命中返回 True）。
 
-    - 来源：scripts/backfill_sec_financials.py 落库（SEC EDGAR，免 key）
-    - 口径：金额以"报告币种元"存入 extra（与东财美股元口径一致，check PE
-      近似可复用）；currency/data_source 标注 provenance。
+    - source='SEC'（美股）：scripts/backfill_sec_financials.py 落库（SEC EDGAR 权威）
+    - source='eastmoney-cache'（港股）：scripts/backfill.py 财务回填落库（东财缓存，
+      离线可用；列报货币已随库内 currency 标注——比亚迪/小米等人民币列报为 CNY）
+    - 口径：库内金额为"币种亿" → extra 存"币种元"（×1e8，与行情市值元同币种，
+      供 check PE≈市值/净利 复用）；currency/data_source/report_date 标注 provenance，
+      消费方按 currency 区分可比性（如 20-F 非 USD 报告市值不可比）。
     """
     try:
         from .storage import load_financials
@@ -200,21 +211,22 @@ def _fill_from_local_sec(p: AssetProfile, code: str) -> bool:
     if not rows:
         return False
     r = rows[0]  # 最新报告期（load 已按 report_date 倒序）
-    currency = r.get("currency", "USD")
+    currency = r.get("currency") or ("USD" if source == "SEC" else "CNY")
     p.growth_rate = _round_f(r.get("profit_yoy"))
     p.extra["roe"] = _round_f(r.get("roe"))
     p.extra["gross_margin"] = _round_f(r.get("gross_margin"))
     p.extra["net_margin"] = _round_f(r.get("net_margin"))
     p.extra["eps"] = _round_f(r.get("eps"))
     p.extra["report_date"] = r.get("report_date")
-    # 亿 → 币种元（×1e8），与东财美股元口径对齐，供 PE≈市值/净利 复用
+    # 币种亿 → 币种元（×1e8），与行情市值元口径对齐，供 PE≈市值/净利 复用
     rev = r.get("revenue")
     npf = r.get("net_profit")
     p.extra["revenue"] = _round_f(rev * 1e8) if rev is not None else None
     p.extra["net_profit"] = _round_f(npf * 1e8) if npf is not None else None
     p.extra["currency"] = currency
-    p.extra["data_source"] = "SEC"
-    p.note = f"SEC 财报落库（{currency} 币种元口径）"
+    p.extra["data_source"] = source
+    p.note = (f"{source} 财报落库（{currency} 币种元口径，"
+              f"报告期 {r.get('report_date')}）")
     return True
 
 
@@ -259,7 +271,7 @@ def us_profile(code: str, name: str = "") -> AssetProfile:
     直接本地读取（不触网），ROE/毛利率/净利同比为 SEC XBRL 权威口径。
     """
     p = AssetProfile(code=code, name=name, market="us")
-    if not _fill_from_local_sec(p, code):
+    if not _fill_from_local_financials(p, code, source="SEC"):
         _fill_from_akshare(p, code)
     return p
 

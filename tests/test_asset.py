@@ -163,6 +163,77 @@ def test_us_profile_fallback(monkeypatch):
     assert p.status == "WARN"
 
 
+# ============ 港股画像本地优先（对标美股 SEC 迁移模式） ============
+
+def _mock_hk_aux(monkeypatch):
+    """mock 估值/行情/股息（stock_profile 港股段的网络依赖）。"""
+    monkeypatch.setattr(
+        "ashare_monitor.valuation.fetch_valuation",
+        lambda code, years=5: type("V", (), {
+            "pe_ttm": 19.2, "pe_pct": 30.0, "pb_mrq": 3.1, "pb_pct": 2.0,
+            "close": 300.0})())
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="hk": ([type("Q", (), {
+            "price": 300.0, "market_cap": 9.0e11,
+            "change_pct": -0.5})()], "tencent"))
+    monkeypatch.setattr(
+        "ashare_monitor.dividend.load_dividend_history",
+        lambda code: [type("D", (), {"yield_pct": 1.5})()])
+
+
+def test_hk_profile_local_priority(monkeypatch):
+    """港股本地 financials 落库优先：01211 已回填 → 不触网实时财报接口。"""
+    from ashare_monitor.asset import stock_profile
+
+    _mock_hk_aux(monkeypatch)
+    # 本地命中：比亚迪港股（人民币列报，CNY 亿元口径）
+    monkeypatch.setattr("ashare_monitor.storage.load_financials",
+                        lambda code, **kw: [{
+                            "report_date": "2025-12-31", "revenue": 8039.64,
+                            "net_profit": 326.19, "revenue_yoy": 3.46,
+                            "profit_yoy": 3.46, "roe": 27.05,
+                            "gross_margin": 21.55, "net_margin": 4.06,
+                            "eps": 1.12, "ocf_per_share": None,
+                            "currency": "CNY",
+                        }])
+    # 若误走实时链应抛错（本地命中不应触网）
+    monkeypatch.setattr(
+        "ashare_monitor.fundamentals.fetch_financials",
+        lambda code, periods=2, market="hk": (_ for _ in ()).throw(
+            RuntimeError("should not touch network")))
+    p = stock_profile("01211", "比亚迪", "hk")
+    assert p.status == "OK"          # 本地命中不触发"港股受限"WARN
+    assert p.extra["roe"] == pytest.approx(27.05)
+    assert p.growth_rate == pytest.approx(3.46)
+    assert p.extra["data_source"] == "eastmoney-cache"
+    assert p.extra["currency"] == "CNY"   # 比亚迪人民币列报，如实标注
+    assert p.extra["report_date"] == "2025-12-31"
+    # 金额口径 = 币种元（亿元 ×1e8 → 元）
+    assert p.extra["net_profit"] == pytest.approx(326.19e8)
+    assert p.extra["revenue"] == pytest.approx(8039.64e8)
+
+
+def test_hk_profile_local_empty_falls_to_network(monkeypatch):
+    """港股本地无回填 → 实时东财/akshare 财报链兜底。"""
+    from ashare_monitor.asset import stock_profile
+
+    _mock_hk_aux(monkeypatch)
+    monkeypatch.setattr("ashare_monitor.storage.load_financials",
+                        lambda code, **kw: [])
+    monkeypatch.setattr(
+        "ashare_monitor.fundamentals.fetch_financials",
+        lambda code, periods=2, market="hk": [type("F", (), {
+            "roe": 18.5, "profit_yoy": 12.3, "report_date": "2026-06-30",
+            "gross_margin": 30.0, "net_margin": 15.0})()])
+    p = stock_profile("01234", "新港股", "hk")
+    assert p.status == "OK"
+    assert p.extra["roe"] == pytest.approx(18.5)
+    assert p.growth_rate == pytest.approx(12.3)
+    # 实时源无 currency/data_source 标注（东财口径未落库，如实不带 provenance）
+    assert "data_source" not in p.extra
+
+
 def test_fetch_onchain_btc(monkeypatch):
     """BTC 通胀率：近 1 年新增供给/总量。"""
     from ashare_monitor.asset import fetch_onchain_profile
