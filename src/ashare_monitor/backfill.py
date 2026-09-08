@@ -98,12 +98,20 @@ def backfill_kline(code: str, market: str) -> tuple[int, int]:
                     for _, r in df.iterrows()
                 ]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("akshare K 线回填失败，降级腾讯分段拉取: %s", exc)
-            try:
-                rows = _backfill_kline_tencent(code, market, start)
-            except Exception as exc2:  # noqa: BLE001
-                logger.warning("腾讯 K 线降级失败，切新浪兜底: %s", exc2)
-                rows = _backfill_kline_sina(code, market, start)
+            logger.warning("akshare K 线回填失败，降级: %s", exc)
+            if market == "us":
+                # 美股：腾讯/新浪降级是 A 股接口（szNVDA 查询必然落空），
+                # OpenBB(yfinance) 是唯一真降级源
+                rows = _backfill_kline_obb(code, market, start)
+            elif market == "hk":
+                # 港股：OpenBB(yfinance) 优先（腾讯 IP 限流期仍可用），再腾讯 → 新浪
+                try:
+                    rows = _backfill_kline_obb(code, market, start)
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning("OpenBB K 线降级失败，切腾讯分段拉取: %s", exc2)
+                    rows = _fallback_tencent_sina(code, market, start)
+            else:
+                rows = _fallback_tencent_sina(code, market, start)
 
     new = record_klines(rows, market, code)
     from .storage import count_klines
@@ -299,6 +307,75 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
     if not all_rows:
         raise RuntimeError(f"腾讯 K 线分段拉取 {code} 无数据")
     return all_rows
+
+
+def _fallback_tencent_sina(code: str, market: str, start: str) -> list[tuple]:
+    """腾讯 → 新浪 降级链（A 股/港股共用，akshare 与 OpenBB 均失败后）。"""
+    try:
+        return _backfill_kline_tencent(code, market, start)
+    except Exception as exc2:  # noqa: BLE001
+        logger.warning("腾讯 K 线降级失败，切新浪兜底: %s", exc2)
+        return _backfill_kline_sina(code, market, start)
+
+
+def _obb_historical(symbol: str, start: str, end: str):
+    """OpenBB 日 K 命令薄封装（独立函数便于 mock 测试）。
+
+    真实调用: ``obb.equity.price.historical(symbol, provider="yfinance", ...)``。
+    OpenBB 命令经装饰器链动态分发，无法对 Router 实例 setattr 打桩，
+    测试统一 patch 本函数。
+    """
+    from openbb import obb
+
+    return obb.equity.price.historical(
+        symbol, provider="yfinance",
+        start_date=start, end_date=end,
+    )
+
+
+def _backfill_kline_obb(code: str, market: str, start: str) -> list[tuple]:
+    """OpenBB（yfinance provider）日 K 全量——美股/港股降级源。
+
+    - 可选依赖：需 ``pip install -e ".[openbb]"``，未装时抛 RuntimeError（由降级链跳过）
+    - 口径：前复权日 K；返回 (date, open, close, high, low, volume)（与 record_klines 一致）
+    - 代码映射：港股 01211 → 1211.HK；美股纯字母原样
+    - 沙箱注意：yfinance 走雅虎境外接口，受限网络下会被 IP 限流
+      （YFRateLimitError），属环境边界而非代码缺陷，需本机运行验证。
+    """
+    try:
+        from openbb import obb  # noqa: F401  # 仅探测可选依赖
+    except ImportError as exc:
+        raise RuntimeError('OpenBB 未安装（pip install -e ".[openbb]"）') from exc
+
+    # 港股 yfinance 代码去前导零（01211 → 1211.HK）；美股纯字母原样
+    symbol = f"{int(code[-5:])}.HK" if market == "hk" else code
+    try:
+        res = _obb_historical(symbol, start,
+                              datetime.now().strftime("%Y-%m-%d"))
+        df = res.to_dataframe()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"OpenBB K 线 {code} 拉取失败: {exc}") from exc
+    if df is None or df.empty:
+        raise RuntimeError(f"OpenBB K 线 {code} 无数据（起点 {start}）")
+
+    df = df.rename(columns=str.lower)
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    rows = []
+    for dt_idx, r in df.iterrows():
+        d = dt_idx.strftime("%Y-%m-%d") if hasattr(dt_idx, "strftime") \
+            else str(dt_idx)[:10]
+        rows.append((d, float(r["open"]), float(r["close"]),
+                     float(r["high"]), float(r["low"]), float(r["volume"])))
+    # 去重 + 升序（yfinance 偶尔返回含时区/重复索引）
+    seen: set[str] = set()
+    dedup = [r for r in rows if not (r[0] in seen or seen.add(r[0]))]
+    dedup.sort(key=lambda x: x[0])
+    if not dedup:
+        raise RuntimeError(f"OpenBB K 线 {code} 解析后为空")
+    logger.info("OpenBB K 线 %s: %d 根（%s ~ %s）",
+                code, len(dedup), dedup[0][0], dedup[-1][0])
+    return dedup
 
 
 def backfill_news(code: str, years: int = 30) -> dict:
@@ -542,12 +619,17 @@ def backfill_kline_incremental(codes: list[tuple[str, str]], days: int = 15) -> 
             elif market == "us":
                 import akshare as ak
 
-                df = ak.stock_us_daily(symbol=code, adjust="qfq")
-                new_rows = [(str(r["date"])[:10], float(r["open"]),
-                             float(r["close"]), float(r["high"]),
-                             float(r["low"]), float(r["volume"]))
-                            for _, r in df.iterrows()
-                            if str(r["date"])[:10] >= start]
+                try:
+                    df = ak.stock_us_daily(symbol=code, adjust="qfq")
+                    new_rows = [(str(r["date"])[:10], float(r["open"]),
+                                 float(r["close"]), float(r["high"]),
+                                 float(r["low"]), float(r["volume"]))
+                                for _, r in df.iterrows()
+                                if str(r["date"])[:10] >= start]
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("akshare 美股增量失败，切 OpenBB: %s", exc)
+                    rows_obb = _backfill_kline_obb(code, market, start)
+                    new_rows = [r for r in rows_obb if r[0] >= start]
             elif market == "hk":
                 import akshare as ak
 
