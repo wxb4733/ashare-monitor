@@ -3121,6 +3121,74 @@ def run_daily(code: str | None, config_path: str | None,
             console.print(f"[dim]Obsidian: {md_path}[/dim]")
 
 
+def run_wechat(code: str | None, config_path: str | None,
+               text: bool = False, push: bool = False,
+               title: str = "") -> None:
+    """公众号图文：生成可直接粘贴的 HTML，可选推入草稿箱。
+
+    个人订阅号无 freepublish（提交发布）权限，推送只到草稿箱，
+    最后一步群发需人工在公众平台后台点击。
+    """
+    from pathlib import Path
+
+    from .daily import build_daily_data
+    from .wechat import (build_wechat_article, build_wechat_digest,
+                         build_wechat_page, build_wechat_text)
+
+    cfg = load_config(config_path)
+    console.print("[cyan]正在聚合监控数据并渲染公众号图文…[/cyan]")
+    data = build_daily_data(cfg, codes=[code] if code else None)
+    items = data["items"]
+    if not items:
+        console.print("[yellow]无数据[/yellow]")
+        return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    wx = cfg.wechat
+    art_title = title or f"{wx.title_prefix}{today}".strip()
+    article = build_wechat_article(data, as_of=today, intro=wx.intro)
+    page = build_wechat_page(article, art_title)
+
+    out_dir = Path("output")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"wechat-{today}.html"
+    out_path.write_text(page, encoding="utf-8")
+    console.print(f"[green]公众号图文已生成: {out_path}[/green]")
+    console.print("[dim]用浏览器打开 → 全选复制 → 粘贴进公众号编辑器，行内样式会保留[/dim]")
+
+    if text:
+        txt_path = out_dir / f"wechat-{today}.txt"
+        txt_path.write_text(build_wechat_text(data, as_of=today),
+                            encoding="utf-8")
+        console.print(f"[dim]纯文本版: {txt_path}[/dim]")
+
+    print_disclaimer()
+
+    if push:
+        if not wx.appid or not wx.secret:
+            console.print("[yellow]未配置 wechat.appid / wechat.secret，跳过推送[/yellow]")
+            console.print("[dim]可写入 config.local.yaml 或设环境变量 "
+                          "WECHAT_APPID / WECHAT_SECRET[/dim]")
+            return
+        from .wechat import WeChatDraftClient
+
+        try:
+            client = WeChatDraftClient(wx.appid, wx.secret)
+            media_id = client.add_draft(
+                title=art_title,
+                content=article,
+                author=wx.author,
+                digest=build_wechat_digest(data),
+                thumb_media_id=wx.thumb_media_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]推送草稿箱失败: {exc}[/red]")
+            return
+        console.print(f"[green]已推入公众号草稿箱 media_id={media_id}[/green]")
+        console.print("[yellow]个人订阅号无发布接口权限，"
+                      "请到公众平台后台手动点击「群发」[/yellow]")
+
+
 def run_sector(code: str | None, config_path: str | None,
                report: bool = False, push: bool = False) -> None:
     """月度产销快报（行业景气先行指标）。"""
@@ -4413,6 +4481,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_bs.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
     p_bs.add_argument("--report", action="store_true", help="生成报告")
 
+    p_wx = sub.add_parser("wechat", help="公众号图文（生成可粘贴 HTML / 推草稿箱）")
+    p_wx.add_argument("code", nargs="?", default="", help="指定代码（缺省全部自选股）")
+    p_wx.add_argument("--text", action="store_true", help="额外输出纯文本版")
+    p_wx.add_argument("--push", action="store_true", help="推送到公众号草稿箱")
+    p_wx.add_argument("--title", default="", help="自定义标题")
+
     return parser
 
 
@@ -4548,6 +4622,9 @@ def main() -> None:
     elif args.command == "daily":
         run_daily(args.code or None, args.config,
                   report=args.report, push=args.push)
+    elif args.command == "wechat":
+        run_wechat(args.code or None, args.config,
+                   text=args.text, push=args.push, title=args.title)
     elif args.command == "industry":
         run_industry(args.config, report=args.report, push=args.push,
                      detail=getattr(args, "detail", False))

@@ -24,7 +24,8 @@ CATEGORIES: list[tuple[str, tuple[str, ...]]] = [
     ("选股", ("screen",)),
     ("历史与回填", ("backfill", "backfill_kline", "history",
                    "backfill_indicators", "backfill_sgr", "backtest_hold")),
-    ("报告与导出", ("report", "review", "period", "export", "obsidian")),
+    ("报告与导出", ("report", "review", "period", "export", "obsidian",
+                   "daily", "wechat")),
     ("策略与交易", ("strategy", "portfolio", "position", "paper", "rebalance")),
     ("数据与资讯", ("news", "financial", "ipo", "ad", "arxiv", "hf")),
 ]

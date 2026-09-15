@@ -91,6 +91,21 @@ class ObsidianConfig:
 
 
 @dataclass
+class WeChatConfig:
+    # 公众号图文（appid/secret 建议只放 config.local.yaml，勿提交）
+    appid: str = ""
+    secret: str = ""
+    # 草稿作者署名
+    author: str = ""
+    # 封面永久素材 media_id（可留空，发布前在后台补）
+    thumb_media_id: str = ""
+    # 标题前缀，最终标题为 f"{title_prefix}{YYYY-MM-DD}"
+    title_prefix: str = "自选股监控日报 "
+    # 导语，留空则按标的数自动生成
+    intro: str = ""
+
+
+@dataclass
 class Config:
     watchlist: list[dict] = field(default_factory=list)
     positions: list[dict] = field(default_factory=list)  # 持仓：code/name/market/cost/shares
@@ -104,6 +119,7 @@ class Config:
     scan: ScanConfig = field(default_factory=ScanConfig)
     signals: SignalConfig = field(default_factory=SignalConfig)
     obsidian: ObsidianConfig = field(default_factory=ObsidianConfig)
+    wechat: WeChatConfig = field(default_factory=WeChatConfig)
     logging: dict = field(default_factory=dict)
 
 
@@ -126,6 +142,7 @@ def load_config(path: str | None = None) -> Config:
     scan_raw = raw.get("scan", {}) or {}
     signals_raw = raw.get("signals", {}) or {}
     obsidian_raw = raw.get("obsidian", {}) or {}
+    wechat_raw = raw.get("wechat", {}) or {}
 
     return Config(
         watchlist=raw.get("watchlist", []) or [],
@@ -188,6 +205,17 @@ def load_config(path: str | None = None) -> Config:
         obsidian=ObsidianConfig(
             vault=_resolve_vault(str(obsidian_raw.get("vault", "obsidian-vault")), path),
             reports_dir=str(obsidian_raw.get("reports_dir", "A股复盘")),
+        ),
+        wechat=WeChatConfig(
+            # 环境变量优先，便于 CI / 定时任务注入凭据而不落盘
+            appid=str(os.environ.get("WECHAT_APPID")
+                      or wechat_raw.get("appid", "")),
+            secret=str(os.environ.get("WECHAT_SECRET")
+                       or wechat_raw.get("secret", "")),
+            author=str(wechat_raw.get("author", "")),
+            thumb_media_id=str(wechat_raw.get("thumb_media_id", "")),
+            title_prefix=str(wechat_raw.get("title_prefix", "自选股监控日报 ")),
+            intro=str(wechat_raw.get("intro", "")),
         ),
         logging=raw.get("logging", {}) or {},
     )

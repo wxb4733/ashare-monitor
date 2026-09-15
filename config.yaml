@@ -90,6 +90,19 @@ obsidian:
   vault: "obsidian-vault"   # 留空禁用；先运行 `obsidian init` 初始化库结构
   reports_dir: "A股复盘"     # 库内复盘子目录
 
+# 公众号图文（wechat 命令）
+# 注意：appid / secret 属敏感凭据，建议只写在 config.local.yaml（已 gitignore），
+#       或用环境变量 WECHAT_APPID / WECHAT_SECRET 注入（环境变量优先）。
+# 权限边界：个人订阅号自 2025-07 起被回收 freepublish（提交发布）权限，
+#       本命令最多把图文推到草稿箱，最后一步「群发」需人工在后台点击。
+wechat:
+  # appid: ""              # 公众平台「设置与开发 → 基本配置」
+  # secret: ""
+  author: ""               # 草稿作者署名
+  title_prefix: "自选股监控日报 "  # 最终标题 = 前缀 + YYYY-MM-DD
+  intro: ""                # 导语，留空按标的数自动生成
+  thumb_media_id: ""       # 封面永久素材 media_id，可留空后补
+
 # 日志
 logging:
   level: "INFO"
