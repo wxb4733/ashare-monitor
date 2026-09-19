@@ -144,6 +144,9 @@ def _backfill_kline_sina(code: str, market: str, start: str) -> list[tuple]:
     resp.raise_for_status()
     m = re.search(r"\((\[.*\])\)", resp.text)
     if not m:
+        if market == "hk" and "null" in resp.text:
+            # 新浪 /cn/ 端点不服务港股（实测返回 null），如实标注而非误报解析失败
+            raise RuntimeError(f"新浪 K 线不支持港股 {code}（端点返回 null），请等腾讯限流解除后重试")
         raise RuntimeError(f"新浪 K 线 {code} 响应解析失败")
     try:
         data = _json.loads(m.group(1))
@@ -236,8 +239,10 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
 
     if market == "hk":
         symbol = f"hk{code[-5:]}"
-        api = "https://web.ifzq.gtimg.cn/appstock/app/hkfqkline/get"
-        hosts = ["https://web.ifzq.gtimg.cn"]
+        api_path = "/appstock/app/hkfqkline/get"
+        # 域名级降级：web.ifzq 被限流（501 反爬页）时切 proxy.finance.qq.com
+        hosts = ["https://web.ifzq.gtimg.cn",
+                 "https://proxy.finance.qq.com/ifzqgtimg"]
     else:
         from .providers.base import get_market_prefix
 
