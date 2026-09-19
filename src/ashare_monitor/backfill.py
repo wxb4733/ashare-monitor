@@ -266,6 +266,14 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
         url_path = (f"{api_path}?param={symbol},day,{win_start:%Y-%m-%d},"
                     f"{win_end:%Y-%m-%d},800,qfq")
         # 腾讯间歇性反爬：501 返回 HTML 校验页（非 JSON）→ 退避重试 + 域名降级
+        # 注意：腾讯 HK 端点（hkfqkline）即使返回合法 JSON，
+        # Content-Type 也是 text/html —— 不能只看 header，须同时看 body 形态
+        def _resp_ok(r):
+            if r is None or r.status_code != 200:
+                return False
+            ct = r.headers.get("content-type", "")
+            return "json" in ct or r.text.lstrip().startswith("{")
+
         resp = None
         for host in hosts:
             for attempt in range(2):
@@ -274,15 +282,13 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
                                         headers=headers)
                 except requests.RequestException:
                     resp = None
-                ct = resp.headers.get("content-type", "") if resp else ""
-                if resp and resp.status_code == 200 and "json" in ct:
+                if _resp_ok(resp):
                     break
                 time.sleep(4 * (attempt + 1))  # 4s / 8s 退避
-            if resp and resp.status_code == 200 and "json" in ct:
+            if _resp_ok(resp):
                 break
             logger.warning("腾讯 K 线 %s 域名 %s 限流，降级切换", code, host)
-        if resp is None or resp.status_code != 200 or "json" not in (
-                resp.headers.get("content-type", "")):
+        if not _resp_ok(resp):
             # 全部域名重试仍被限流：视作该窗口无数据，推进窗口继续
             logger.warning("腾讯 K 线 %s 窗口 %s 限流跳过",
                            code, win_start.date())
