@@ -135,7 +135,9 @@ def _cn_num(n: int) -> str:
     return ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][n]
 
 
-def _pct_html(value: float) -> str:
+def _pct_html(value: float | None) -> str:
+    if value is None:
+        return '<span class="">-</span>'
     cls = "up" if value > 0 else ("down" if value < 0 else "")
     return f'<span class="{cls}">{value:+.2f}%</span>'
 
@@ -157,10 +159,10 @@ def _quote_rows(quotes: list[Quote]) -> str:
         rows.append(
             "<tr>"
             f"<td>{q.code}</td><td>{q.name}</td>"
-            f"<td>{q.price:.2f}</td>"
+            f"<td>{f'{q.price:.2f}' if q.price is not None else '-'}</td>"
             f"<td>{_pct_html(q.change_pct)}</td>"
             f"<td>{f'{amp:.2f}%' if amp is not None else '-'}</td>"
-            f"<td>{q.volume:,.0f}{volume_unit}</td>"
+            f"<td>{f'{q.volume:,.0f}' if q.volume is not None else '-'}{volume_unit}</td>"
             f"<td>{turnover}</td>"
             "</tr>"
         )

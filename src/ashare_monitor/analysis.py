@@ -72,6 +72,24 @@ def fetch_history(
     """
     if market == "crypto":
         return _fetch_history_binance(code, days, period), code.upper()
+    if market == "us":
+        # 美股：读本地库（backfill 时由 akshare/OpenBB 灌入），
+        # 避免误入 A 股腾讯接口（'list' object has no attribute 'get' 的根因）
+        from .storage import load_klines
+
+        rows = load_klines(code, "us")
+        if not rows:
+            raise RuntimeError(f"本地库无 {code} 美股 K 线（请先 backfill）")
+        df = pd.DataFrame(
+            [(r["date"], float(r["open"]), float(r["close"]), float(r["high"]),
+              float(r["low"]), float(r["volume"])) for r in rows],
+            columns=["日期", "开盘", "收盘", "最高", "最低", "成交量"],
+        )
+        prev_close = df["收盘"].shift(1)
+        df["涨跌幅"] = (df["收盘"] / prev_close - 1) * 100
+        df["振幅"] = (df["最高"] - df["最低"]) / prev_close * 100
+        df.loc[df.index[0], ["涨跌幅", "振幅"]] = 0.0
+        return df.tail(days).reset_index(drop=True), code
     if market == "hk":
         df = _fetch_history_tencent_hk(code, days, adjust, period)
         return df.tail(days).reset_index(drop=True), _lookup_hk_name(code)
