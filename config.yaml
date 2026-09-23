@@ -99,7 +99,7 @@ signals:
 
 # Obsidian 集成：项目内独立知识库（obsidian-vault/，相对路径基于 config 所在目录）
 obsidian:
-  vault: "obsidian-vault"   # 留空禁用；先运行 `obsidian init` 初始化库结构
+  vault: "E:/Obsidian/wxb4733/ashare-monitor 库"   # 直连真实 vault → obsidian-git 自动同步 GitHub   # 留空禁用；先运行 `obsidian init` 初始化库结构
   reports_dir: "A股复盘"     # 库内复盘子目录
 
 # 公众号图文（wechat 命令）

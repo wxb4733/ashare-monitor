@@ -11,6 +11,13 @@ REM 2) news/financial incremental for A-share watchlist
 %EXE% backfill 000001 >> logs\backfill_task.log 2>&1
 %EXE% backfill 300750 >> logs\backfill_task.log 2>&1
 %EXE% backfill 002594 >> logs\backfill_task.log 2>&1
-REM 3) review HTML for today
+REM 3) review HTML + Obsidian markdown export (to real vault)
 %EXE% review >> logs\backfill_task.log 2>&1
+REM 4) push vault accumulation to GitHub (obsidian-vault repo)
+cd /d E:\Obsidian\wxb4733
+"C:\Program Files\Git\cmd\git.exe" add -A >> E:\github\ashare-monitor\logs\backfill_task.log 2>&1
+"C:\Program Files\Git\cmd\git.exe" diff --cached --quiet
+if errorlevel 1 "C:\Program Files\Git\cmd\git.exe" commit -m "vault sync: daily review auto-commit (%DATE%)" >> E:\github\ashare-monitor\logs\backfill_task.log 2>&1
+"C:\Program Files\Git\cmd\git.exe" push origin main >> E:\github\ashare-monitor\logs\backfill_task.log 2>&1
+cd /d E:\github\ashare-monitor
 echo === %DATE% %TIME% daily task done === >> logs\backfill_task.log 2>&1
