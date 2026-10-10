@@ -226,3 +226,189 @@ def test_backfill_financial_hk_two_date_types(monkeypatch):
     assert recorded == [2, 1]
     assert new == 3
     assert total == 40
+
+
+def test_incremental_kline_tencent_first(monkeypatch):
+    """增量主源链：腾讯优先，命中即不再触达 akshare（东财不可达时的旧全量重拉已去除）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _tx_ok(code, market, start):
+        calls.append("tencent")
+        return [("2026-09-23", 1.0, 1.1, 1.2, 0.9, 100),
+                ("2026-10-09", 2.0, 2.2, 2.3, 1.9, 200)]
+
+    def _ak_should_not_call(*a, **k):
+        calls.append("akshare")
+        return []
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx_ok)
+    monkeypatch.setattr(backfill, "_backfill_kline_akshare", _ak_should_not_call)
+    rows = backfill._incremental_kline("01211", "hk", "2026-09-24")
+    assert calls == ["tencent"]
+    # start 之前的重叠行被裁掉，只留缺口段
+    assert rows == [("2026-10-09", 2.0, 2.2, 2.3, 1.9, 200)]
+
+
+def test_incremental_kline_falls_back_to_akshare(monkeypatch):
+    """腾讯失败 → akshare 降级位（保留东财通道，恢复后自动回主位候选）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _tx_boom(*a, **k):
+        calls.append("tencent")
+        raise RuntimeError("腾讯限流")
+
+    def _ak_ok(*a, **k):
+        calls.append("akshare")
+        return [("2026-10-08", 3.0, 3.1, 3.2, 2.9, 300),
+                ("2026-10-09", 4.0, 4.1, 4.2, 3.9, 400)]
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx_boom)
+    monkeypatch.setattr(backfill, "_backfill_kline_akshare", _ak_ok)
+    rows = backfill._incremental_kline("600519", "ashare", "2026-10-09")
+    assert calls == ["tencent", "akshare"]
+    assert rows == [("2026-10-09", 4.0, 4.1, 4.2, 3.9, 400)]
+
+
+def test_incremental_kline_sina_last_resort(monkeypatch):
+    """腾讯 + akshare 均失败 → 新浪保底，不再抛出到外层（当日任务不因单源挂掉）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _boom(tag):
+        def _f(*a, **k):
+            calls.append(tag)
+            raise RuntimeError(f"{tag} 不可达")
+        return _f
+
+    def _sina_ok(*a, **k):
+        calls.append("sina")
+        return [("2026-10-09", 5.0, 5.1, 5.2, 4.9, 500)]
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _boom("tencent"))
+    monkeypatch.setattr(backfill, "_backfill_kline_akshare", _boom("akshare"))
+    monkeypatch.setattr(backfill, "_backfill_kline_sina", _sina_ok)
+    rows = backfill._incremental_kline("000001", "ashare", "2026-10-01")
+    assert calls == ["tencent", "akshare", "sina"]
+    assert rows == [("2026-10-09", 5.0, 5.1, 5.2, 4.9, 500)]
+
+
+def test_incremental_ashare_hk_uses_chain(monkeypatch):
+    """回归：backfill_kline_incremental 的 A 股/港股分支接上腾讯优先链。"""
+    from ashare_monitor import backfill, storage
+
+    monkeypatch.setattr(storage, "load_klines",
+                        lambda code, market: [{"date": "2026-10-08"}])
+    monkeypatch.setattr(storage, "record_klines",
+                        lambda rows, market, code: len(rows))
+    monkeypatch.setattr(storage, "count_klines",
+                        lambda code, market: 42)
+    seen = []
+
+    def _tx(code, market, start):
+        seen.append((code, market, start))
+        return [("2026-10-09", 1.0, 1.0, 1.0, 1.0, 1.0)]
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx)
+    result = backfill.backfill_kline_incremental(
+        [("600519", "ashare"), ("01211", "hk")], days=3)
+    assert result == {"600519": (1, 42), "01211": (1, 42)}
+    # 起点 = 库内最新日 - days（含重叠，靠幂等跳过）
+    assert seen[0][2] == "2026-10-05"
+
+
+def test_incremental_kline_tencent_first(monkeypatch):
+    """增量主源链：腾讯优先，命中即不再触达 akshare（东财不可达时的旧全量重拉已去除）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _tx_ok(code, market, start):
+        calls.append("tencent")
+        return [("2026-09-23", 1.0, 1.1, 1.2, 0.9, 100),
+                ("2026-10-09", 2.0, 2.2, 2.3, 1.9, 200)]
+
+    def _ak_should_not_call(*a, **k):
+        calls.append("akshare")
+        return []
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx_ok)
+    monkeypatch.setattr(backfill, "_backfill_kline_akshare", _ak_should_not_call)
+    rows = backfill._incremental_kline("01211", "hk", "2026-09-24")
+    assert calls == ["tencent"]
+    # start 之前的重叠行被裁掉，只留缺口段
+    assert rows == [("2026-10-09", 2.0, 2.2, 2.3, 1.9, 200)]
+
+
+def test_incremental_kline_falls_back_to_akshare(monkeypatch):
+    """腾讯失败 → akshare 降级位（保留东财通道，恢复后自动回主位候选）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _tx_boom(*a, **k):
+        calls.append("tencent")
+        raise RuntimeError("腾讯限流")
+
+    def _ak_ok(*a, **k):
+        calls.append("akshare")
+        return [("2026-10-08", 3.0, 3.1, 3.2, 2.9, 300),
+                ("2026-10-09", 4.0, 4.1, 4.2, 3.9, 400)]
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx_boom)
+    monkeypatch.setattr(backfill, "_backfill_kline_akshare", _ak_ok)
+    rows = backfill._incremental_kline("600519", "ashare", "2026-10-09")
+    assert calls == ["tencent", "akshare"]
+    assert rows == [("2026-10-09", 4.0, 4.1, 4.2, 3.9, 400)]
+
+
+def test_incremental_kline_sina_last_resort(monkeypatch):
+    """腾讯 + akshare 均失败 → 新浪保底，不再抛出到外层（当日任务不因单源挂掉）。"""
+    from ashare_monitor import backfill
+
+    calls = []
+
+    def _boom(tag):
+        def _f(*a, **k):
+            calls.append(tag)
+            raise RuntimeError(f"{tag} 不可达")
+        return _f
+
+    def _sina_ok(*a, **k):
+        calls.append("sina")
+        return [("2026-10-09", 5.0, 5.1, 5.2, 4.9, 500)]
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _boom("tencent"))
+    monkeypatch.setattr(backfill, "_backfill_kline_akshare", _boom("akshare"))
+    monkeypatch.setattr(backfill, "_backfill_kline_sina", _sina_ok)
+    rows = backfill._incremental_kline("000001", "ashare", "2026-10-01")
+    assert calls == ["tencent", "akshare", "sina"]
+    assert rows == [("2026-10-09", 5.0, 5.1, 5.2, 4.9, 500)]
+
+
+def test_incremental_ashare_hk_uses_chain(monkeypatch):
+    """回归：backfill_kline_incremental 的 A 股/港股分支接上腾讯优先链。"""
+    from ashare_monitor import backfill, storage
+
+    monkeypatch.setattr(storage, "load_klines",
+                        lambda code, market: [{"date": "2026-10-08"}])
+    monkeypatch.setattr(storage, "record_klines",
+                        lambda rows, market, code: len(rows))
+    monkeypatch.setattr(storage, "count_klines",
+                        lambda code, market: 42)
+    seen = []
+
+    def _tx(code, market, start):
+        seen.append((code, market, start))
+        return [("2026-10-09", 1.0, 1.0, 1.0, 1.0, 1.0)]
+
+    monkeypatch.setattr(backfill, "_backfill_kline_tencent", _tx)
+    result = backfill.backfill_kline_incremental(
+        [("600519", "ashare"), ("01211", "hk")], days=3)
+    assert result == {"600519": (1, 42), "01211": (1, 42)}
+    # 起点 = 库内最新日 - days（含重叠，靠幂等跳过）
+    assert seen[0][2] == "2026-10-05"

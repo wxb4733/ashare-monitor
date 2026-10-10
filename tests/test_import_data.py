@@ -124,8 +124,12 @@ def test_import_ip_assets(tmp_path, monkeypatch):
 
 def test_check_ip_dim(monkeypatch):
     """check 知识产权维度（含质量/来源/新鲜度）。"""
+    from datetime import date, timedelta
+
     from ashare_monitor.check import check_stock
 
+    # 新鲜度断言依赖相对今天，硬编码日期会随时间过期（原写死 2026-08-25 已超 30 天）
+    fresh = (date.today() - timedelta(days=5)).isoformat()
     ips = {"比亚迪股份有限公司": {
         "patents": [{"pn": "CN122619700A", "title": "一种负极片",
                      "date": "2026-08-21", "legal_status": "active",
@@ -134,8 +138,8 @@ def test_check_ip_dim(monkeypatch):
                      "date": "2026-06-01", "legal_status": "pending",
                      "ipc": "B60T7/12"}],
         "papers": [{"title": "Dynamic Pricing", "date": "2026-01-23"}],
-        "updated": "2026-08-25"}}
-    ip_meta = {"比亚迪股份有限公司": {"updated": "2026-08-25", "source": "智慧芽"}}
+        "updated": fresh}}
+    ip_meta = {"比亚迪股份有限公司": {"updated": fresh, "source": "智慧芽"}}
     monkeypatch.setattr("ashare_monitor.import_data.get_all_ip_assets",
                         lambda db_path=None: ips)
     monkeypatch.setattr("ashare_monitor.import_data.get_ip_meta",

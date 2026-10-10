@@ -329,6 +329,64 @@ def _fallback_tencent_sina(code: str, market: str, start: str) -> list[tuple]:
         return _backfill_kline_sina(code, market, start)
 
 
+def _backfill_kline_akshare(code: str, market: str, start: str,
+                            end: str | None = None) -> list[tuple]:
+    """akshare 日 K 拉取（A 股 stock_zh_a_hist / 港股 stock_hk_hist，前复权）。
+
+    注意：akshare 行情依赖东方财富域，本机网络下 push2his/push2 长期连接被重置，
+    因此增量链路把它放在腾讯之后的降级位（见 _incremental_kline）。
+    """
+    import akshare as ak
+
+    end = end or datetime.now().strftime("%Y%m%d")
+    if market == "hk":
+        df = ak.stock_hk_hist(symbol=code[-5:], period="daily",
+                              start_date=start.replace("-", ""),
+                              end_date=end, adjust="qfq")
+    else:
+        df = ak.stock_zh_a_hist(symbol=code[-6:], period="daily",
+                                start_date=start.replace("-", ""),
+                                end_date=end, adjust="qfq")
+    if df is None or df.empty:
+        raise RuntimeError(f"{code} akshare K 线无数据（起点 {start}）")
+    date_col = "日期" if "日期" in df.columns else "date"
+    return [(str(r[date_col])[:10], float(r["开盘"]), float(r["收盘"]),
+             float(r["最高"]), float(r["最低"]), float(r["成交量"]))
+            for _, r in df.iterrows()]
+
+
+def _incremental_kline(code: str, market: str, start: str) -> list[tuple]:
+    """A 股 / 港股增量主源链：腾讯 → akshare → 新浪。
+
+    2026-10 起主源由 akshare 改为腾讯 fqkline：本机（WIN-A483BF54PTV）
+    实测东方财富全域不可达（连接被重置），akshare 每日必失败并触发
+    全量降级重拉；腾讯端点实测 200 且当日数据可取（A 股/港股同日可比）。
+    返回 start 起的全部行，重复日期由 record_klines 幂等跳过。
+    """
+    try:
+        rows = _backfill_kline_tencent(code, market, start)
+        rows = [r for r in rows if r[0] >= start]
+        if rows:
+            logger.info("腾讯 K 线增量 %s(%s): %d 根（%s ~ %s）",
+                        code, market, len(rows), rows[0][0], rows[-1][0])
+            return rows
+        raise RuntimeError("腾讯返回空")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("腾讯 K 线增量失败（%s %s），切 akshare 降级: %s",
+                       market, code, str(exc)[:80])
+    try:
+        rows = [r for r in _backfill_kline_akshare(code, market, start)
+                if r[0] >= start]
+        if rows:
+            return rows
+        raise RuntimeError("akshare 返回空")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("akshare K 线增量失败（%s %s），切新浪兜底: %s",
+                       market, code, str(exc)[:80])
+    return [r for r in _backfill_kline_sina(code, market, start)
+            if r[0] >= start]
+
+
 def _obb_historical(symbol: str, start: str, end: str):
     """OpenBB 日 K 命令薄封装（独立函数便于 mock 测试）。
 
@@ -646,28 +704,10 @@ def backfill_kline_incremental(codes: list[tuple[str, str]], days: int = 15) -> 
                     logger.warning("akshare 美股增量失败，切 OpenBB: %s", exc)
                     rows_obb = _backfill_kline_obb(code, market, start)
                     new_rows = [r for r in rows_obb if r[0] >= start]
-            elif market == "hk":
-                import akshare as ak
-
-                df = ak.stock_hk_hist(symbol=code[-5:], period="daily",
-                                      start_date=start.replace("-", ""),
-                                      end_date=_dt.now().strftime("%Y%m%d"),
-                                      adjust="qfq")
-                new_rows = [(str(r["日期"])[:10], float(r["开盘"]),
-                             float(r["收盘"]), float(r["最高"]),
-                             float(r["最低"]), float(r["成交量"]))
-                            for _, r in df.iterrows()]
-            else:
-                import akshare as ak
-
-                df = ak.stock_zh_a_hist(symbol=code[-6:], period="daily",
-                                        start_date=start.replace("-", ""),
-                                        end_date=_dt.now().strftime("%Y%m%d"),
-                                        adjust="qfq")
-                new_rows = [(str(r["日期"])[:10], float(r["开盘"]),
-                             float(r["收盘"]), float(r["最高"]),
-                             float(r["最低"]), float(r["成交量"]))
-                            for _, r in df.iterrows()]
+            elif market in ("hk", "ashare"):
+                # 2026-10 起 A 股/港股增量主源改腾讯（东财域本机不可达），
+                # akshare 降为第二降级位，新浪保底
+                new_rows = _incremental_kline(code, market, start)
             new = record_klines(new_rows, market, code)
             result[code] = (new, count_klines(code, market))
         except Exception as exc:  # noqa: BLE001
