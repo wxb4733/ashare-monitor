@@ -124,6 +124,78 @@ def parse_financials_hk(data: list[dict]) -> list[FinancialPeriod]:
     return result
 
 
+# 美股 F10 行项目代码（datacenter-web RPT_USF10_FN_INCOME / RPT_USF10_FN_BALANCE）。
+# 陷阱：同名 STD_ITEM_CODE 在不同报表语义不同——004005999 在利润表=毛利、
+# 在资产负债表=总资产；004013999 在利润表=净利润、在资产负债表=归母权益。
+# 因此必须先按报表拆分再按代码取值，禁止跨表混用。
+_US_INC_REVENUE = "004001999"     # 营业收入
+_US_INC_NET_PROFIT = "004013999"  # 净利润
+_US_INC_GROSS = "004005999"       # 毛利
+_US_INC_EPS = "004017004"         # 摊薄每股收益-普通股
+_US_BAL_ASSETS = "004005999"      # 总资产
+_US_BAL_LIAB = "004011999"        # 总负债
+_US_BAL_EQUITY = "004017999"      # 股东权益合计
+
+
+def parse_financials_us(income_rows: list[dict],
+                        balance_rows: list[dict]) -> list[FinancialPeriod]:
+    """把东财美股 F10 行项目（每行=一个科目）透视为 FinancialPeriod。
+
+    仅取年报口径（DATE_TYPE_CODE="001"）——美股 F10 同一报告期同时给出
+    单季报(008)/累计季报(006,007)/年报(001) 等多口径，混用会重复计数。
+    金额单位：接口为美元原值，落库换算为「亿美元」；比率列为百分数。
+    同比按相邻年报计算；ocf_per_share 无经营现金流行项目，诚实置 None。
+    """
+    def _pivot(rows: list[dict], want: set[str]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for x in rows:
+            dt = x.get("DATE_TYPE_CODE")
+            if dt not in (None, "001"):
+                continue
+            code = x.get("STD_ITEM_CODE")
+            if code in want:
+                d = str(x.get("STD_REPORT_DATE") or "")[:10]
+                if d:
+                    out.setdefault(d, {})[code] = _to_float(x.get("AMOUNT"))
+        return out
+
+    inc = _pivot(income_rows, {_US_INC_REVENUE, _US_INC_NET_PROFIT,
+                               _US_INC_GROSS, _US_INC_EPS})
+    bal = _pivot(balance_rows, {_US_BAL_ASSETS, _US_BAL_LIAB, _US_BAL_EQUITY})
+
+    # 升序遍历算同比（与前一年报比），最后倒序返回（最新在前）
+    dates = sorted(set(inc) | set(bal))
+    prev: dict = {}
+    result: list[FinancialPeriod] = []
+    for d in dates:
+        i, b = inc.get(d, {}), bal.get(d, {})
+        rev = i.get(_US_INC_REVENUE)
+        ni = i.get(_US_INC_NET_PROFIT)
+        gp = i.get(_US_INC_GROSS)
+        eq = b.get(_US_BAL_EQUITY)
+        rev_yoy = (round((rev / prev["rev"] - 1) * 100, 2)
+                   if rev and prev.get("rev") else None)
+        profit_yoy = (round((ni / prev["ni"] - 1) * 100, 2)
+                      if ni and prev.get("ni") else None)
+        result.append(FinancialPeriod(
+            report_date=d,
+            revenue=rev / 1e8 if rev is not None else None,       # 亿美元
+            net_profit=ni / 1e8 if ni is not None else None,      # 亿美元
+            revenue_yoy=rev_yoy,
+            profit_yoy=profit_yoy,
+            roe=round(ni / eq * 100, 2) if ni is not None and eq else None,
+            gross_margin=(round(gp / rev * 100, 2)
+                          if gp is not None and rev else None),
+            net_margin=(round(ni / rev * 100, 2)
+                        if ni is not None and rev else None),
+            eps=i.get(_US_INC_EPS),
+            ocf_per_share=None,   # 三表无经营现金流，不估算
+        ))
+        prev = {"rev": rev, "ni": ni}
+    result.reverse()
+    return result
+
+
 def _fetch_financials_hk_ak(code: str, periods: int) -> list[FinancialPeriod]:
     try:
         import akshare as ak

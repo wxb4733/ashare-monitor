@@ -125,3 +125,67 @@ def test_build_html_major_announcement_first():
     assert html.index("2026年半年度业绩预告") < html.index("日常关联交易公告")
     # 研报不受影响
     assert "山西证券" in html
+
+
+def test_fetch_announcements_em_hk_params(monkeypatch):
+    """港股公告：ann_type=H + stock_list 取 5 位代码（原硬编码 A/6 位）。"""
+    from ashare_monitor import announcements
+
+    seen = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"list": [{
+                "art_code": "AN1", "notice_date": "2026-10-01 00:00:00",
+                "title": "自愿公告2026年9月产销快报"}]}}
+
+    def _get(url, params=None, **kw):
+        seen.update(params or {})
+        return _Resp()
+
+    monkeypatch.setattr(announcements.requests, "get", _get)
+    items = announcements._fetch_announcements_em("01211", 30, "hk")
+    assert seen["ann_type"] == "H"
+    assert seen["stock_list"] == "01211"
+    assert items == [{
+        "date": "2026-10-01",
+        "title": "自愿公告2026年9月产销快报",
+        "url": ("https://np-anotice-stock.eastmoney.com/api/content/ann"
+                "?art_code=AN1&client_source=web&page_index=1"),
+    }]
+
+
+def test_fetch_announcements_ashare_still_ann_type_a(monkeypatch):
+    """回归：A 股仍走 ann_type=A + 6 位代码。"""
+    from ashare_monitor import announcements
+
+    seen = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"list": []}}
+
+    def _get(url, params=None, **kw):
+        seen.update(params or {})
+        return _Resp()
+
+    monkeypatch.setattr(announcements.requests, "get", _get)
+    announcements._fetch_announcements_em("600519", 30, "ashare")
+    assert seen["ann_type"] == "A"
+    assert seen["stock_list"] == "600519"
+
+
+def test_fetch_announcements_us_unsupported():
+    """美股无公告数据源 → 直接抛 RuntimeError，不静默返回空。"""
+    import pytest
+
+    from ashare_monitor import announcements
+
+    with pytest.raises(RuntimeError):
+        announcements.fetch_announcements("NVDA", market="us")

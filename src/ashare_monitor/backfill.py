@@ -447,9 +447,12 @@ def _backfill_kline_obb(code: str, market: str, start: str) -> list[tuple]:
     return dedup
 
 
-def backfill_news(code: str, years: int = 30) -> dict:
+def backfill_news(code: str, years: int = 30,
+                  market: str = "ashare") -> dict:
     """回填公告与研报（按年循环东财接口，入库去重）。
 
+    :param market: ashare（公告 ann_type=A + 东财研报）/ hk（公告 ann_type=H）；
+        港股无东财券商研报，reports 恒为 0。
     :return: {"announcements": 新增, "reports": 新增}
     """
     from .announcements import (
@@ -461,7 +464,8 @@ def backfill_news(code: str, years: int = 30) -> dict:
     )
     import requests
 
-    code6 = code[-6:]
+    is_hk = market == "hk"
+    code6 = code[-5:] if is_hk else code[-6:]
     ann_new = 0
     rep_new = 0
 
@@ -471,7 +475,8 @@ def backfill_news(code: str, years: int = 30) -> dict:
             _ANNOUNCE_API,
             params={
                 "sr": -1, "page_size": 100, "page_index": page,
-                "ann_type": "A", "client_source": "web", "stock_list": code6,
+                "ann_type": "H" if is_hk else "A",
+                "client_source": "web", "stock_list": code6,
             },
             headers=_HEADERS, timeout=15,
         )
@@ -484,27 +489,77 @@ def backfill_news(code: str, years: int = 30) -> dict:
         if len(items) < 100:
             break
 
-    # 研报：按年循环（接口需 beginTime/endTime）
-    end = datetime.now()
-    for y in range(end.year - years, end.year + 1):
-        begin = f"{y}-01-01"
-        e = f"{y}-12-31"
+    # 研报：按年循环（接口需 beginTime/endTime）——仅 A 股有东财券商研报
+    if not is_hk:
+        end = datetime.now()
+        for y in range(end.year - years, end.year + 1):
+            begin = f"{y}-01-01"
+            e = f"{y}-12-31"
+            resp = requests.get(
+                _REPORT_API,
+                params={
+                    "pageSize": 100, "pageNo": 1, "qType": 0, "code": code6,
+                    "beginTime": begin, "endTime": e,
+                },
+                headers=_HEADERS, timeout=15,
+            )
+            resp.raise_for_status()
+            items = parse_research_reports(resp.json())
+            if not items:
+                continue
+            new, _ = record_research_reports(items, code)
+            rep_new += new
+
+    return {"announcements": ann_new, "reports": rep_new}
+
+
+_US_SECUCODE_SUFFIX = ("O", "N")   # 纳斯达克 / 纽交所
+
+
+def _backfill_financial_us(code: str) -> tuple[int, int]:
+    """美股财报：东财 F10 年报口径（利润表 + 资产负债表行项目透视，USD 亿美元）。
+
+    背景：financials 原仅 A/H 股；SEC EDGAR / Yahoo 在本机被 403（网络不可达），
+    改用东财 datacenter-web F10 端点（实测可达、年报口径与公开值一致）。
+    只取年报（DATE_TYPE_CODE=001），避免单季/累计混口径重复计数。
+    """
+    from .fundamentals import _FIN_API, _HEADERS, parse_financials_us
+    import requests
+
+    def _fetch(report_name: str, secucode: str) -> list[dict]:
         resp = requests.get(
-            _REPORT_API,
+            _FIN_API,
             params={
-                "pageSize": 100, "pageNo": 1, "qType": 0, "code": code6,
-                "beginTime": begin, "endTime": e,
+                "reportName": report_name, "columns": "ALL",
+                "filter": f'(SECUCODE="{secucode}")(DATE_TYPE_CODE="001")',
+                "pageNumber": 1, "pageSize": 500,
+                "sortColumns": "STD_REPORT_DATE", "sortTypes": -1,
+                "source": "F10", "client": "PC",
             },
             headers=_HEADERS, timeout=15,
         )
         resp.raise_for_status()
-        items = parse_research_reports(resp.json())
-        if not items:
-            continue
-        new, _ = record_research_reports(items, code)
-        rep_new += new
+        return (resp.json().get("result") or {}).get("data") or []
 
-    return {"announcements": ann_new, "reports": rep_new}
+    from .storage import load_financials
+
+    last_exc: Exception | None = None
+    for suf in _US_SECUCODE_SUFFIX:
+        secucode = f"{code.upper()}.{suf}"
+        try:
+            income = _fetch("RPT_USF10_FN_INCOME", secucode)
+            if not income:
+                continue
+            balance = _fetch("RPT_USF10_FN_BALANCE", secucode)
+            items = parse_financials_us(income, balance)
+            if items:
+                n, _ = record_financials(items, code, currency="USD")
+                return n, len(load_financials(code))
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"{code} 美股 F10 年报无数据（已试 .O/.N）")
 
 
 def backfill_financial(code: str, market: str = "ashare") -> tuple[int, int]:
@@ -512,7 +567,7 @@ def backfill_financial(code: str, market: str = "ashare") -> tuple[int, int]:
 
     :param market: ashare（东财业绩报表分页）/ hk（东财港股财务指标，
         年报 DATE_TYPE_CODE=001 + 中报 002 双口径——港股半年披露节奏，
-        新披露的 2026-06-30 中报等自动入缓存）
+        新披露的 2026-06-30 中报等自动入缓存）/ us（东财美股 F10 年报口径）
     :return: (本次新增条数, 库内总条数)
     """
     from .fundamentals import (
@@ -523,6 +578,9 @@ def backfill_financial(code: str, market: str = "ashare") -> tuple[int, int]:
         parse_financials_hk,
     )
     import requests
+
+    if market == "us":
+        return _backfill_financial_us(code)
 
     code6 = code[-6:]
     new = 0
@@ -589,9 +647,9 @@ def backfill_all(code: str, market: str, with_kline: bool = True,
         except Exception as exc:  # noqa: BLE001
             logger.warning("K 线回填失败: %s", exc)
             result["kline"] = {"error": str(exc)}
-    if with_news and market == "ashare":
+    if with_news and market in ("ashare", "hk"):
         try:
-            result["news"] = backfill_news(code)
+            result["news"] = backfill_news(code, market=market)
         except Exception as exc:  # noqa: BLE001
             logger.warning("公告/研报回填失败: %s", exc)
             result["news"] = {"error": str(exc)}

@@ -412,3 +412,134 @@ def test_incremental_ashare_hk_uses_chain(monkeypatch):
     assert result == {"600519": (1, 42), "01211": (1, 42)}
     # 起点 = 库内最新日 - days（含重叠，靠幂等跳过）
     assert seen[0][2] == "2026-10-05"
+
+
+def test_backfill_news_hk_ann_type_h_and_no_reports(monkeypatch):
+    """港股 news：公告走 ann_type=H；不触发研报请求（无东财券商研报）。
+
+    注意：backfill 在模块顶层 `from .storage import record_announcements`，
+    名字已绑定到 backfill 命名空间——必须 patch ``backfill.record_announcements``；
+    patch ``storage.record_announcements`` 不会生效且会真写真机数据库。
+    """
+    import requests
+
+    from ashare_monitor import backfill
+
+    calls = []
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"list": [{
+                "art_code": "AN1", "notice_date": "2026-10-01 00:00:00",
+                "title": "自愿公告2026年9月产销快报"}]}}
+
+    def _get(url, params=None, **kw):
+        calls.append((url, dict(params or {})))
+        return _Resp()
+
+    monkeypatch.setattr(requests, "get", _get)
+    monkeypatch.setattr(backfill, "record_announcements",
+                        lambda items, code: (len(items), 0))
+    monkeypatch.setattr(backfill, "record_research_reports",
+                        lambda items, code: (len(items), 0))
+
+    out = backfill.backfill_news("01211", years=1, market="hk")
+    assert out == {"announcements": 1, "reports": 0}
+    assert calls[0][1]["ann_type"] == "H"
+    assert calls[0][1]["stock_list"] == "01211"
+    assert not any("reportapi" in u for u, _ in calls)
+
+
+def test_backfill_all_hk_now_includes_news(monkeypatch):
+    """回归：backfill_all 的 news 门控由仅 ashare 放宽到 ashare+hk。"""
+    from ashare_monitor import backfill
+
+    seen = {}
+
+    def _news(code, market="ashare"):
+        seen["market"] = market
+        return {"announcements": 0, "reports": 0}
+
+    monkeypatch.setattr(backfill, "backfill_news", _news)
+    res = backfill.backfill_all("01211", "hk", with_kline=False,
+                                with_news=True, with_financial=False)
+    assert seen["market"] == "hk"
+    assert "news" in res
+
+
+def test_backfill_financial_us_f10_annual_and_usd(monkeypatch):
+    """美股财报：走 F10 年报口径，SECUCODE 试 .O，currency=USD 落库。"""
+    import requests
+
+    from ashare_monitor import backfill, storage
+
+    seen = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self._p = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._p
+
+    def _get(url, params=None, **kw):
+        seen.append(dict(params or {}))
+        rn = (params or {}).get("reportName")
+        if "INCOME" in rn:
+            data = [{"STD_REPORT_DATE": "2024-12-31 00:00:00",
+                     "DATE_TYPE_CODE": "001",
+                     "STD_ITEM_CODE": "004001999", "AMOUNT": 130e9},
+                    {"STD_REPORT_DATE": "2024-12-31 00:00:00",
+                     "DATE_TYPE_CODE": "001",
+                     "STD_ITEM_CODE": "004013999", "AMOUNT": 72e9}]
+        else:
+            data = [{"STD_REPORT_DATE": "2024-12-31 00:00:00",
+                     "DATE_TYPE_CODE": "001",
+                     "STD_ITEM_CODE": "004017999", "AMOUNT": 79e9}]
+        return _Resp({"result": {"data": data}})
+
+    monkeypatch.setattr(requests, "get", _get)
+    captured = {}
+
+    def _rec(items, code, name="", db_path=None, currency="CNY"):
+        captured["items"] = items
+        captured["currency"] = currency
+        return len(items), 0
+
+    monkeypatch.setattr(backfill, "record_financials", _rec)
+    monkeypatch.setattr(storage, "load_financials", lambda code: [1])
+
+    n, total = backfill._backfill_financial_us("NVDA")
+    assert n == 1 and total == 1
+    assert captured["currency"] == "USD"
+    assert captured["items"][0].revenue == 1300.0
+    assert 'NVDA.O' in seen[0]["filter"]
+    assert 'DATE_TYPE_CODE="001"' in seen[0]["filter"]
+
+
+def test_backfill_financial_us_no_data_raises(monkeypatch):
+    """美股 F10 无数据时如实抛错（不落空数据）。"""
+    import requests
+
+    from ashare_monitor import backfill
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"result": {"data": []}}
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
+    try:
+        backfill._backfill_financial_us("ZZZZ")
+    except RuntimeError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("应抛 RuntimeError")

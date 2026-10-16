@@ -2,10 +2,11 @@
 
 数据源（自动降级）：
 1. 东方财富公告接口 np-anotice-stock.eastmoney.com（直连，无需鉴权）
-2. 东方财富研报接口 reportapi.eastmoney.com
-3. akshare 兜底（stock_notice_report / stock_research_report_em）
+   —— A 股 ann_type=A；港股 ann_type=H（market="hk"）
+2. 东方财富研报接口 reportapi.eastmoney.com（仅 A 股，港股无券商研报）
+3. akshare 兜底（stock_notice_report / stock_research_report_em，仅 A 股）
 
-仅支持 A 股（港股/币安无此数据源）。解析函数与网络解耦，便于测试。
+美股无公告/研报源；解析函数与网络解耦，便于测试。
 """
 
 from __future__ import annotations
@@ -41,25 +42,36 @@ def _report_url(info_code: str) -> str:
     return f"https://data.eastmoney.com/report/info/{info_code}.html"
 
 
-def fetch_announcements(code: str, limit: int = 30) -> list[dict]:
+def fetch_announcements(code: str, limit: int = 30,
+                        market: str = "ashare") -> list[dict]:
     """拉取个股最近公告（按发布时间倒序）。
 
+    :param market: ashare（东财 ann_type=A）/ hk（东财 ann_type=H，港股公告）；
+        其它市场东财无公告接口，抛 RuntimeError。
     :return: [{"date", "title", "url"}]
     :raises RuntimeError: 所有数据源均失败
     """
+    if market not in ("ashare", "hk"):
+        raise RuntimeError(f"{market} 暂无公告数据源")
     try:
-        return _fetch_announcements_em(code, limit)
+        return _fetch_announcements_em(code, limit, market)
     except Exception as exc:  # noqa: BLE001
         logger.warning("东财公告接口失败，降级 akshare: %s", exc)
+        if market != "ashare":
+            raise
         return _fetch_announcements_ak(code, limit)
 
 
-def _fetch_announcements_em(code: str, limit: int) -> list[dict]:
+def _fetch_announcements_em(code: str, limit: int,
+                            market: str = "ashare") -> list[dict]:
+    is_hk = market == "hk"
     resp = requests.get(
         _ANNOUNCE_API,
         params={
             "sr": -1, "page_size": limit, "page_index": 1,
-            "ann_type": "A", "client_source": "web", "stock_list": code[-6:],
+            "ann_type": "H" if is_hk else "A",
+            "client_source": "web",
+            "stock_list": code[-5:] if is_hk else code[-6:],
         },
         headers=_HEADERS, timeout=10,
     )

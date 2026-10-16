@@ -156,3 +156,59 @@ def test_parse_financials_hk_net_margin_computed():
     assert p.net_margin == pytest.approx(10.0)
     assert p.revenue == pytest.approx(1000.0)
     assert p.profit_yoy is None
+
+
+def test_parse_financials_us_pivot_and_ratios():
+    """美股 F10 行项目透视：仅取年报口径，按报表区分同码科目，同比+比率计算。"""
+    from ashare_monitor.fundamentals import parse_financials_us
+
+    # 利润表（注意 004005999 在利润表=毛利）
+    def inc(rev, ni, gp, eps, date):
+        return [
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004001999", "AMOUNT": rev},
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004013999", "AMOUNT": ni},
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004005999", "AMOUNT": gp},
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004017004", "AMOUNT": eps},
+            # 单季报同科目应被忽略（口径去重）
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "008",
+             "STD_ITEM_CODE": "004001999", "AMOUNT": 999999999999},
+        ]
+
+    income = inc(130e9, 72e9, 97e9, 2.94, "2024-12-31 00:00:00") + \
+        inc(60e9, 29e9, 44e9, 1.19, "2023-12-31 00:00:00")
+    # 资产负债表（004005999 在资产负债表=总资产）
+    def bal(assets, liab, eq, date):
+        return [
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004005999", "AMOUNT": assets},
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004011999", "AMOUNT": liab},
+            {"STD_REPORT_DATE": date, "DATE_TYPE_CODE": "001",
+             "STD_ITEM_CODE": "004017999", "AMOUNT": eq},
+        ]
+
+    balance = bal(111.6e9, 32.3e9, 79.3e9, "2024-12-31 00:00:00") + \
+        bal(65.7e9, 22.8e9, 43.0e9, "2023-12-31 00:00:00")
+
+    ps = parse_financials_us(income, balance)
+    assert [p.report_date for p in ps] == ["2024-12-31", "2023-12-31"]  # 最新在前
+    p24, p23 = ps
+    # 金额换算为"亿美元"（不是原值）
+    assert p24.revenue == pytest.approx(1300.0)
+    assert p24.net_profit == pytest.approx(720.0)
+    assert p24.eps == pytest.approx(2.94)
+    # 比率：毛利/营收、净利/营收、净利/权益
+    assert p24.gross_margin == pytest.approx(97 / 130 * 100, rel=1e-4)
+    assert p24.net_margin == pytest.approx(72 / 130 * 100, rel=1e-4)
+    assert p24.roe == pytest.approx(72 / 79.3 * 100, rel=1e-4)
+    # 同比：24 vs 23
+    assert p24.revenue_yoy == pytest.approx((130 / 60 - 1) * 100, rel=1e-4)
+    assert p24.profit_yoy == pytest.approx((72 / 29 - 1) * 100, rel=1e-4)
+    # 最早年无同比
+    assert p23.revenue_yoy is None
+    # 三表无经营现金流 → 诚实置 None
+    assert p24.ocf_per_share is None
