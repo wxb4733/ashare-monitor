@@ -4719,9 +4719,13 @@ def main() -> None:
             from .strategy import load_paper_nav, record_paper_nav
 
             today = record_paper_nav()
-            console.print(f"[cyan]已记录 {today['date']} 净值："
-                          f"{today['total_value']:,.0f} 元"
-                          f"（{today['pnl_pct']:+.2f}%）[/cyan]")
+            if today.get("skipped"):
+                console.print(f"[yellow]未记录 {today['date']} 净值："
+                              f"{today['reason']}（请于收盘后重跑）[/yellow]")
+            else:
+                console.print(f"[cyan]已记录 {today['date']} 净值："
+                              f"{today['total_value']:,.0f} 元"
+                              f"（{today['pnl_pct']:+.2f}%）[/cyan]")
             navs = load_paper_nav()
             table = Table(title=f"模拟组合净值跟踪（{len(navs)} 条）")
             table.add_column("日期", justify="left")

@@ -282,6 +282,29 @@ def test_paper_nav_tracking(tmp_path, monkeypatch):
     assert navs[0]["nav"] == pytest.approx(1.1)
 
 
+def test_record_paper_nav_skips_when_valuation_unavailable(monkeypatch, tmp_path):
+    """行情不可用（估值退化为 0）时不得写入净值，避免 -100% 污染曲线。
+
+    回归背景：2026-10-16 盘前 09:20 的 risk-check 任务跑 strategy track，
+    拿不到行情 → 写入 0 元 / -100% 净值。
+    """
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = tmp_path / "p.db"
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.paper_report",
+        lambda: {"total_value": 0.0, "total_cost": 94_266.0,
+                 "pnl_pct": -100.0, "positions": []})
+
+    rec = strategy.record_paper_nav()
+    assert rec["skipped"] is True
+    assert strategy.load_paper_nav() == []
+
+
 def test_portfolio_circuit_breaker(monkeypatch):
     from ashare_monitor.strategy import portfolio_circuit_breaker
 

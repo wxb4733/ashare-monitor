@@ -738,14 +738,26 @@ def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
 
 # ===================== 模拟净值跟踪 + 组合熔断 =====================
 
-def record_paper_nav() -> dict:
-    """记录今日模拟组合净值（总市值/成本/累计收益%）到 paper_history。"""
+def record_paper_nav(min_total_value: float = 1.0) -> dict:
+    """记录今日模拟组合净值（总市值/成本/累计收益%）到 paper_history。
+
+    护栏：行情不可用（开盘前跑、接口故障）时 ``paper_report`` 的持仓估值会
+    退化为 0，直接落库会把净值曲线打成 -100%（2026-10-16 盘前 09:20 曾发生）。
+    此时跳过写入，返回 ``skipped=True``，由调用方提示。
+
+    :param min_total_value: 总市值下限，低于此值视为估值不可用（默认 1 元）
+    """
     import sqlite3
 
     from .storage import get_conn
 
     rep = paper_report()
     today = datetime.now().strftime("%Y-%m-%d")
+    if rep["total_value"] < min_total_value or rep["total_cost"] <= 0:
+        logger.warning("净值记录跳过：估值不可用（市值 %.2f / 成本 %.2f）",
+                       rep["total_value"], rep["total_cost"])
+        return {"date": today, "skipped": True,
+                "reason": "行情不可用（总市值≤0），未写入净值", **rep}
     conn = get_conn()
     conn.row_factory = sqlite3.Row
     with conn:
