@@ -9,5 +9,5 @@ echo === %DATE% %TIME% close-review start === >> %LOG%
 %EXE% position --push >> %LOG% 2>&1
 %EXE% news --watchlist --days 30 >> %LOG% 2>&1
 %EXE% obsidian index >> %LOG% 2>&1
-call E:\github\ashare-monitor\scripts\cron\push_vault.bat close_review
+call E:\github\ashare-monitor\scripts\cron\push_vault_invest.bat close_review
 echo === %DATE% %TIME% close-review done === >> %LOG%

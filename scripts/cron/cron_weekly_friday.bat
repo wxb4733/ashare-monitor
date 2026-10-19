@@ -14,5 +14,5 @@ echo === %DATE% %TIME% weekly start === >> %LOG%
 %EXE% hf 01211 >> %LOG% 2>&1
 %EXE% hf 300750 >> %LOG% 2>&1
 %EXE% obsidian index >> %LOG% 2>&1
-call E:\github\ashare-monitor\scripts\cron\push_vault.bat weekly_friday
+call E:\github\ashare-monitor\scripts\cron\push_vault_invest.bat weekly_friday
 echo === %DATE% %TIME% weekly done === >> %LOG%

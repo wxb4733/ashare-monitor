@@ -1,12 +1,14 @@
 @echo off
-REM usage: call push_vault.bat <tag>
-set VLOG=E:\github\ashare-monitor\logs\cron_vault_push.log
-cd /d E:\Obsidian\wxb4733
-"C:\Program Files\Git\cmd\git.exe" add -A >> %VLOG% 2>&1
-"C:\Program Files\Git\cmd\git.exe" diff --cached --quiet
-if errorlevel 1 "C:\Program Files\Git\cmd\git.exe" commit -m "vault sync: %1 (%DATE% %TIME%)" >> %VLOG% 2>&1
-"C:\Program Files\Git\cmd\git.exe" pull --rebase --autostash origin main >> %VLOG% 2>&1
-if errorlevel 1 echo [WARN] vault pull --rebase failed, manual fix needed >> %VLOG%
-"C:\Program Files\Git\cmd\git.exe" push origin main >> %VLOG% 2>&1
-if errorlevel 1 echo [WARN] vault push rejected (non-fast-forward?) >> %VLOG%
-cd /d E:\github\ashare-monitor
+rem usage: call push_vault.bat <tag>
+rem notes vault -> github.com:wxb4733/obsidian-vault (personal notes only)
+setlocal
+set TAG=%1
+if "%TAG%"=="" set TAG=manual
+set PY=E:\github\ashare-monitor\.venv\Scripts\python.exe
+set SCRIPT=E:\github\ashare-monitor\scripts\vault_push.py
+set VLOG=E:\github\ashare-monitor\logs\cron_vault_push_notes.log
+echo === %DATE% %TIME% vault push notes tag=%TAG% === >> "%VLOG%"
+"%PY%" "%SCRIPT%" --repo notes --tag "%TAG%" >> "%VLOG%" 2>&1
+set RC=%ERRORLEVEL%
+if not "%RC%"=="0" echo [WARN] notes vault push failed rc=%RC% >> "%VLOG%"
+endlocal & exit /b %RC%

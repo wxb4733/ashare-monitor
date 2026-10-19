@@ -10,5 +10,5 @@ if errorlevel 1 (
   exit /b 0
 )
 %EXE% period --period monthly --push >> %LOG% 2>&1
-call E:\github\ashare-monitor\scripts\cron\push_vault.bat period_monthly
+call E:\github\ashare-monitor\scripts\cron\push_vault_invest.bat period_monthly
 echo === %DATE% %TIME% monthly done === >> %LOG%
