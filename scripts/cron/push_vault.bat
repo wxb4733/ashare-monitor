@@ -5,5 +5,8 @@ cd /d E:\Obsidian\wxb4733
 "C:\Program Files\Git\cmd\git.exe" add -A >> %VLOG% 2>&1
 "C:\Program Files\Git\cmd\git.exe" diff --cached --quiet
 if errorlevel 1 "C:\Program Files\Git\cmd\git.exe" commit -m "vault sync: %1 (%DATE% %TIME%)" >> %VLOG% 2>&1
+"C:\Program Files\Git\cmd\git.exe" pull --rebase --autostash origin main >> %VLOG% 2>&1
+if errorlevel 1 echo [WARN] vault pull --rebase failed, manual fix needed >> %VLOG%
 "C:\Program Files\Git\cmd\git.exe" push origin main >> %VLOG% 2>&1
+if errorlevel 1 echo [WARN] vault push rejected (non-fast-forward?) >> %VLOG%
 cd /d E:\github\ashare-monitor
