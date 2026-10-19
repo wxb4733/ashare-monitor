@@ -305,6 +305,57 @@ def test_record_paper_nav_skips_when_valuation_unavailable(monkeypatch, tmp_path
     assert strategy.load_paper_nav() == []
 
 
+def test_record_paper_nav_skips_when_quotes_stale(monkeypatch, tmp_path):
+    """行情日期 ≠ 今日（休市/停更）时不得写入净值。
+
+    回归背景：2026-10-01~10-07 国庆休市期间，spot 接口返回上一交易日快照，
+    旧逻辑照写 → paper_history 多出 5 行走平假净值（2026-10-19 清理）。
+    """
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = tmp_path / "p_stale.db"
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.paper_report",
+        lambda: {"total_value": 100_513.0, "total_cost": 94_266.0,
+                 "pnl_pct": 6.63,
+                 "positions": [{"code": "601398",
+                                "quote_date": "2026-10-07"}]})
+
+    rec = strategy.record_paper_nav()
+    assert rec["skipped"] is True
+    assert "非今日" in rec["reason"]
+    assert strategy.load_paper_nav() == []
+
+
+def test_record_paper_nav_writes_when_quotes_fresh(monkeypatch, tmp_path):
+    """行情日期为今日时正常写入（护栏不得误伤正常收盘后记录）。"""
+    import datetime as _dt
+
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = tmp_path / "p_fresh.db"
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    today = _dt.datetime.now().strftime("%Y-%m-%d")
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.paper_report",
+        lambda: {"total_value": 100_513.0, "total_cost": 94_266.0,
+                 "pnl_pct": 6.63,
+                 "positions": [{"code": "601398", "quote_date": today}]})
+
+    rec = strategy.record_paper_nav()
+    assert not rec.get("skipped")
+    navs = strategy.load_paper_nav()
+    assert len(navs) == 1
+    assert navs[0]["date"] == today
+
+
 def test_portfolio_circuit_breaker(monkeypatch):
     from ashare_monitor.strategy import portfolio_circuit_breaker
 

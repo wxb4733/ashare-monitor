@@ -433,11 +433,17 @@ def paper_report() -> dict:
     for p in pos:
         q = quotes.get(p["code"])
         price = q.price if q else None
+        # 行情日期：用于判定休市/停更（节假日 spot 返回的是上一交易日快照）
+        qdate = None
+        ts = getattr(q, "timestamp", None) if q else None
+        if isinstance(ts, datetime):
+            qdate = ts.date().isoformat()
         cost = p["shares"] * p["avg_cost"]
         value = p["shares"] * price if price else None
         rows.append({"code": p["code"], "name": p["name"],
                      "shares": p["shares"], "avg_cost": p["avg_cost"],
                      "price": price, "cost": round(cost, 2),
+                     "quote_date": qdate,
                      "value": round(value, 2) if value else None,
                      "pnl_pct": round((value / cost - 1) * 100, 2)
                      if value and cost else None})
@@ -738,14 +744,21 @@ def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
 
 # ===================== 模拟净值跟踪 + 组合熔断 =====================
 
-def record_paper_nav(min_total_value: float = 1.0) -> dict:
+def record_paper_nav(min_total_value: float = 1.0,
+                     require_fresh_quotes: bool = True) -> dict:
     """记录今日模拟组合净值（总市值/成本/累计收益%）到 paper_history。
 
-    护栏：行情不可用（开盘前跑、接口故障）时 ``paper_report`` 的持仓估值会
-    退化为 0，直接落库会把净值曲线打成 -100%（2026-10-16 盘前 09:20 曾发生）。
-    此时跳过写入，返回 ``skipped=True``，由调用方提示。
+    两道护栏：
+    1. 行情不可用（开盘前跑、接口故障）时 ``paper_report`` 的持仓估值会
+       退化为 0，直接落库会把净值曲线打成 -100%（2026-10-16 盘前 09:20 曾发生）。
+    2. 行情日期 ≠ 今日（法定节假日休市、源侧停更）时跳过：spot 接口在休市日
+       返回上一交易日快照，落库会产生"走平"的假净值行（2026-10-01~10-07
+       国庆曾写入 5 行，2026-10-19 清理）。
+
+    跳过时返回 ``skipped=True``，由调用方提示。
 
     :param min_total_value: 总市值下限，低于此值视为估值不可用（默认 1 元）
+    :param require_fresh_quotes: 为 True 时要求行情日期为今日，否则跳过
     """
     import sqlite3
 
@@ -758,6 +771,15 @@ def record_paper_nav(min_total_value: float = 1.0) -> dict:
                        rep["total_value"], rep["total_cost"])
         return {"date": today, "skipped": True,
                 "reason": "行情不可用（总市值≤0），未写入净值", **rep}
+    qdates = [r.get("quote_date") for r in rep.get("positions", [])
+              if r.get("quote_date")]
+    if require_fresh_quotes and qdates and all(d != today for d in qdates):
+        latest = max(qdates)
+        logger.warning("净值记录跳过：行情日期 %s ≠ 今日 %s（疑似休市）",
+                       latest, today)
+        return {"date": today, "skipped": True,
+                "reason": f"行情日期为 {latest}（非今日，疑似休市/停更），"
+                          f"未写入净值", **rep}
     conn = get_conn()
     conn.row_factory = sqlite3.Row
     with conn:
