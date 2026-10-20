@@ -1,0 +1,15 @@
+# 行尾策略（Windows 专用项目，cmd.exe 安全优先）
+#
+# .bat / .cmd 一律 -text：不做任何换行转换，仓库 blob 与工作区保持一致（CRLF）。
+# 背景：2026-10-19 提交 3c6ab75 把 17 个 bat 存成 LF，cmd.exe 解析 LF-only 批处理
+# 时行边界错乱，15:45 的 cron_paper_daily 把 "  strategy track " 当成一个参数传给
+# argparse → 当日净值漏写。autocrlf=true 只在检出时转换，无法阻止"工作区是 LF 就
+# 提交 LF"，因此这里显式关闭转换，并由 tests/test_cron_bat.py 校验 blob 行尾。
+*.bat -text
+*.cmd -text
+
+# 本文件自身保持 LF，避免 autocrlf 检出告警
+.gitattributes text eol=lf
+
+# shell 脚本统一 LF（WSL / Git Bash 执行）
+*.sh text eol=lf

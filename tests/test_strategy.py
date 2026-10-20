@@ -356,6 +356,91 @@ def test_record_paper_nav_writes_when_quotes_fresh(monkeypatch, tmp_path):
     assert navs[0]["date"] == today
 
 
+def _seed_klines(db, rows):
+    """建最小 klines 表并插入 (code, date, close)。"""
+    import sqlite3
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS klines ("
+                     "market TEXT, code TEXT, date TEXT, close REAL)")
+        conn.executemany(
+            "INSERT INTO klines (market, code, date, close) VALUES ('ashare',?,?,?)",
+            rows)
+    conn.close()
+
+
+def test_record_paper_nav_backfills_history_from_klines(monkeypatch, tmp_path):
+    """as_of 补录模式：按库内该日收盘价离线估值，绕过「行情日期≠今日」护栏。
+
+    回归背景：2026-10-19 15:45 paper-daily 因 bat 行尾被写成 LF 导致
+    strategy track 解析失败，当日净值漏写；spot 快照只能取最新交易日，
+    历史日期必须用已入库 K 线估值补录。
+    """
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "backfill.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    _seed_klines(db, [("000001", "2026-10-19", 11.0),
+                      ("000001", "2026-10-16", 10.5)])
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.load_paper_positions",
+        lambda: [{"code": "000001", "name": "平安银行", "shares": 10000,
+                  "avg_cost": 10.0}])
+
+    class _Broker:
+        cash = 5000.0
+
+    monkeypatch.setattr("ashare_monitor.broker.PaperBroker.load",
+                        classmethod(lambda cls: _Broker()))
+
+    rec = strategy.record_paper_nav(as_of="2026-10-19")
+    assert not rec.get("skipped"), rec.get("reason")
+    assert rec["date"] == "2026-10-19"
+    assert rec["total_value"] == pytest.approx(110_000.0)
+    assert rec["pnl_pct"] == pytest.approx(10.0)
+    navs = strategy.load_paper_nav()
+    assert [n["date"] for n in navs] == ["2026-10-19"]
+    assert navs[0]["nav"] == pytest.approx(1.1)
+
+
+def test_record_paper_nav_backfill_skips_when_kline_missing(monkeypatch, tmp_path):
+    """任一持仓缺该日收盘价时跳过（避免写入偏低失真净值）。"""
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "backfill_gap.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    _seed_klines(db, [("000001", "2026-10-19", 11.0)])   # 缺 601398
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.load_paper_positions",
+        lambda: [{"code": "000001", "name": "平安银行", "shares": 1000,
+                  "avg_cost": 10.0},
+                 {"code": "601398", "name": "工商银行", "shares": 1000,
+                  "avg_cost": 5.0}])
+
+    rec = strategy.record_paper_nav(as_of="2026-10-19")
+    assert rec["skipped"] is True
+    assert "601398" in rec["reason"]
+    assert strategy.load_paper_nav() == []
+
+
+def test_record_paper_nav_backfill_rejects_today(monkeypatch):
+    """补录日期须早于今日（当日应走实时 track）。"""
+    import datetime as _dt
+
+    from ashare_monitor import strategy
+
+    today = _dt.datetime.now().strftime("%Y-%m-%d")
+    rec = strategy.record_paper_nav(as_of=today)
+    assert rec["skipped"] is True
+    assert "须早于今日" in rec["reason"]
+
+
 def test_portfolio_circuit_breaker(monkeypatch):
     from ashare_monitor.strategy import portfolio_circuit_breaker
 

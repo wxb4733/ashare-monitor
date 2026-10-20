@@ -4447,6 +4447,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="backtest：参数网格优化（频率×成本，最优按夏普）")
     p_st.add_argument("--report", action="store_true",
                       help="backtest：生成 HTML 报告（净值曲线+月度热力图）")
+    p_st.add_argument("--date", default=None,
+                      help="track：补录历史某日净值 YYYY-MM-DD（按库内日 K 收盘价"
+                           "离线估值，用于任务故障后补洞）")
     p_st.add_argument("--capital", type=float, default=100000.0,
                       help="资金（默认 10 万）")
     p_st.add_argument("--top", type=int, default=10, help="持仓数量")
@@ -4718,10 +4721,15 @@ def main() -> None:
         if args.strategy == "track":
             from .strategy import load_paper_nav, record_paper_nav
 
-            today = record_paper_nav()
+            as_of = getattr(args, "date", None)
+            today = record_paper_nav(as_of=as_of)
             if today.get("skipped"):
                 console.print(f"[yellow]未记录 {today['date']} 净值："
-                              f"{today['reason']}（请于收盘后重跑）[/yellow]")
+                              f"{today['reason']}[/yellow]")
+            elif as_of:
+                console.print(f"[cyan]已补录 {today['date']} 净值："
+                              f"{today['total_value']:,.0f} 元"
+                              f"（{today['pnl_pct']:+.2f}%）[/cyan]")
             else:
                 console.print(f"[cyan]已记录 {today['date']} 净值："
                               f"{today['total_value']:,.0f} 元"

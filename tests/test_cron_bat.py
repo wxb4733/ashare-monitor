@@ -76,3 +76,37 @@ def test_no_cwd_dependent_paths(bat_file):
             if not re.search(r"[A-Z]:\\", s.split(",")[0]):
                 problems.append(f"L{i}: {s[:80]}")
     assert not problems, f"{os.path.basename(bat_file)} 存在依赖 CWD 的路径: {problems}"
+
+
+REPO_ROOT = CRON_DIR.rsplit(os.sep + "scripts", 1)[0]
+
+
+def _git_index_blob(path: str) -> bytes | None:
+    """取该文件在 git 索引中的原始字节；git 不可用/未入库时返回 None。"""
+    import subprocess
+
+    rel = os.path.relpath(path, REPO_ROOT).replace("\\", "/")
+    try:
+        out = subprocess.run(["git", "-C", REPO_ROOT, "show", f":{rel}"],
+                             capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+@pytest.mark.parametrize("bat_file", BATS)
+def test_bat_blob_keeps_crlf(bat_file):
+    """仓库 blob 也必须是 CRLF（.gitattributes 的 *.bat -text 不得被改回）。
+
+    背景：2026-10-19 提交 3c6ab75 把 17 个 bat 存成 LF，工作区当时也是 LF，
+    cmd.exe 解析错乱使 cron_paper_daily 的 strategy track 参数变形报错，
+    10-19 净值漏写。仅校验工作区（上面的 test_crlf_line_endings）不够——
+    提交动作本身才是污染源，故直接查索引 blob。
+    """
+    blob = _git_index_blob(bat_file)
+    if blob is None:
+        pytest.skip("git 不可用或文件尚未入库")
+    bare_lf = blob.count(b"\n") - blob.count(b"\r\n")
+    assert bare_lf == 0, (
+        f"{os.path.basename(bat_file)} 仓库 blob 有 {bare_lf} 个裸 LF；"
+        f"请确认 .gitattributes 中 *.bat 为 -text 并重新 git add")

@@ -744,42 +744,123 @@ def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
 
 # ===================== 模拟净值跟踪 + 组合熔断 =====================
 
+def _paper_value_on(as_of: str) -> dict:
+    """按库内日 K 收盘价估算 ``as_of`` 当日模拟组合市值（离线，不发网络请求）。
+
+    用于任务故障后补录历史净值：spot 快照只反映最新交易日，历史日期只能靠
+    已入库的 K 线估值。任一持仓缺该日收盘价即视为不可完整估值，由调用方决定
+    是否跳过（避免写入偏低的失真净值）。
+    """
+    import sqlite3
+
+    from .broker import PaperBroker
+    from .storage import get_conn
+
+    pos = load_paper_positions()
+    broker = PaperBroker.load()
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    rows: list[dict] = []
+    missing: list[str] = []
+    total_cost = total_value = 0.0
+    for p in pos:
+        code = str(p["code"])
+        qcode = code[-6:] if code.isdigit() else code
+        r = conn.execute(
+            "SELECT close FROM klines WHERE market='ashare' AND code=? AND date=?",
+            (qcode, as_of)).fetchone()
+        cost = p["shares"] * p["avg_cost"]
+        total_cost += cost
+        if r is None or r["close"] is None:
+            missing.append(code)
+            continue
+        price = float(r["close"])
+        value = p["shares"] * price
+        total_value += value
+        rows.append({"code": code, "name": p["name"], "shares": p["shares"],
+                     "avg_cost": p["avg_cost"], "price": price,
+                     "cost": round(cost, 2), "quote_date": as_of,
+                     "value": round(value, 2),
+                     "pnl_pct": round((value / cost - 1) * 100, 2)
+                     if cost else None})
+    return {"positions": rows, "missing": missing,
+            "total_cost": round(total_cost, 2),
+            "total_value": round(total_value, 2),
+            "pnl": round(total_value - total_cost, 2),
+            "pnl_pct": round((total_value / total_cost - 1) * 100, 2)
+            if total_cost else 0.0,
+            "cash": round(broker.cash, 2),
+            "equity": round(broker.cash + total_value, 2)}
+
+
 def record_paper_nav(min_total_value: float = 1.0,
-                     require_fresh_quotes: bool = True) -> dict:
+                     require_fresh_quotes: bool = True,
+                     as_of: str | None = None) -> dict:
     """记录今日模拟组合净值（总市值/成本/累计收益%）到 paper_history。
 
-    两道护栏：
+    两道护栏（实时模式）：
     1. 行情不可用（开盘前跑、接口故障）时 ``paper_report`` 的持仓估值会
        退化为 0，直接落库会把净值曲线打成 -100%（2026-10-16 盘前 09:20 曾发生）。
     2. 行情日期 ≠ 今日（法定节假日休市、源侧停更）时跳过：spot 接口在休市日
        返回上一交易日快照，落库会产生"走平"的假净值行（2026-10-01~10-07
        国庆曾写入 5 行，2026-10-19 清理）。
 
+    ``as_of`` 给定时走补录模式：按库内该日 K 线收盘价离线估值，可绕过护栏 2
+    （历史日期永远 ≠ 今日），但要求全部持仓都有该日收盘价，否则跳过。
+    典型用途：任务故障导致某交易日净值漏写后补录（2026-10-19 曾因 bat 行尾
+    问题漏写）。
+
     跳过时返回 ``skipped=True``，由调用方提示。
 
     :param min_total_value: 总市值下限，低于此值视为估值不可用（默认 1 元）
     :param require_fresh_quotes: 为 True 时要求行情日期为今日，否则跳过
+    :param as_of: 补录日期 YYYY-MM-DD（须早于今日）
     """
     import sqlite3
 
     from .storage import get_conn
 
-    rep = paper_report()
     today = datetime.now().strftime("%Y-%m-%d")
-    if rep["total_value"] < min_total_value or rep["total_cost"] <= 0:
-        logger.warning("净值记录跳过：估值不可用（市值 %.2f / 成本 %.2f）",
-                       rep["total_value"], rep["total_cost"])
-        return {"date": today, "skipped": True,
-                "reason": "行情不可用（总市值≤0），未写入净值", **rep}
-    qdates = [r.get("quote_date") for r in rep.get("positions", [])
-              if r.get("quote_date")]
-    if require_fresh_quotes and qdates and all(d != today for d in qdates):
-        latest = max(qdates)
-        logger.warning("净值记录跳过：行情日期 %s ≠ 今日 %s（疑似休市）",
-                       latest, today)
-        return {"date": today, "skipped": True,
-                "reason": f"行情日期为 {latest}（非今日，疑似休市/停更），"
-                          f"未写入净值", **rep}
+    if as_of is not None:
+        try:
+            datetime.strptime(as_of, "%Y-%m-%d")
+        except ValueError:
+            return {"date": as_of, "skipped": True,
+                    "reason": "补录日期格式应为 YYYY-MM-DD", "positions": [],
+                    "total_value": 0.0, "total_cost": 0.0}
+        if as_of >= today:
+            return {"date": as_of, "skipped": True,
+                    "reason": f"补录日期须早于今日 {today}（当日请直接 track）",
+                    "positions": [], "total_value": 0.0, "total_cost": 0.0}
+        rep = _paper_value_on(as_of)
+        write_date = as_of
+        if rep["missing"]:
+            logger.warning("净值补录跳过：%s 缺收盘价（%s）", as_of,
+                           ",".join(rep["missing"]))
+            return {"date": as_of, "skipped": True,
+                    "reason": f"以下标的缺 {as_of} 收盘价："
+                              f"{','.join(rep['missing'])}", **rep}
+        if rep["total_value"] < min_total_value or rep["total_cost"] <= 0:
+            logger.warning("净值补录跳过：%s 估值不可用", as_of)
+            return {"date": as_of, "skipped": True,
+                    "reason": f"{as_of} 无可用估值（无持仓或市值为 0）", **rep}
+    else:
+        rep = paper_report()
+        write_date = today
+        if rep["total_value"] < min_total_value or rep["total_cost"] <= 0:
+            logger.warning("净值记录跳过：估值不可用（市值 %.2f / 成本 %.2f）",
+                           rep["total_value"], rep["total_cost"])
+            return {"date": today, "skipped": True,
+                    "reason": "行情不可用（总市值≤0），未写入净值", **rep}
+        qdates = [r.get("quote_date") for r in rep.get("positions", [])
+                  if r.get("quote_date")]
+        if require_fresh_quotes and qdates and all(d != today for d in qdates):
+            latest = max(qdates)
+            logger.warning("净值记录跳过：行情日期 %s ≠ 今日 %s（疑似休市）",
+                           latest, today)
+            return {"date": today, "skipped": True,
+                    "reason": f"行情日期为 {latest}（非今日，疑似休市/停更），"
+                              f"未写入净值", **rep}
     conn = get_conn()
     conn.row_factory = sqlite3.Row
     with conn:
@@ -791,10 +872,10 @@ def record_paper_nav(min_total_value: float = 1.0,
         conn.execute(
             "INSERT OR REPLACE INTO paper_history (date, value, cost, nav, pnl_pct) "
             "VALUES (?,?,?,?,?)",
-            (today, rep["total_value"], rep["total_cost"],
+            (write_date, rep["total_value"], rep["total_cost"],
              rep["total_value"] / rep["total_cost"]
              if rep["total_cost"] else 1.0, rep["pnl_pct"]))
-    return {"date": today, **rep}
+    return {"date": write_date, **rep}
 
 
 def load_paper_nav() -> list[dict]:
