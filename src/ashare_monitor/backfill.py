@@ -263,8 +263,12 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
         if win_start.date() >= today.date():
             break
         win_end = min(win_start + timedelta(days=1120), today)  # ≈800 交易日
+        # 2026-10-21 实测：腾讯 fqkline 带 end 日期参数时会排除当日
+        # （最新未结算）bar，end 留空才返回今日——窗口覆盖今天时 end 必须传空
+        end_param = ("" if win_end.date() == today.date()
+                     else f"{win_end:%Y-%m-%d}")
         url_path = (f"{api_path}?param={symbol},day,{win_start:%Y-%m-%d},"
-                    f"{win_end:%Y-%m-%d},800,qfq")
+                    f"{end_param},800,qfq")
         # 腾讯间歇性反爬：501 返回 HTML 校验页（非 JSON）→ 退避重试 + 域名降级
         # 注意：腾讯 HK 端点（hkfqkline）即使返回合法 JSON，
         # Content-Type 也是 text/html —— 不能只看 header，须同时看 body 形态
