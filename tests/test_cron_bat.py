@@ -110,3 +110,17 @@ def test_bat_blob_keeps_crlf(bat_file):
     assert bare_lf == 0, (
         f"{os.path.basename(bat_file)} 仓库 blob 有 {bare_lf} 个裸 LF；"
         f"请确认 .gitattributes 中 *.bat 为 -text 并重新 git add")
+
+
+@pytest.mark.parametrize("bat_file", BATS)
+def test_no_double_quoted_exe_var(bat_file):
+    """禁止 "%EXE%" 写法：变量值已含引号，再包一层会展开成 ""prog""，
+    cmd 把 strategy track 等参数拼成单个带空格参数导致 argparse 报
+    invalid choice（2026-10-20/21 cron_paper_daily 连续两日净值漏写根因，
+    此前误诊为 LF 行尾）。统一写 %EXE%（引号在 set 行内）。"""
+    with open(bat_file, "r", encoding="ascii", errors="replace") as f:
+        text = f.read()
+    for i, line in enumerate(text.splitlines(), 1):
+        assert '"%EXE%"' not in line, (
+            f"{os.path.basename(bat_file)} 第 {i} 行使用了 \"%EXE%\" 双重引号写法："
+            f"{line.strip()!r}；EXE 的 set 行已含引号，请直接写 %EXE%")

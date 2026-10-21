@@ -8,7 +8,9 @@ set NO_PROXY=eastmoney.com,sinajs.cn,qq.com,gtimg.cn,cninfo.com.cn
 set EXE="E:\github\ashare-monitor\.venv\Scripts\ashare-monitor.exe"
 set LOG=E:\github\ashare-monitor\logs\cron_paper_daily.log
 echo === %DATE% %TIME% paper-daily start === >> "%LOG%"
-"%EXE%" strategy track >> "%LOG%" 2>&1
+rem EXE already contains quotes; wrapping %%EXE%% again makes cmd pass
+rem '  strategy track ' as a single arg (argparse invalid choice). See 10-21 health check.
+%EXE% strategy track >> "%LOG%" 2>&1
 if errorlevel 1 echo [ERROR] strategy track failed >> "%LOG%"
-"%EXE%" strategy status >> "%LOG%" 2>&1
+%EXE% strategy status >> "%LOG%" 2>&1
 echo === %DATE% %TIME% paper-daily done === >> "%LOG%"
