@@ -554,21 +554,27 @@ def render(out_path: Path, db_data: dict, reports: dict, freshness: dict,
         for i in range(1, ndays + 1):
             d = month_start.replace(day=i)
             iso = d.isoformat()
+            have = (iso in rev_set) if kind == "review" else (iso in dai_set)
             if kind == "weekly":
-                cls = "wk" if d.weekday() == 4 and iso in wk_set else ("fut" if d > today else "fut")
+                if d.weekday() == 4:
+                    cls = "wk" if iso in wk_set else "miss"
+                else:
+                    cls = "fut" if d > today else "dim"
             elif d > today:
                 cls = "fut"
-            elif iso in rev_set if kind == "review" else iso in dai_set:
+            elif have:
                 cls = "have"
-            elif not is_weekday(d) and kind == "daily":
+            elif not is_weekday(d):
                 cls = "dim"
             else:
-                cls = "miss" if kind == "daily" else "miss"
+                cls = "miss"
             cells.append(f'<div class="cell {cls}">{i}</div>')
         return '<div class="cal">' + "".join(cells) + "</div>"
 
     rev_miss = sum(1 for i in range(1, ndays + 1)
-                   if month_start.replace(day=i) <= today and month_start.replace(day=i).isoformat() not in rev_set)
+                   if month_start.replace(day=i) <= today
+                   and is_weekday(month_start.replace(day=i))
+                   and month_start.replace(day=i).isoformat() not in rev_set)
     dai_miss = [month_start.replace(day=i).isoformat() for i in range(1, ndays + 1)
                 if month_start.replace(day=i) <= today and is_weekday(month_start.replace(day=i))
                 and month_start.replace(day=i).isoformat() not in dai_set]
