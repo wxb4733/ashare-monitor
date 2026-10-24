@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ashare-monitor 数据积累体检 2026-10-23</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f4f5f6; --surface:#ffffff; --border:#e4e7ea; --border-soft:#eef0f2;
+  --text:#171c21; --muted:#66707a;
+  --accent:#2b6d8f; --accent-ink:#20556f; --accent-soft:#eaf2f6;
+  --ok:#1a7f37; --ok-soft:#e9f4ec;
+  --warn:#955600; --warn-soft:#fbf0d9;
+  --danger:#c22731; --danger-soft:#fcebec;
+  --track:#dfe3e7;
+  --sans:"IBM Plex Sans","Microsoft YaHei",sans-serif;
+  --mono:"IBM Plex Mono",Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.55;font-size:14px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+
+/* ---- sticky header ---- */
+header{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--border)}
+.hd{display:flex;align-items:center;gap:16px;padding:12px 0;flex-wrap:wrap}
+.hd h1{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.hd .date{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.verdict{display:inline-flex;align-items:center;gap:7px;padding:3px 12px;border-radius:99px;font-size:12.5px;font-weight:600}
+.verdict .dot{width:8px;height:8px;border-radius:50%}
+.verdict.p1{background:var(--danger-soft);color:var(--danger)}
+.verdict.p1 .dot{background:var(--danger)}
+nav{margin-left:auto;display:flex;gap:2px;flex-wrap:wrap}
+nav a{font-size:12.5px;color:var(--muted);text-decoration:none;padding:4px 10px;border-radius:6px}
+nav a:hover{background:var(--accent-soft);color:var(--accent-ink)}
+
+/* ---- banner ---- */
+.banner{display:flex;gap:12px;align-items:flex-start;background:var(--danger-soft);border:1px solid #f2cfd1;border-radius:10px;padding:13px 16px;margin:20px 0 6px;font-size:13.5px}
+.banner b{color:var(--danger)}
+.banner .code{font-family:var(--mono);font-size:12px}
+
+/* ---- sections ---- */
+section{margin-top:34px;scroll-margin-top:70px}
+.sec-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.sec-no{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent)}
+.sec-head h2{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.sec-head .hint{font-size:12px;color:var(--muted)}
+
+/* ---- KPI cards ---- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:13px 15px 11px}
+.kpi .name{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.02em}
+.kpi .num{font-family:var(--mono);font-size:23px;font-weight:600;margin-top:3px;letter-spacing:-.02em}
+.kpi .delta{display:inline-block;margin-top:5px;font-family:var(--mono);font-size:11.5px;padding:1px 7px;border-radius:5px}
+.kpi .delta.up{background:var(--ok-soft);color:var(--ok)}
+.kpi .delta.flat{background:var(--border-soft);color:var(--muted)}
+
+/* ---- panels ---- */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-top:10px}
+.panel>h3{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px}
+
+/* ---- freshness tick scale ---- */
+.frow{display:grid;grid-template-columns:130px 1fr 330px;gap:14px;align-items:center;padding:10px 0;border-bottom:1px dashed var(--border-soft)}
+.frow:last-child{border-bottom:none}
+.fname{font-weight:600;font-size:13px}
+.fname small{display:block;font-weight:400;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.fscale{position:relative;height:18px;background:var(--track);border-radius:5px;margin-bottom:16px}
+.fscale .fill{position:absolute;left:0;top:0;height:100%;background:var(--accent);border-radius:5px;min-width:10px}
+.fscale .tick{position:absolute;top:-4px;width:1px;height:26px;background:#c6ccd2}
+.fscale .tlab{position:absolute;top:24px;font-family:var(--mono);font-size:10.5px;color:var(--muted);transform:translateX(-50%)}
+.fnote{font-size:12px;color:var(--muted)}
+.fnote b{color:var(--text)}
+.fnote .lag{font-family:var(--mono);font-weight:600}
+
+/* ---- NAV chart ---- */
+.nav-flex{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+.nav-stats{min-width:170px}
+.nav-stats .big{font-family:var(--mono);font-size:26px;font-weight:600}
+.nav-stats .row{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-bottom:1px dashed var(--border-soft)}
+.nav-stats .row span:last-child{font-family:var(--mono)}
+.axis-note{font-size:11px;color:var(--muted);margin-top:8px;font-family:var(--mono)}
+
+/* ---- calendar strip ---- */
+.cal{display:grid;grid-template-columns:repeat(31,1fr);gap:3px;margin-top:6px}
+.cal .cell{aspect-ratio:1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;color:transparent;position:relative}
+.cal .cell.have{background:var(--ok-soft);outline:1px solid #bfe0c9}
+.cal .cell.miss{background:var(--danger-soft);outline:1px solid #f0bfc2;color:var(--danger);font-weight:600}
+.cal .cell.dim{background:var(--border-soft)}
+.cal .cell.fut{background:transparent;outline:1px dashed #d4d9dd}
+.cal .cell.wk{background:var(--accent);color:#fff;font-weight:600}
+.cal-legend{display:flex;gap:16px;margin-top:10px;font-size:11.5px;color:var(--muted);flex-wrap:wrap}
+.cal-legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.cal-row-label{font-size:12.5px;font-weight:600;margin-top:14px;display:flex;gap:8px;align-items:baseline}
+.cal-row-label small{font-weight:400;color:var(--muted);font-family:var(--mono)}
+
+/* ---- coverage ---- */
+.cov-flex{display:flex;gap:20px;flex-wrap:wrap}
+.cov-col{flex:1;min-width:300px}
+.watch-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.wtile{border:1px solid var(--border);border-radius:8px;padding:9px 11px;background:var(--surface)}
+.wtile .code{font-family:var(--mono);font-weight:600;font-size:13px}
+.wtile .nm{font-size:11.5px;color:var(--muted);margin-bottom:4px}
+.wtile .ln{font-size:11px;color:var(--muted);display:flex;justify-content:space-between}
+.wtile .ln b{font-family:var(--mono);font-weight:500;color:var(--text)}
+.wtile .ok-ic{color:var(--ok);font-family:var(--mono)}
+.wtile .seq-ic{color:var(--warn);font-family:var(--mono)}
+.queue-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
+.qtile{border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--surface)}
+.qtile .code{font-family:var(--mono);font-size:11px;font-weight:600}
+.qtile .d{font-family:var(--mono);font-size:10.5px;margin-top:1px}
+.qtile.fresh{border-color:#a9c9db;background:var(--accent-soft)}
+.qtile.fresh .d{color:var(--accent-ink)}
+.qtile.mid .d{color:var(--muted)}
+.qtile.stale{border-color:#ecd9a8;background:#fdf8ec}
+.qtile.stale .d{color:var(--warn)}
+.tier-note{margin-top:10px;font-size:12px;color:var(--muted)}
+.tier-note b{color:var(--text)}
+
+/* ---- tables ---- */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f6f7f8;text-align:left;padding:7px 10px;font-weight:600;font-size:12.5px;color:#4a525a;border-bottom:1px solid var(--border)}
+td{padding:8px 10px;border-bottom:1px solid var(--border-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.mono{font-family:var(--mono);font-size:12.5px}
+.tag{display:inline-block;padding:1px 9px;border-radius:99px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.p1{background:var(--danger-soft);color:var(--danger)}
+.tag.dim{background:var(--border-soft);color:var(--muted)}
+
+/* ---- todo ---- */
+ol.todo{padding-left:22px;font-size:13.5px}
+ol.todo li{margin:8px 0}
+ol.todo .when{font-family:var(--mono);font-size:12px;color:var(--accent-ink);font-weight:600}
+
+footer{margin-top:36px;padding:16px 0 30px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;text-align:center}
+@media(max-width:760px){
+  .frow{grid-template-columns:1fr;gap:6px}
+  .fscale{max-width:420px}
+  .cal{gap:2px}
+  .cal .cell{font-size:8.5px;border-radius:3px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap hd">
+    <div>
+      <h1>ashare-monitor 数据积累体检</h1>
+      <span class="date">2026-10-23 · 第 8 次 · 读数 10-24 06:15（数据截至 10-23 收盘）</span>
+    </div>
+    <span class="verdict p1"><span class="dot"></span>1 项 P1 · 数据链路全绿</span>
+    <nav>
+      <a href="#overview">概览</a><a href="#fresh">新鲜度</a><a href="#coverage">覆盖</a><a href="#reports">报告</a><a href="#incidents">异常与待办</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="banner">
+    <b>P1</b>
+    <div>
+      <b>am-period-daily 连续 2 次触发无产出，日报缺档 10-22 / 10-23 两期。</b>
+      任务卡 Running（LastTaskResult <span class="code">2147946720</span>），<span class="code">cron_period_daily.log</span> 自 10-21 后无新记录；下次触发 <b>10-26（周一）19:00</b>。建议：排查挂起子进程 → 手动补跑两期 → 为任务加「停止现有实例」策略。<br>
+      <span style="color:var(--muted)">除此之外：K 线 / 公告 / 研报 / 净值 / 周报 / 备份 / 双仓同步全部正常，四市场零落后。</span>
+    </div>
+  </div>
+
+  <!-- ① 总量概览 -->
+  <section id="overview">
+    <div class="sec-head"><span class="sec-no">01</span><h2>总量概览</h2><span class="hint">对比基线 2026-10-22 08:20 · 全部来自 SQLite 实测</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="name">klines</div><div class="num">213,828</div><span class="delta up">+86 / 2 交易日</span></div>
+      <div class="kpi"><div class="name">announcements</div><div class="num">38,612</div><span class="delta up">+4</span></div>
+      <div class="kpi"><div class="name">research_reports</div><div class="num">4,135</div><span class="delta up">+2</span></div>
+      <div class="kpi"><div class="name">financials</div><div class="num">3,489</div><span class="delta flat">+0</span></div>
+      <div class="kpi"><div class="name">reviews</div><div class="num">31</div><span class="delta up">+2</span></div>
+      <div class="kpi"><div class="name">paper_history</div><div class="num">17</div><span class="delta up">+2</span></div>
+    </div>
+    <div class="panel" style="padding:0;overflow:hidden">
+      <table>
+        <tr><th>市场</th><th>标的</th><th>K 线行数</th><th>历史区间</th><th>最新 date</th></tr>
+        <tr><td>A 股</td><td class="mono">38</td><td class="mono">193,334</td><td class="mono">1991-01-02 ~</td><td class="mono">2026-10-23 <span class="tag ok">零落后</span></td></tr>
+        <tr><td>港股</td><td class="mono">2</td><td class="mono">7,993</td><td class="mono">2002-07-31 ~</td><td class="mono">2026-10-23 <span class="tag ok">零落后</span></td></tr>
+        <tr><td>美股</td><td class="mono">1（NVDA）</td><td class="mono">5,791</td><td class="mono">1999-01-22 ~</td><td class="mono">2026-10-22 <span class="tag dim">时序差</span></td></tr>
+        <tr><td>加密</td><td class="mono">2（BTC/ETH）</td><td class="mono">6,710</td><td class="mono">2017-08-17 ~</td><td class="mono">2026-10-23 <span class="tag ok">零落后</span></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ② 新鲜度 -->
+  <section id="fresh">
+    <div class="sec-head"><span class="sec-no">02</span><h2>数据新鲜度</h2><span class="hint">最近已收盘交易日 = 10-23（周五）· 中性色刻度 · 红涨绿跌不适用</span></div>
+    <div class="panel">
+      <div class="frow">
+        <div class="fname">A 股 ashare<small>38 只</small></div>
+        <div class="fscale"><div class="fill" style="width:2.5%"></div><span class="tick" style="left:25%"></span><span class="tick" style="left:50%"></span><span class="tick" style="left:75%"></span>
+          <span class="tlab" style="left:0">0</span><span class="tlab" style="left:25%">1</span><span class="tlab" style="left:50%">2</span><span class="tlab" style="left:75%">3</span><span class="tlab" style="left:100%">4+ 交易日</span></div>
+        <div class="fnote"><span class="lag">0</span> 交易日落后 · 38/38 只到 10-23 当日收盘 · fqkline 修复连续第 3 天生效</div>
+      </div>
+      <div class="frow">
+        <div class="fname">港股 hk<small>01211 / 01810</small></div>
+        <div class="fscale"><div class="fill" style="width:2.5%"></div><span class="tick" style="left:25%"></span><span class="tick" style="left:50%"></span><span class="tick" style="left:75%"></span>
+          <span class="tlab" style="left:0">0</span><span class="tlab" style="left:25%">1</span><span class="tlab" style="left:50%">2</span><span class="tlab" style="left:75%">3</span><span class="tlab" style="left:100%">4+ 交易日</span></div>
+        <div class="fnote"><span class="lag">0</span> 交易日落后 · 双双到 10-23</div>
+      </div>
+      <div class="frow">
+        <div class="fname">美股 us<small>NVDA</small></div>
+        <div class="fscale"><div class="fill" style="width:25%"></div><span class="tick" style="left:25%"></span><span class="tick" style="left:50%"></span><span class="tick" style="left:75%"></span>
+          <span class="tlab" style="left:0">0</span><span class="tlab" style="left:25%">1</span><span class="tlab" style="left:50%">2</span><span class="tlab" style="left:75%">3</span><span class="tlab" style="left:100%">4+ 交易日</span></div>
+        <div class="fnote">落后 <span class="lag">1</span> 自然日（10-22）：美股 10-23 收盘在北京今晨，今日 15:35 任务归档，<b>属预期时序差，非缺口</b></div>
+      </div>
+      <div class="frow">
+        <div class="fname">加密 crypto<small>BTC / ETH</small></div>
+        <div class="fscale"><div class="fill" style="width:2.5%"></div><span class="tick" style="left:25%"></span><span class="tick" style="left:50%"></span><span class="tick" style="left:75%"></span>
+          <span class="tlab" style="left:0">0</span><span class="tlab" style="left:25%">1</span><span class="tlab" style="left:50%">2</span><span class="tlab" style="left:75%">3</span><span class="tlab" style="left:100%">4+ 交易日</span></div>
+        <div class="fnote"><span class="lag">0</span> 自然日落后 · 到 10-23</div>
+      </div>
+      <p style="margin-top:14px;font-size:12px;color:var(--muted)">A/H/crypto 连续第 3 天写入当日 bar —— fqkline end 参数修复（commit cb6c962）在 cron 环境稳定生效，历史「K 线永远滞后一天」缺陷保持闭环。零落后未达阈值，未触发腾讯源探针。</p>
+    </div>
+
+    <div class="panel">
+      <h3>模拟盘净值 · paper_history 17 个交易日（2026-09-23 起步）</h3>
+      <div class="nav-flex">
+        <div class="nav-stats">
+          <div class="big">1.0466</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">最新 2026-10-23</div>
+          <div class="row"><span>区间峰值 10-19</span><span>1.0728</span></div>
+          <div class="row"><span>距峰值回撤</span><span>-2.44%</span></div>
+          <div class="row"><span>累计收益</span><span>+4.66%</span></div>
+          <div class="row"><span>写入连续性</span><span>交易日轴连续 ✓</span></div>
+        </div>
+        <svg viewBox="0 0 570 135" width="100%" style="min-width:340px;flex:1" role="img" aria-label="净值曲线">
+          <line x1="10" y1="108" x2="550" y2="108" stroke="#d4d9dd" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="10" y="122" font-family="IBM Plex Mono" font-size="9.5" fill="#66707a">1.0000 起步线</text>
+          <polyline fill="none" stroke="#2b6d8f" stroke-width="2" stroke-linejoin="round"
+            points="10,108.1 43.8,108.1 77.5,100.3 111.3,106.2 145,94.2 178.8,73.3 212.5,75.4 246.3,44.9 280,33.1 313.8,17.2 347.5,21.0 381.3,17.0 415,8.0 448.8,15.1 482.5,28.3 516.3,19.7 550,44.0"/>
+          <circle cx="415" cy="8" r="3" fill="#2b6d8f"/>
+          <circle cx="550" cy="44" r="3.5" fill="#2b6d8f" stroke="#ffffff" stroke-width="1.5"/>
+          <text x="404" y="10" font-family="IBM Plex Mono" font-size="9.5" fill="#66707a" text-anchor="end">峰值 1.0728 (10-19)</text>
+          <text x="548" y="36" font-family="IBM Plex Mono" font-size="9.5" fill="#66707a" text-anchor="end">1.0466 (10-23，回撤中)</text>
+          <text x="10" y="99" font-family="IBM Plex Mono" font-size="9.5" fill="#66707a">09-23</text>
+          <text x="550" y="99" font-family="IBM Plex Mono" font-size="9.5" fill="#66707a" text-anchor="end">10-23</text>
+        </svg>
+      </div>
+      <div class="axis-note">数据：paper_history 全量 17 行实测；cron 引号修复（1afa27e）连续第 3 天由任务自动写入 ✓，无周末行</div>
+    </div>
+  </section>
+
+  <!-- ③ 覆盖 -->
+  <section id="coverage">
+    <div class="sec-head"><span class="sec-no">03</span><h2>覆盖情况</h2><span class="hint">9 只自选 + 36 只高股息队列 · K 线 / 公告 / 研报 / 财报四类</span></div>
+    <div class="panel">
+      <div class="cov-flex">
+        <div class="cov-col">
+          <h3 style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px">自选 9 只 — K 线 9/9 · 队列四类 36/36</h3>
+          <div class="watch-grid">
+            <div class="wtile"><div class="code">600519</div><div class="nm">贵州茅台</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div><div class="ln"><span>公告 <b>08-15</b></span><span class="seq-ic">静默</span></div></div>
+            <div class="wtile"><div class="code">601318</div><div class="nm">中国平安</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div><div class="ln"><span>公告 <b>10-16</b></span><span class="ok-ic">✓</span></div></div>
+            <div class="wtile"><div class="code">300750</div><div class="nm">宁德时代</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div><div class="ln"><span>公告 <b>10-21</b></span><span class="ok-ic">✓</span></div></div>
+            <div class="wtile"><div class="code">002594</div><div class="nm">比亚迪</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div><div class="ln"><span>公告 <b>10-15</b></span><span class="ok-ic">✓</span></div></div>
+            <div class="wtile"><div class="code">01211</div><div class="nm">比亚迪股份</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div><div class="ln"><span>公告 <b>10-14</b></span><span class="ok-ic">✓</span></div></div>
+            <div class="wtile"><div class="code">01810</div><div class="nm">小米集团-W</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div><div class="ln"><span>公告 <b>10-21</b></span><span class="ok-ic">✓</span></div></div>
+            <div class="wtile"><div class="code">NVDA</div><div class="nm">英伟达</div><div class="ln"><span>K 线 <b>10-22</b></span><span class="seq-ic">时序差</span></div><div class="ln"><span>财报 <b>25-12-31</b></span><span class="ok-ic">日程内</span></div></div>
+            <div class="wtile"><div class="code">BTCUSDT</div><div class="nm">比特币</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div></div>
+            <div class="wtile"><div class="code">ETHUSDT</div><div class="nm">以太坊</div><div class="ln"><span>K 线 <b>10-23</b></span><span class="ok-ic">✓</span></div></div>
+          </div>
+        </div>
+        <div class="cov-col">
+          <h3 style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px">高股息队列 36 只 — 按公告最新日期分层（判定基准 10-23）</h3>
+          <div class="queue-grid">
+            <div class="qtile fresh"><div class="code">300750</div><div class="d">10-21</div></div>
+            <div class="qtile mid"><div class="code">000001</div><div class="d">10-13</div></div>
+            <div class="qtile mid"><div class="code">000333</div><div class="d">10-14</div></div>
+            <div class="qtile mid"><div class="code">000429</div><div class="d">10-10</div></div>
+            <div class="qtile mid"><div class="code">000651</div><div class="d">10-09</div></div>
+            <div class="qtile mid"><div class="code">000895</div><div class="d">10-10</div></div>
+            <div class="qtile mid"><div class="code">002594</div><div class="d">10-15</div></div>
+            <div class="qtile stale"><div class="code">600000</div><div class="d">09-30</div></div>
+            <div class="qtile mid"><div class="code">600011</div><div class="d">10-16</div></div>
+            <div class="qtile stale"><div class="code">600016</div><div class="d">09-30</div></div>
+            <div class="qtile stale"><div class="code">600019</div><div class="d">09-10</div></div>
+            <div class="qtile mid"><div class="code">600028</div><div class="d">10-15</div></div>
+            <div class="qtile mid"><div class="code">600036</div><div class="d">10-01</div></div>
+            <div class="qtile mid"><div class="code">600066</div><div class="d">10-15</div></div>
+            <div class="qtile mid"><div class="code">600377</div><div class="d">10-09</div></div>
+            <div class="qtile mid"><div class="code">600585</div><div class="d">10-16</div></div>
+            <div class="qtile mid"><div class="code">600690</div><div class="d">10-16</div></div>
+            <div class="qtile mid"><div class="code">600741</div><div class="d">10-09</div></div>
+            <div class="qtile stale"><div class="code">600795</div><div class="d">08-20</div></div>
+            <div class="qtile mid"><div class="code">600900</div><div class="d">10-13</div></div>
+            <div class="qtile mid"><div class="code">600938</div><div class="d">10-09</div></div>
+            <div class="qtile mid"><div class="code">601006</div><div class="d">10-13</div></div>
+            <div class="qtile mid"><div class="code">601077</div><div class="d">10-15</div></div>
+            <div class="qtile mid"><div class="code">601088</div><div class="d">10-16</div></div>
+            <div class="qtile mid"><div class="code">601166</div><div class="d">10-12</div></div>
+            <div class="qtile mid"><div class="code">601169</div><div class="d">10-16</div></div>
+            <div class="qtile mid"><div class="code">601225</div><div class="d">10-15</div></div>
+            <div class="qtile mid"><div class="code">601288</div><div class="d">10-16</div></div>
+            <div class="qtile mid"><div class="code">601328</div><div class="d">10-08</div></div>
+            <div class="qtile mid"><div class="code">601398</div><div class="d">10-16</div></div>
+            <div class="qtile stale"><div class="code">601658</div><div class="d">09-22</div></div>
+            <div class="qtile stale"><div class="code">601818</div><div class="d">09-25</div></div>
+            <div class="qtile mid"><div class="code">601857</div><div class="d">10-15</div></div>
+            <div class="qtile mid"><div class="code">601919</div><div class="d">10-16</div></div>
+            <div class="qtile stale"><div class="code">601939</div><div class="d">09-29</div></div>
+            <div class="qtile mid"><div class="code">601988</div><div class="d">10-01</div></div>
+          </div>
+          <div class="tier-note">
+            <b>7 只「滞后」全部判定为源侧静默期</b>（半年报后无增量披露，非抓取故障）：<span class="mono" style="font-size:11.5px">600000 / 600016 / 600019 / 600795 / 601658 / 601818 / 601939</span>。
+            三季报季：300750 / 600066 已入 09-30 报告期财报，银行股三季报下周关注增量。
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ④ 报告积累 -->
+  <section id="reports">
+    <div class="sec-head"><span class="sec-no">04</span><h2>日报 / 周报 / 月报积累</h2><span class="hint">2026 年 10 月日历轴 · 真实文件枚举</span></div>
+    <div class="panel">
+      <div class="cal-row-label">收盘复盘 review <small>每日 15:05 · output 31 份 + vault 6,093 份</small><span class="tag ok">逐日连续</span></div>
+      <div class="cal">
+        <div class="cell have">1</div><div class="cell have">2</div><div class="cell have">3</div><div class="cell have">4</div><div class="cell have">5</div><div class="cell have">6</div><div class="cell have">7</div><div class="cell have">8</div><div class="cell have">9</div><div class="cell have">10</div><div class="cell have">11</div><div class="cell have">12</div><div class="cell have">13</div><div class="cell have">14</div><div class="cell have">15</div><div class="cell have">16</div><div class="cell have">17</div><div class="cell have">18</div><div class="cell have">19</div><div class="cell have">20</div><div class="cell have">21</div><div class="cell have">22</div><div class="cell have">23</div><div class="cell fut">24</div><div class="cell fut">25</div><div class="cell fut">26</div><div class="cell fut">27</div><div class="cell fut">28</div><div class="cell fut">29</div><div class="cell fut">30</div><div class="cell fut">31</div>
+      </div>
+
+      <div class="cal-row-label">period 日报 daily <small>仅工作日 19:00 · output 20 份 = 9 月 5 份 + 10 月 15 份 · 缺档扩大</small><span class="tag p1">10-22 / 10-23 缺档</span></div>
+      <div class="cal">
+        <div class="cell have">1</div><div class="cell have">2</div><div class="cell dim">3</div><div class="cell dim">4</div><div class="cell have">5</div><div class="cell have">6</div><div class="cell have">7</div><div class="cell have">8</div><div class="cell have">9</div><div class="cell dim">10</div><div class="cell dim">11</div><div class="cell have">12</div><div class="cell have">13</div><div class="cell have">14</div><div class="cell have">15</div><div class="cell have">16</div><div class="cell dim">17</div><div class="cell dim">18</div><div class="cell have">19</div><div class="cell have">20</div><div class="cell have">21</div><div class="cell miss">22</div><div class="cell miss">23</div><div class="cell fut">24</div><div class="cell fut">25</div><div class="cell fut">26</div><div class="cell fut">27</div><div class="cell fut">28</div><div class="cell fut">29</div><div class="cell fut">30</div><div class="cell fut">31</div>
+      </div>
+
+      <div class="cal-row-label">period 周报 weekly / report-weekly <small>每周五 · 5 + 5 份（09-25 → 10-23 周五连续）</small><span class="tag ok">周五连续 5 周</span></div>
+      <div class="cal">
+        <div class="cell fut">1</div><div class="cell wk">2</div><div class="cell fut">3</div><div class="cell fut">4</div><div class="cell fut">5</div><div class="cell fut">6</div><div class="cell fut">7</div><div class="cell fut">8</div><div class="cell wk">9</div><div class="cell fut">10</div><div class="cell fut">11</div><div class="cell fut">12</div><div class="cell fut">13</div><div class="cell fut">14</div><div class="cell fut">15</div><div class="cell fut">16</div><div class="cell fut">17</div><div class="cell fut">18</div><div class="cell fut">19</div><div class="cell fut">20</div><div class="cell fut">21</div><div class="cell fut">22</div><div class="cell wk">23</div><div class="cell fut">24</div><div class="cell fut">25</div><div class="cell fut">26</div><div class="cell fut">27</div><div class="cell fut">28</div><div class="cell fut">29</div><div class="cell fut">30</div><div class="cell fut">31</div>
+      </div>
+
+      <div class="cal-legend">
+        <span><i style="background:var(--ok-soft);outline:1px solid #bfe0c9"></i>已生成</span>
+        <span><i style="background:var(--danger-soft);outline:1px solid #f0bfc2"></i>缺档</span>
+        <span><i style="background:var(--border-soft)"></i>非生成日（周末）</span>
+        <span><i style="background:var(--accent)"></i>周五（周报）</span>
+        <span><i style="background:#fff;outline:1px dashed #d4d9dd"></i>未来</span>
+      </div>
+
+      <table style="margin-top:16px">
+        <tr><th>类别</th><th>下一份生成时间</th><th>备注</th></tr>
+        <tr><td>收盘复盘 review</td><td class="mono">每日 15:05（含周末）</td><td>历史缺 62 个交易日、429 份落非交易日，属 2002-2011 旧账，不追溯</td></tr>
+        <tr><td>period 日报 daily</td><td class="mono">10-26（周一）19:00</td><td><b style="color:var(--danger)">P1：10-22/10-23 两期待补跑</b>；任务卡 Running 见 05 节</td></tr>
+        <tr><td>period 周报 weekly</td><td class="mono">10-30（周五）17:00</td><td>10-23 三连（weekly / report-weekly / nav-weekly）已正常产出 ✓</td></tr>
+        <tr><td>period 月报 monthly</td><td class="mono">10-31 17:30（d31 守卫首跑）</td><td>d28/29/30/31 四守卫均 Ready；现仅 1 份（09-30）</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ⑤ 异常与待办 -->
+  <section id="incidents">
+    <div class="sec-head"><span class="sec-no">05</span><h2>异常与待办</h2><span class="hint">全部为实测判定 · 「未记录…疑似休市」属护栏预期输出不计入</span></div>
+    <div class="panel" style="padding:0;overflow:hidden">
+      <table>
+        <tr><th style="width:90px">级别</th><th style="width:280px">事项</th><th>细节</th></tr>
+        <tr>
+          <td><span class="tag p1">P1</span></td>
+          <td><b>am-period-daily 卡 Running</b><br><span class="mono" style="font-size:11.5px;color:var(--muted)">连续 2 次触发无产出</span></td>
+          <td>LastRunTime 10-23 19:00、LastTaskResult <span class="mono">2147946720</span>、日志无 10-22 起记录。10-21 曾 Running 但产出正常，10-22 起升级为无产出。推测前一实例挂起阻塞（bat 子进程未退出）。下次触发 10-26 19:00，<b>若不处理大概率继续缺档</b></td>
+        </tr>
+        <tr>
+          <td><span class="tag warn">观察</span></td>
+          <td>10-22 东财 / sina 域网络抖动</td>
+          <td>多个 cron 出现 WinError 10051 + 腾讯 501/超时（WARNING 级），腾讯降级链路全部兜住，零数据损失；10-23 任务未再见同类报错。若复现频率升高建议排查本机代理</td>
+        </tr>
+        <tr>
+          <td><span class="tag ok">正常</span></td>
+          <td>基础设施巡检</td>
+          <td>备份 14 份 · 最新 10-23 15:38（滚动保留 ✓）· backfill_queue.json 在位 · 4 个旧任务保持 Disabled 无双跑 · invest 仓 / notes 仓均 in sync · cron 日志无 ERROR 级错误</td>
+        </tr>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>待办（按优先级）</h3>
+      <ol class="todo">
+        <li><span class="when">10-26 19:00 前</span> — 修复 am-period-daily：先查 10-22 19:00 起挂起的实例与子进程，必要时 End Task 后为任务勾选「停止现有实例」（Stop Existing）策略。</li>
+        <li><span class="when">修复后</span> — 手动补跑 10-22 / 10-23 两期日报（period daily 命令 + vault push），消除日历缺口。</li>
+        <li><span class="when">10-31 17:30</span> — 核对 am-period-monthly-d31 首跑与 10 月月报产出（cron_period_monthly.log）。</li>
+        <li><span class="when">11-01 15:45</span> — 核对 paper-rebalance 实盘首跑日志（logs/cron_paper_rebalance.log）。</li>
+        <li><span class="when">下轮体检</span> — 三季报披露季关注银行股（601398/601288/601939 等）公告与财报增量；10051 抖动是否复现。</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    ashare-monitor 体检自动化（8e92d3cf）· 生成 2026-10-24 06:15 · 数字均来自 SQLite / 文件系统 / 计划任务 API 真实查询，未取到者标注「未取到」
+  </footer>
+
+</div>
+</body>
+</html>

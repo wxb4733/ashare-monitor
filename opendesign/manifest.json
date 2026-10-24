@@ -1,0 +1,17 @@
+{
+  "generated": "2026-10-24T06:20:00+08:00",
+  "sections": [
+    {
+      "id": "mockups",
+      "label": "Mockups",
+      "groups": [
+        {
+          "slug": "health-report-2026-10-23",
+          "files": [
+            { "label": "health-report-2026-10-23.html", "path": "mockups/health-report-2026-10-23.html" }
+          ]
+        }
+      ]
+    }
+  ]
+}
