@@ -25,11 +25,16 @@ def _period_days(period: str) -> int:
 
 
 def build_report_data(cfg, period: str = "daily",
-                      codes: list[str] | None = None) -> dict:
-    """采集周期报告数据（多视角聚合）。"""
+                      codes: list[str] | None = None,
+                      as_of: str | None = None) -> dict:
+    """采集周期报告数据（多视角聚合）。
+
+    as_of: 截止日期（透传 build_daily_data，K 线按该日截断），
+    用于历史补跑；缺省取最新。
+    """
     from .daily import build_daily_data
 
-    data = build_daily_data(cfg, codes=codes)
+    data = build_daily_data(cfg, codes=codes, as_of=as_of)
     data["period"] = period
     data["days"] = _period_days(period)
 

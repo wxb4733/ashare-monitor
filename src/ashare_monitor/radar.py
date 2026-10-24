@@ -240,13 +240,19 @@ def _sector_score(code: str) -> RadarSignal:
 
 
 def score_stock(code: str, name: str, market: str,
-                cfg=None) -> StockRadar:
-    """对单只股票聚合信号计分。"""
+                cfg=None, as_of: str | None = None) -> StockRadar:
+    """对单只股票聚合信号计分。
+
+    as_of: 截止日期（YYYY-MM-DD），K 线按该日截断（技术面信号忠实
+    还原历史时点）；筹码/资金/估值等辅助分仍取当前库内数据。
+    """
     from .storage import load_klines
 
     rows = []
     try:
         rows = load_klines(code, market)   # 按市场查本地 K 线（ashare/hk/us/crypto）
+        if as_of:
+            rows = [r for r in rows if r["date"] <= as_of]
     except Exception:  # noqa: BLE001
         pass
     signals = [_technical_score(code, market, rows)]

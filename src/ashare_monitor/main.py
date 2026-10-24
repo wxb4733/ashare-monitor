@@ -2798,8 +2798,12 @@ def run_check(code: str, config_path: str | None, report: bool = False,
 
 
 def run_period_report(period: str, code: str | None, config_path: str | None,
-                     push: bool = False) -> None:
-    """周期报告（日报/周报/月报，多视角）。"""
+                     push: bool = False, as_of: str | None = None) -> None:
+    """周期报告（日报/周报/月报，多视角）。
+
+    as_of: 补跑历史报告的截止日期（YYYY-MM-DD），K 线按该日截断、
+    报告文件名使用该日期；缺省为今天。
+    """
     import os
     from pathlib import Path
 
@@ -2808,7 +2812,8 @@ def run_period_report(period: str, code: str | None, config_path: str | None,
     cfg = load_config(config_path)
     title = {"daily": "日报", "weekly": "周报", "monthly": "月报"}.get(period, "报告")
     console.print(f"[cyan]正在生成{title}（多视角聚合）…[/cyan]")
-    data = build_report_data(cfg, period=period, codes=[code] if code else None)
+    data = build_report_data(cfg, period=period, codes=[code] if code else None,
+                             as_of=as_of)
     items = data["items"]
     if not items:
         console.print("[yellow]无数据[/yellow]")
@@ -2851,10 +2856,10 @@ def run_period_report(period: str, code: str | None, config_path: str | None,
                              f"基金{x.get('fund_hold', '-')}")
             WebhookNotifier(webhook).send_text("\n".join(lines))
             console.print("[green]已推送 webhook[/green]")
-    html, md = build_period_report(data)
+    html, md = build_period_report(data, as_of=as_of)
     out_dir = Path("output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = as_of or datetime.now().strftime("%Y-%m-%d")
     out_path = out_dir / f"{period}-{today}.html"
     out_path.write_text(html, encoding="utf-8")
     console.print(f"[green]{title}已生成: {out_path}[/green]")
@@ -4393,6 +4398,8 @@ def build_parser() -> argparse.ArgumentParser:
                           default="daily", help="周期（默认 daily）")
     p_period.add_argument("code", nargs="?", default="", help="指定代码")
     p_period.add_argument("--push", action="store_true", help="推送 webhook")
+    p_period.add_argument("--date", default=None, dest="as_of",
+                          help="补跑历史报告：截止日期 YYYY-MM-DD（K 线按该日截断）")
     p_check = sub.add_parser("check", help="标的资料完整性体检（股票/港股/数字货币）")
     p_check.add_argument("code", help="代码，如 002594 / BTCUSDT")
     p_check.add_argument("--market", choices=["ashare", "hk", "crypto", "us"],
@@ -4639,7 +4646,7 @@ def main() -> None:
                          report=args.report, push=args.push)
     elif args.command == "period":
         run_period_report(args.period, args.code or None, args.config,
-                          push=args.push)
+                          push=args.push, as_of=args.as_of)
     elif args.command == "check":
         run_check(args.code, args.config, report=args.report,
                   market=getattr(args, "market", None))

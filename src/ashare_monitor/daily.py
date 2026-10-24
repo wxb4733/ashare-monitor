@@ -26,8 +26,13 @@ def _freshness(rows: list[dict]) -> tuple[bool, str]:
     return False, f"{last}（落后 {gap} 天）"
 
 
-def build_daily_data(cfg, codes: list[str] | None = None) -> dict:
-    """采集日报数据。返回 {items: [每票聚合], health: [...]}。"""
+def build_daily_data(cfg, codes: list[str] | None = None,
+                     as_of: str | None = None) -> dict:
+    """采集日报数据。返回 {items: [每票聚合], health: [...]}。
+
+    as_of: 截止日期（YYYY-MM-DD）。K 线仅取该日（含）之前的 bar，
+    用于历史日报补跑；缺省取全部（最新收盘）。
+    """
     from .storage import load_klines
 
     from .corp_events import classify_event, EVENT_KEYWORDS
@@ -61,6 +66,8 @@ def build_daily_data(cfg, codes: list[str] | None = None) -> dict:
                 rows = load_klines(c, market)
         except Exception:  # noqa: BLE001
             pass
+        if as_of:
+            rows = [r for r in rows if r["date"] <= as_of]
         fresh, fnote = _freshness(rows)
         health.append(f"{name}({c}) K线: {fnote}")
 
@@ -77,7 +84,7 @@ def build_daily_data(cfg, codes: list[str] | None = None) -> dict:
         # 信号雷达
         radar = None
         try:
-            radar = score_stock(c, name, market, cfg=cfg)
+            radar = score_stock(c, name, market, cfg=cfg, as_of=as_of)
         except Exception as exc:  # noqa: BLE001
             logger.warning("日报雷达 %s 失败: %s", c, exc)
 
