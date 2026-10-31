@@ -33,6 +33,31 @@ def test_nav_points_shape_and_values():
     assert rng["first_d"] == "2026-01-05"
 
 
+def test_parse_watchlist_ignores_commented_examples(tmp_path, monkeypatch):
+    """config.yaml 里的注释示例（# - code: "00700"）不应计入自选。"""
+    import scripts.health_report as hr
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        'watchlist:\n'
+        '  - code: "600519"\n'
+        '    name: "贵州茅台"\n'
+        '  - code: "01211"\n'
+        '    name: "比亚迪股份"\n'
+        '    market: hk\n'
+        '  # 港股示例（5 位代码，market: hk）：\n'
+        '  # - code: "00700"\n'
+        '  #   name: "腾讯控股"\n'
+        '  #   market: hk\n'
+        'other: 1\n', encoding="utf-8")
+    monkeypatch.setattr(hr, "CONFIG", cfg)
+    got = hr.parse_watchlist()
+    assert [w["code"] for w in got] == ["600519", "01211"]
+    assert got[1]["market"] == "hk"
+    # market 不得从后续条目串味：600519 未写 market，应默认 ashare 而非被后面的 hk 污染
+    assert got[0]["market"] == "ashare"
+    assert got[1]["name"] == "比亚迪股份"
+
+
 def test_tier_boundaries():
     today = date(2026, 10, 23)
     assert tier("2026-10-21", today) == "fresh"   # 2 天

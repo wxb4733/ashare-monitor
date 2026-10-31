@@ -124,12 +124,18 @@ def parse_watchlist() -> list[dict]:
     text = CONFIG.read_text(encoding="utf-8", errors="replace") if CONFIG.is_file() else ""
     m = re.search(r"^watchlist:\s*$(.*?)(?=^\w|\Z)", text, re.M | re.S)
     block = m.group(1) if m else ""
+    # 剔除注释行：config.yaml 末尾的示例项（# - code: "00700"）不应计入自选
+    block = "\n".join(ln for ln in block.splitlines() if not ln.lstrip().startswith("#"))
     out = []
-    for code_m in re.finditer(r'-\s*code:\s*"([\w.]+)"', block):
+    # 逐条目解析：name/market 只在本条目内查找，避免从下一条目串味（历史上 A 股自选
+    # 因 300 字符窗口吃进后面 hk 条目的 market: hk，被误判为港股、K 线日期渲染成「—」）
+    for chunk in re.split(r"(?m)^\s*-\s*code:", block)[1:]:
+        code_m = re.match(r'\s*"?([\w.]+)"?', chunk)
+        if not code_m:
+            continue
         code = code_m.group(1)
-        tail = block[code_m.end():code_m.end() + 300]
-        name_m = re.search(r'name:\s*"([^"]+)"', tail)
-        mkt_m = re.search(r"market:\s*(\w+)", tail)
+        name_m = re.search(r'name:\s*"([^"]+)"', chunk)
+        mkt_m = re.search(r"market:\s*(\w+)", chunk)
         out.append({"code": code, "name": name_m.group(1) if name_m else code,
                     "market": mkt_m.group(1) if mkt_m else "ashare"})
     return out
