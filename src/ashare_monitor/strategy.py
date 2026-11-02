@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -76,10 +77,10 @@ def execute_paper_trade(targets: list[TargetPosition],
     broker = PaperBroker.load()
     broker.commission_bps = commission_bps
     broker.stamp_duty_bps = stamp_duty_bps
-    if cash is not None:
-        broker.cash += cash                        # 注入资金（追加）
-    elif broker.cash <= 0:
-        broker.cash = 1_000_000.0                  # 旧账户无现金记录 → 宽松额度（如实）
+    # 同 execute_rebalance：本金只在空账户首次建仓时注入，已有持仓不再追加拿钱
+    # （重复注资会把模拟盘净资产虚增，净值曲线失真）。
+    if not broker.positions and broker.cash <= 0:
+        broker.cash = cash if cash is not None else 1_000_000.0
 
     for t in targets:
         q = quotes.get(t.code)
@@ -275,7 +276,10 @@ def rebalance_orders(targets: list[TargetPosition],
                            "name": t.name if t else (cur["name"] if cur else code),
                            "side": "hold", "shares": 0, "reason": "行情缺失"})
             continue
-        shares = int(abs(diff) // price // 100) * 100  # 整手
+        # 整手：先按浮点地板取整股，再向下取整手。直接 ``diff // price // 100``
+        # 会因浮点误差少一手（1800 股算出 1799.999… → 只卖 1700，留 100 股零头，
+        # 2026-11-01 调仓首跑 5 只清仓股各残留 100 股），故加 1e-9 容差。
+        shares = int(math.floor(abs(diff) / price + 1e-9) // 100) * 100
         if shares <= 0:
             continue
         side = "buy" if diff > 0 else "sell"
@@ -302,10 +306,12 @@ def execute_rebalance(orders: list[dict], cash: float | None = None,
     broker = PaperBroker.load()
     broker.commission_bps = commission_bps
     broker.stamp_duty_bps = stamp_duty_bps
-    if cash is not None:
-        broker.cash += cash
-    elif broker.cash <= 0:
-        broker.cash = 1_000_000.0                  # 旧账户无现金记录 → 宽松额度
+    # 现金只在新账户（无持仓且无现金）时注入。已有账户一律用现有现金 + 卖出回款，
+    # 否则每次月度再平衡都会重复注资：2026-11-01 调仓首跑把 10 万本金又加了一遍，
+    # 净资产 103,415→209,125（假翻倍，次日 track 会写出 +102% 的假净值）。
+    # ``cash`` 语义 = 建仓本金，不是每期追加资金。
+    if not broker.positions and broker.cash <= 0:
+        broker.cash = cash if cash is not None else 1_000_000.0
 
     for o in orders:
         if o["side"] == "hold":

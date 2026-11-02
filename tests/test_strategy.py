@@ -535,3 +535,62 @@ def test_factor_ic_test(tmp_path, monkeypatch):
                                       "momentum", 5, 10)
     assert q["samples"] > 0
     assert len(q["quantiles"]) <= 5
+
+
+def test_rebalance_orders_clears_position_without_lot_dust(monkeypatch):
+    """清仓整手不能被浮点地板截断（2026-11-01 调仓首跑 5 只各残留 100 股）。
+
+    1800 股 × 5.90 的目标差额是整 1800 股，但 ``10620.0 // 5.9 // 100`` 在
+    浮点下得 17 手 → 只卖 1700，留 100 股零头占仓。
+    """
+    from ashare_monitor import strategy
+
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.load_paper_positions",
+        lambda: [{"code": "600028", "name": "中国石化", "shares": 1800,
+                  "avg_cost": 5.32, "updated": "2026-09-26"}])
+
+    class _Q:
+        code = "600028"
+        price = 5.90
+
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare": ([_Q()], "tencent"))
+    # 空目标 → 清仓（f133 新榜首无中国石化）
+    orders = strategy.rebalance_orders([], 100_000.0)
+    sell = [o for o in orders if o["code"] == "600028"][0]
+    assert sell["side"] == "sell" and sell["reason"] == "清仓"
+    assert sell["shares"] == 1800          # 不是 1700
+
+
+def test_execute_rebalance_does_not_inject_capital_again(monkeypatch, tmp_path):
+    """月度再平衡不得重复注入本金（2026-11-01 首跑净资产 103,415→209,125）。
+
+    ``cash`` 参数语义是"空账户建仓本金"，已有持仓的账户应只用现有现金 +
+    卖出回款，否则每次调仓净资产翻倍、次日 track 写出 +100% 假净值。
+    """
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "rebalance.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+
+    from ashare_monitor.broker import PaperBroker
+
+    broker = PaperBroker(cash=5_492.43)
+    broker.positions = {"600028": {"code": "600028", "name": "中国石化",
+                                   "shares": 1800, "avg_cost": 5.32}}
+    monkeypatch.setattr("ashare_monitor.broker.PaperBroker.load",
+                        classmethod(lambda cls: broker))
+
+    orders = [{"code": "600028", "name": "中国石化", "side": "sell",
+               "shares": 1800, "price": 5.90, "value": 10_620.0,
+               "reason": "清仓"}]
+    result = strategy.execute_rebalance(orders, cash=100_000.0)
+    # 现金 = 5,492.43 + 1,800×5.90（无佣金/印花税），本金未被二次注入
+    assert broker.cash == pytest.approx(5_492.43 + 10_620.0)
+    assert result["cash"] == pytest.approx(broker.cash, rel=1e-6)
+    assert "600028" not in broker.positions

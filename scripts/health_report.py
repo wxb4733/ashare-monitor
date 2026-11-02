@@ -613,7 +613,15 @@ def render(out_path: Path, db_data: dict, reports: dict, freshness: dict,
                "info": '<span class="tag dim">信息</span>'}
     frows_inc = "".join(
         f'<tr><td>{lvl_tag[f["level"]]}</td><td><b>{_esc(f["title"])}</b></td><td>{_esc(f["detail"])}</td></tr>'
-        for f in findings) or '<tr><td><span class="tag ok">正常</span></td><td>规则扫描未发现异常</td><td>—</td></tr>'
+        for f in findings)
+    # 规则扫描抓不到的问题（根因复核 / 人工处置）由 AI 判定带入，同日 incidents 一并渲染，
+    # 否则修完 P1 的报告会显示「全绿」而看不出本轮到底动了什么。
+    for inc in (extra or {}).get("ai_incidents", []):
+        frows_inc += (f'<tr><td><span class="tag warn">判定</span></td>'
+                      f'<td><b>{_esc(inc.get("type", "—"))}</b></td>'
+                      f'<td>{_esc(inc.get("detail", ""))}</td></tr>')
+    if not frows_inc:
+        frows_inc = '<tr><td><span class="tag ok">正常</span></td><td>规则扫描未发现异常</td><td>—</td></tr>'
 
     # tasks table tail
     trows = "".join(
@@ -909,10 +917,22 @@ def main() -> int:
     if args.notes:
         notes = json.loads(Path(args.notes).read_text(encoding="utf-8"))
 
+    # 本轮 AI 判定：本次 notes + 快照里同日已记的 incidents（含此前几轮手改的）
+    ai_inc = list((notes or {}).get("incidents", []))
+    try:
+        prev_snap = json.loads(snap_path.read_text(encoding="utf-8")) if snap_path.is_file() else {}
+    except ValueError:
+        prev_snap = {}
+    for inc in prev_snap.get("incidents", []):
+        if str(inc.get("date")) == today.isoformat() and inc not in ai_inc:
+            ai_inc.append(inc)
+    extra = dict(analysis.get("extra") or {})
+    extra["ai_incidents"] = ai_inc
+
     out_path = Path(args.out) if args.out else DEFAULT_OUTDIR / f"health-{today.isoformat()}.html"
     render(out_path, db_data, reports, analysis["freshness"], analysis["findings"],
            backups, tasks, logs, repos, watchlist, queue, today, now, baseline,
-           nav_points(db_data["nav"])[1], analysis.get("extra"))
+           nav_points(db_data["nav"])[1], extra)
 
     if not args.no_snapshot:
         write_snapshot(snap_path, db_data, reports, analysis["freshness"], coverage,
