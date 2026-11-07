@@ -28,7 +28,7 @@ openbb = [
 ]
 
 [project.scripts]
-ashare-monitor = "ashare_monitor.main:main"
+ashare-monitor = "ashare_monitor.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

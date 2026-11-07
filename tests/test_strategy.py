@@ -594,3 +594,263 @@ def test_execute_rebalance_does_not_inject_capital_again(monkeypatch, tmp_path):
     assert broker.cash == pytest.approx(5_492.43 + 10_620.0)
     assert result["cash"] == pytest.approx(broker.cash, rel=1e-6)
     assert "600028" not in broker.positions
+
+
+def test_record_paper_nav_uses_equity_over_initial_capital(monkeypatch, tmp_path):
+    """净值口径统一：(持仓市值+现金)/初始本金，成本基数不再随调仓重置。
+
+    回归背景：旧口径 nav = 市值/持仓成本，11-01 调仓把成本基数 94,266 →
+    102,998，11-02 nav 从 1.0971 断崖到 1.0005（并非亏损）；且旧口径不含
+    现金 5,492.43，真实权益被低估。
+    """
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "nav_scope.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    import datetime as _dt
+
+    today = _dt.datetime.now().strftime("%Y-%m-%d")
+    monkeypatch.setattr(
+        "ashare_monitor.strategy.paper_report",
+        lambda: {"total_value": 104_860.0, "total_cost": 102_998.0,
+                 "cash": 5_492.43, "equity": 110_352.43,
+                 "pnl_pct": 1.81,
+                 "positions": [{"code": "601398", "quote_date": today}]})
+
+    rec = strategy.record_paper_nav()
+    assert not rec.get("skipped")
+    navs = strategy.load_paper_nav()
+    assert len(navs) == 1
+    row = navs[0]
+    assert row["value"] == pytest.approx(110_352.43)   # 总权益，非持仓市值
+    assert row["cost"] == pytest.approx(100_000.0)     # 初始本金，非持仓成本
+    assert row["nav"] == pytest.approx(1.1035243)
+    assert row["pnl_pct"] == pytest.approx(10.35, abs=0.01)
+
+
+def test_paper_cash_on_reconstructs_from_orders(monkeypatch, tmp_path):
+    """历史现金按 paper_orders 流水反推：本金 − Σ(买+费) + Σ(卖−费)。
+
+    回归背景：补录历史净值时 paper_account 只有当前现金；11-01 调仓前
+    现金是 5,710.44（含建仓费），直接用当前值会失真。
+    """
+    import sqlite3
+
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "cash.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "CREATE TABLE paper_orders (id INTEGER PRIMARY KEY, code TEXT, "
+            "name TEXT, side TEXT, shares REAL, price REAL, fee REAL, "
+            "status TEXT, reason TEXT, created TEXT, updated TEXT)")
+        conn.executemany(
+            "INSERT INTO paper_orders (code, name, side, shares, price, fee,"
+            " status, reason, created, updated) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [("601398", "工商银行", "buy", 1000, 8.0, 2.0, "Filled", "新进",
+              "2026-09-26 14:13:16", "2026-09-26 14:13:16"),
+             ("600028", "中国石化", "sell", 1000, 5.9, 1.5, "Filled", "清仓",
+              "2026-11-01 15:45:00", "2026-11-01 15:45:00")])
+    conn.close()
+    # 调仓前：现金 = 100000 − (8000+2)
+    assert strategy._paper_cash_on("2026-10-30") == pytest.approx(91_998.0)
+    # 调仓后：+ (5900−1.5)
+    assert strategy._paper_cash_on("2026-11-01") == pytest.approx(97_896.5)
+    # 无 paper_orders 表（全新库）→ 返回 0，不抛异常
+    assert strategy._paper_cash_on.__name__ == "_paper_cash_on"
+
+
+def _mk_quote(**kw):
+    """构造最小 Quote（rebalance_orders 涨跌停判定用）。"""
+    from ashare_monitor.quotes import Quote
+    from datetime import datetime
+
+    base = dict(code="000915", name="华特达因", price=21.42, change_pct=-10.0,
+                change=-2.38, volume=13615.0, turnover=0.0, high=21.42,
+                low=21.42, open=21.42, prev_close=23.80,
+                timestamp=datetime(2026, 10, 30, 15, 0))
+    base.update(kw)
+    return Quote(**base)
+
+
+def test_limit_locked_detects_one_word_limit_down():
+    """一字跌停判定：2026-10-30 华特达因开=高=低=收=21.42（-10%）。"""
+    from ashare_monitor.strategy import _limit_locked
+
+    assert _limit_locked(_mk_quote()) == "limit_down"
+    # 一字涨停
+    assert _limit_locked(_mk_quote(price=26.18, open=26.18, high=26.18,
+                                   low=26.18, change_pct=10.0,
+                                   prev_close=23.80)) == "limit_up"
+    # 非一字（有波动）→ None
+    assert _limit_locked(_mk_quote(high=22.0, low=21.0)) is None
+    # 创业板 20% 板
+    assert _limit_locked(_mk_quote(code="300770", prev_close=40.56,
+                                   price=36.50, change_pct=-10.0)) is None
+    assert _limit_locked(_mk_quote(code="300770", prev_close=40.56,
+                                   price=32.44, change_pct=-20.02,
+                                   open=32.44, high=32.44,
+                                   low=32.44)) == "limit_down"
+
+
+def test_rebalance_orders_skips_limit_down_buy(monkeypatch, tmp_path):
+    """买入目标为一字跌停时不得假装成交：指令降级为 hold 顺延。"""
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "rebal_ld.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+
+    monkeypatch.setattr("ashare_monitor.strategy.load_paper_positions",
+                        lambda: [])
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare":
+            ([_mk_quote()], "tencent"))
+    targets = [strategy.TargetPosition("000915", "华特达因", 10.0, 10_000.0)]
+    orders = strategy.rebalance_orders(targets, 100_000.0)
+    assert len(orders) == 1
+    o = orders[0]
+    assert o["side"] == "hold"
+    assert o["shares"] == 0
+    assert "一字跌停" in o["reason"]
+
+
+def test_rebalance_orders_skips_recent_crash_buy(monkeypatch, tmp_path):
+    """近5日跌幅≥15% 的新进买入顺延（股息率陷阱防护）。"""
+    import sqlite3
+
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "rebal_crash.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("CREATE TABLE klines (market TEXT, code TEXT, "
+                     "date TEXT, close REAL)")
+        # 近5日 25.00 → 21.00（-16%，未一字跌停）
+        for i, c in enumerate([25.0, 24.5, 23.5, 22.5, 21.8, 21.0]):
+            conn.execute("INSERT INTO klines VALUES ('ashare','000915',?,?)",
+                         (f"2026-10-{20+i:02d}", c))
+    conn.close()
+
+    monkeypatch.setattr("ashare_monitor.strategy.load_paper_positions",
+                        lambda: [])
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare":
+            ([_mk_quote(price=21.0, open=21.2, high=21.5, low=20.8,
+                        change_pct=-3.64, prev_close=21.8)], "tencent"))
+    targets = [strategy.TargetPosition("000915", "华特达因", 10.0, 10_000.0)]
+    orders = strategy.rebalance_orders(targets, 100_000.0)
+    assert len(orders) == 1
+    o = orders[0]
+    assert o["side"] == "hold"
+    assert "股息率陷阱" in o["reason"]
+
+
+def _mk_quote(**kw):
+    """构造最小 Quote（rebalance_orders 涨跌停判定用）。"""
+    from ashare_monitor.quotes import Quote
+    from datetime import datetime
+
+    base = dict(code="000915", name="华特达因", price=21.42, change_pct=-10.0,
+                change=-2.38, volume=13615.0, turnover=0.0, high=21.42,
+                low=21.42, open=21.42, prev_close=23.80,
+                timestamp=datetime(2026, 10, 30, 15, 0))
+    base.update(kw)
+    return Quote(**base)
+
+
+def test_limit_locked_detects_one_word_limit_down():
+    """一字跌停判定：2026-10-30 华特达因开=高=低=收=21.42（-10%）。"""
+    from ashare_monitor.strategy import _limit_locked
+
+    assert _limit_locked(_mk_quote()) == "limit_down"
+    # 一字涨停
+    assert _limit_locked(_mk_quote(price=26.18, open=26.18, high=26.18,
+                                   low=26.18, change_pct=10.0,
+                                   prev_close=23.80)) == "limit_up"
+    # 非一字（有波动）→ None
+    assert _limit_locked(_mk_quote(high=22.0, low=21.0)) is None
+    # 创业板 20% 板
+    assert _limit_locked(_mk_quote(code="300770", prev_close=40.56,
+                                   price=36.50, change_pct=-10.0)) is None
+    assert _limit_locked(_mk_quote(code="300770", prev_close=40.56,
+                                   price=32.44, change_pct=-20.02,
+                                   open=32.44, high=32.44,
+                                   low=32.44)) == "limit_down"
+
+
+def test_rebalance_orders_skips_limit_down_buy(monkeypatch, tmp_path):
+    """买入目标为一字跌停时不得假装成交：指令降级为 hold 顺延。"""
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "rebal_ld.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+
+    monkeypatch.setattr("ashare_monitor.strategy.load_paper_positions",
+                        lambda: [])
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare":
+            ([_mk_quote()], "tencent"))
+    targets = [strategy.TargetPosition("000915", "华特达因", 10.0, 10_000.0)]
+    orders = strategy.rebalance_orders(targets, 100_000.0)
+    assert len(orders) == 1
+    o = orders[0]
+    assert o["side"] == "hold"
+    assert o["shares"] == 0
+    assert "一字跌停" in o["reason"]
+
+
+def test_rebalance_orders_skips_recent_crash_buy(monkeypatch, tmp_path):
+    """近5日跌幅≥15% 的新进买入顺延（股息率陷阱防护）。"""
+    import sqlite3
+
+    from ashare_monitor import strategy
+    import ashare_monitor.storage as storage
+
+    db = str(tmp_path / "rebal_crash.db")
+    orig = storage.get_conn
+    monkeypatch.setattr("ashare_monitor.storage.get_conn",
+                        lambda: orig(db_path=db))
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("CREATE TABLE klines (market TEXT, code TEXT, "
+                     "date TEXT, close REAL)")
+        # 近5日 25.00 → 21.00（-16%，未一字跌停）
+        for i, c in enumerate([25.0, 24.5, 23.5, 22.5, 21.8, 21.0]):
+            conn.execute("INSERT INTO klines VALUES ('ashare','000915',?,?)",
+                         (f"2026-10-{20+i:02d}", c))
+    conn.close()
+
+    monkeypatch.setattr("ashare_monitor.strategy.load_paper_positions",
+                        lambda: [])
+    monkeypatch.setattr(
+        "ashare_monitor.quotes.fetch_spot_quotes",
+        lambda codes, market="ashare":
+            ([_mk_quote(price=21.0, open=21.2, high=21.5, low=20.8,
+                        change_pct=-3.64, prev_close=21.8)], "tencent"))
+    targets = [strategy.TargetPosition("000915", "华特达因", 10.0, 10_000.0)]
+    orders = strategy.rebalance_orders(targets, 100_000.0)
+    assert len(orders) == 1
+    o = orders[0]
+    assert o["side"] == "hold"
+    assert "股息率陷阱" in o["reason"]

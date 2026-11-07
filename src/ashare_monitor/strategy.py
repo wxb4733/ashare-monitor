@@ -18,6 +18,11 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# 模拟盘初始本金（2026-10 建仓时注入的 10 万）。净值口径自 2026-11-07 起统一为
+# (持仓市值 + 现金) / 初始本金：此前 nav = 市值/持仓成本，成本基数随调仓换股
+# 重置（11-01 由 94,266 → 102,998），导致 nav 曲线断崖且不含现金，不可跨期比较。
+INITIAL_CAPITAL = 100_000.0
+
 
 @dataclass
 class TargetPosition:
@@ -245,6 +250,58 @@ def portfolio_backtest(codes: list[str], names: dict[str, str] | None = None,
 # 低频再平衡：月度执行，整手差额，权重漂移修正。
 
 
+def _limit_locked(q) -> str | None:
+    """一字涨跌停判定（基于 spot 快照）。返回 'limit_down' | 'limit_up' | None。
+
+    A 股一字板：open == high == low == 最新价，且涨跌幅触及涨跌停（主板 ±10%，
+    创业板/科创板 ±20%，容差 0.2pt 覆盖四舍五入）。一字跌停时买一为空、买单
+    根本无法成交，一字涨停时卖单同理；模拟撮合若照常按板价成交，回测/模拟
+    收益会系统性偏乐观（2026-11-01 曾按 10-30 一字跌停价 21.42 全额买入
+    华特达因，两日 -20%）。
+    """
+    try:
+        if not (q.open and q.high and q.low and q.price and q.prev_close):
+            return None
+        if (abs(q.open - q.high) > 0.005 or abs(q.open - q.low) > 0.005
+                or abs(q.open - q.price) > 0.005):
+            return None
+        code = str(q.code)
+        limit = 19.8 if code.startswith(("300", "301", "688")) else 9.8
+        chg = (q.price / q.prev_close - 1) * 100
+        if chg <= -limit:
+            return "limit_down"
+        if chg >= limit:
+            return "limit_up"
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _recent_crash(code: str, lookback: int = 5,
+                  max_drop: float = 15.0) -> bool | None:
+    """近 ``lookback`` 日累计跌幅 ≥ ``max_drop``%（高股息率陷阱防护）。
+
+    股价急跌会机械推高股息率（分母缩水），跌停/崩盘股反而在高股息榜前排
+    （2026-11-01 华特达因即此）。库内 K 线不足时返回 None（放行并如实
+    记录，不因数据缺失误杀）。
+    """
+    from .storage import get_conn
+
+    qcode = code[-6:] if code.isdigit() else code
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT close FROM klines WHERE market='ashare' AND code=? "
+            "ORDER BY date DESC LIMIT ?",
+            (qcode, lookback + 1)).fetchall()
+    except Exception:  # noqa: BLE001
+        return None
+    if len(rows) < lookback + 1 or not rows[-1][0] or not rows[0][0]:
+        return None
+    drop = (rows[-1][0] / rows[0][0] - 1) * 100  # 期初→期末跌幅（正数）
+    return drop >= max_drop
+
+
 def rebalance_orders(targets: list[TargetPosition],
                      capital: float) -> list[dict]:
     """计算差额指令：目标市值 vs 当前市值（现价×股数）。"""
@@ -283,8 +340,27 @@ def rebalance_orders(targets: list[TargetPosition],
         if shares <= 0:
             continue
         side = "buy" if diff > 0 else "sell"
+        name = t.name if t else (cur["name"] if cur else code)
+        # 涨跌停/异常波动可成交性校验（2026-11-03 P1：一字跌停照常成交）。
+        # 不可成交的指令记为 hold 顺延下期，拒绝按板价假装成交。
+        locked = _limit_locked(q)
+        if side == "buy" and locked == "limit_down":
+            orders.append({"code": code, "name": name, "side": "hold",
+                           "shares": 0, "price": round(price, 2),
+                           "reason": "一字跌停不可成交，顺延下期"})
+            continue
+        if side == "sell" and locked == "limit_up":
+            orders.append({"code": code, "name": name, "side": "hold",
+                           "shares": 0, "price": round(price, 2),
+                           "reason": "一字涨停不可卖出，顺延下期"})
+            continue
+        if side == "buy" and _recent_crash(code) is True:
+            orders.append({"code": code, "name": name, "side": "hold",
+                           "shares": 0, "price": round(price, 2),
+                           "reason": "近5日跌幅≥15%（股息率陷阱），顺延下期"})
+            continue
         orders.append({"code": code,
-                       "name": t.name if t else (cur["name"] if cur else code),
+                       "name": name,
                        "side": side, "shares": shares,
                        "price": round(price, 2),
                        "value": round(shares * price, 2),
@@ -750,6 +826,32 @@ def _ret_stats(nav_pcts: list[float], dates: list[str]) -> dict:
 
 # ===================== 模拟净值跟踪 + 组合熔断 =====================
 
+def _paper_cash_on(as_of: str) -> float:
+    """按 paper_orders 成交流水重建 ``as_of`` 当日现金余额。
+
+    现金 = 初始本金 − Σ(买入额+费) + Σ(卖出额−费)，按订单 created 日期累计。
+    用于历史补录：paper_account 只存当前现金，历史某日的现金只能从交易
+    流水反推（2026-11-07 实测与当前现金守恒，误差 0.01 元）。
+    """
+    import sqlite3
+
+    from .storage import get_conn
+
+    conn = get_conn()
+    try:
+        buys = conn.execute(
+            "SELECT COALESCE(SUM(shares*price+fee),0) FROM paper_orders "
+            "WHERE side='buy' AND status='Filled' AND substr(created,1,10)<=?",
+            (as_of,)).fetchone()[0]
+        sells = conn.execute(
+            "SELECT COALESCE(SUM(shares*price-fee),0) FROM paper_orders "
+            "WHERE side='sell' AND status='Filled' AND substr(created,1,10)<=?",
+            (as_of,)).fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0.0
+    return INITIAL_CAPITAL - (buys or 0.0) + (sells or 0.0)
+
+
 def _paper_value_on(as_of: str) -> dict:
     """按库内日 K 收盘价估算 ``as_of`` 当日模拟组合市值（离线，不发网络请求）。
 
@@ -759,11 +861,9 @@ def _paper_value_on(as_of: str) -> dict:
     """
     import sqlite3
 
-    from .broker import PaperBroker
     from .storage import get_conn
 
     pos = load_paper_positions()
-    broker = PaperBroker.load()
     conn = get_conn()
     conn.row_factory = sqlite3.Row
     rows: list[dict] = []
@@ -789,20 +889,26 @@ def _paper_value_on(as_of: str) -> dict:
                      "value": round(value, 2),
                      "pnl_pct": round((value / cost - 1) * 100, 2)
                      if cost else None})
+    cash = _paper_cash_on(as_of)
     return {"positions": rows, "missing": missing,
             "total_cost": round(total_cost, 2),
             "total_value": round(total_value, 2),
             "pnl": round(total_value - total_cost, 2),
             "pnl_pct": round((total_value / total_cost - 1) * 100, 2)
             if total_cost else 0.0,
-            "cash": round(broker.cash, 2),
-            "equity": round(broker.cash + total_value, 2)}
+            "cash": round(cash, 2),
+            "equity": round(cash + total_value, 2)}
 
 
 def record_paper_nav(min_total_value: float = 1.0,
                      require_fresh_quotes: bool = True,
                      as_of: str | None = None) -> dict:
-    """记录今日模拟组合净值（总市值/成本/累计收益%）到 paper_history。
+    """记录今日模拟组合净值到 paper_history。
+
+    口径（2026-11-07 统一）：value = 持仓市值 + 现金（总权益），cost = 初始本金
+    ``INITIAL_CAPITAL``（10 万），nav = value/cost，pnl_pct = (nav-1)*100。
+    旧口径（市值/持仓成本）的成本基数随调仓换股重置（11-01 由 94,266 →
+    102,998）导致 nav 断崖且不含现金，已废弃。
 
     两道护栏（实时模式）：
     1. 行情不可用（开盘前跑、接口故障）时 ``paper_report`` 的持仓估值会
@@ -869,6 +975,10 @@ def record_paper_nav(min_total_value: float = 1.0,
                               f"未写入净值", **rep}
     conn = get_conn()
     conn.row_factory = sqlite3.Row
+    equity = rep.get("equity")
+    if equity is None:  # 调用方自构 rep（测试/旧路径）缺 equity 时兜底
+        equity = rep.get("cash", 0.0) + rep["total_value"]
+    nav = equity / INITIAL_CAPITAL
     with conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS paper_history (
@@ -878,10 +988,9 @@ def record_paper_nav(min_total_value: float = 1.0,
         conn.execute(
             "INSERT OR REPLACE INTO paper_history (date, value, cost, nav, pnl_pct) "
             "VALUES (?,?,?,?,?)",
-            (write_date, rep["total_value"], rep["total_cost"],
-             rep["total_value"] / rep["total_cost"]
-             if rep["total_cost"] else 1.0, rep["pnl_pct"]))
-    return {"date": write_date, **rep}
+            (write_date, equity, INITIAL_CAPITAL, nav, (nav - 1) * 100))
+    return {"date": write_date, **rep,
+            "equity": equity, "nav": nav, "pnl_pct": (nav - 1) * 100}
 
 
 def load_paper_nav() -> list[dict]:

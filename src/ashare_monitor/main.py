@@ -4735,17 +4735,17 @@ def main() -> None:
                               f"{today['reason']}[/yellow]")
             elif as_of:
                 console.print(f"[cyan]已补录 {today['date']} 净值："
-                              f"{today['total_value']:,.0f} 元"
+                              f"总权益 {today.get('equity', today['total_value']):,.0f} 元"
                               f"（{today['pnl_pct']:+.2f}%）[/cyan]")
             else:
                 console.print(f"[cyan]已记录 {today['date']} 净值："
-                              f"{today['total_value']:,.0f} 元"
+                              f"总权益 {today.get('equity', today['total_value']):,.0f} 元"
                               f"（{today['pnl_pct']:+.2f}%）[/cyan]")
             navs = load_paper_nav()
             table = Table(title=f"模拟组合净值跟踪（{len(navs)} 条）")
             table.add_column("日期", justify="left")
-            table.add_column("市值(元)", justify="right")
-            table.add_column("成本(元)", justify="right")
+            table.add_column("总权益(元)", justify="right")
+            table.add_column("本金(元)", justify="right")
             table.add_column("累计收益%", justify="right")
             for n in navs:
                 pnl = n["pnl_pct"]
@@ -4904,3 +4904,39 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def cli() -> None:
+    """控制台脚本入口（pyproject [project.scripts] 指向本函数）。
+
+    CLI 进程「输出完成但不退出」的系统性缺陷（2026-10-21 period-daily、
+    2026-10-24 backfill 两次实证）：子命令跑完后仍有非守护线程持有
+    asyncio 自唤醒 socket，解释器等待其 join 导致进程挂起，配合计划任务
+    MultipleInstances=IgnoreNew 会静默跳过后续调度。此处 main() 返回后
+    flush 所有输出并以 os._exit 强制终结，不再等待任何残留线程。
+    """
+    code = 0
+    try:
+        main()
+    except SystemExit as e:  # argparse 等主动退出
+        c = e.code
+        code = 0 if c is None else (c if isinstance(c, int) else 1)
+    except BaseException:
+        import traceback
+
+        traceback.print_exc()
+        code = 1
+    finally:
+        try:
+            import sys
+
+            sys.stdout.flush()
+            sys.stderr.flush()
+            for h in logging.getLogger().handlers:
+                try:
+                    h.flush()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    os._exit(code)

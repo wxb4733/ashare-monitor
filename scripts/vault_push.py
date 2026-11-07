@@ -105,7 +105,15 @@ def push(repo_key: str, tag: str, branch: str = "main") -> int:
             run(repo, "rebase", "--abort")
             log("WARN: rebase aborted to keep repo usable")
 
+    # push 瞬时失败重试（2026-11-04 publickey/网络抖动实证：同日早些成功，
+    # 本地 ahead 需手工补推）。失败后退避一次再试，重试前不重复 pull。
     p = run(repo, "push", "origin", branch)
+    if p.returncode != 0:
+        log("WARN: push failed (attempt 1): %s" % p.stderr.strip()[:400])
+        import time
+
+        time.sleep(10)
+        p = run(repo, "push", "origin", branch)
     if p.returncode != 0:
         log("ERROR: push failed: %s" % p.stderr.strip()[:400])
         return 1
