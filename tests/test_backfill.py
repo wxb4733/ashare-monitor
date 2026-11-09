@@ -543,3 +543,52 @@ def test_backfill_financial_us_no_data_raises(monkeypatch):
         pass
     else:  # pragma: no cover
         raise AssertionError("应抛 RuntimeError")
+
+
+def test_tencent_window_stale_breaks(monkeypatch):
+    """窗口起点无新 bar 时（周末/停牌）腾讯返回窗口前旧 bar → 立即收尾。
+
+    2026-11-08 实证缺陷：last_date < win_start 时 win_start 原地踏步，
+    guard=100 空转；级联限流下单股烧 ~20 分钟，50 只 universe 耗尽
+    PT2H 被 Task Scheduler 强杀（result=267014）。修复后单窗口即 break。
+    """
+    import requests
+
+    from ashare_monitor import backfill
+
+    calls = {"n": 0}
+
+    class _Resp501:
+        status_code = 501
+        headers = {"content-type": "text/html"}
+        text = "<html>anti-crawl</html>"
+
+    class _RespStale:
+        # 模拟周末窗口：start=2026-11-07 无 bar，接口返回窗口前最近一根旧 bar
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = ('{"code":0,"msg":"","data":{"sh600690":{"day":'
+                '[["2026-11-06","21.21","21.62","21.75","21.18","500620"]]}}}')
+
+        def json(self):
+            import json as _json
+            return _json.loads(self.text)
+
+    def _fake_get(url, timeout=20, headers=None):
+        calls["n"] += 1
+        if url.startswith("https://web.ifzq.gtimg.cn"):
+            return _Resp501()
+        return _RespStale()
+
+    monkeypatch.setattr(requests, "get", _fake_get)
+    monkeypatch.setattr(backfill.time, "sleep", lambda s: None)
+    monkeypatch.setattr(
+        "ashare_monitor.analysis._parse_tencent_kline",
+        lambda payload, symbol, code: __import__("pandas").DataFrame(
+            [{"日期": "2026-11-06", "开盘": 21.21, "收盘": 21.62,
+              "最高": 21.75, "最低": 21.18, "成交量": 500620.0}]))
+
+    rows = backfill._backfill_kline_tencent("600690", "ashare", "2026-11-07")
+    assert rows == [("2026-11-06", 21.21, 21.62, 21.75, 21.18, 500620.0)]
+    # 修复前：win_start 不推进 → guard=100 次迭代 × 3 次请求 ≈ 300 次
+    assert calls["n"] == 3  # host1 两次重试 + host2 一次成功，单窗口收尾

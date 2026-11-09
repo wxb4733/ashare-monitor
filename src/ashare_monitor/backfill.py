@@ -318,6 +318,15 @@ def _backfill_kline_tencent(code: str, market: str, start: str) -> list[tuple]:
         last_date = batch[-1][0]
         if last_date >= today.strftime("%Y-%m-%d"):
             break
+        if last_date < win_start.strftime("%Y-%m-%d"):
+            # 窗口起点之前就没有更新的数据（周末/停牌日腾讯会返回窗口前
+            # 最近一根旧 bar）→ 源里已无更新，立即收尾。
+            # 否则 win_start = last_date+1 原地踏步，guard=100 空转：
+            # 平日每次迭代仅 ~0.1s 无感；一旦遇上级联限流（每次迭代叠加
+            # 4s/8s 退避），单股可烧 ~20 分钟，50 只 universe 直接耗尽
+            # PT2H 被 Task Scheduler 强杀（2026-11-08 实证，551 条限流
+            # 告警、result=267014、复盘断档）。
+            break
         win_start = datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)
     if not all_rows:
         raise RuntimeError(f"腾讯 K 线分段拉取 {code} 无数据")
