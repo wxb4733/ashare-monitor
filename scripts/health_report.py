@@ -68,6 +68,11 @@ def last_weekday_on_or_before(d: date) -> date:
     return d
 
 
+def last_friday_on_or_before(d: date) -> date:
+    """最近一个已过去的周五（含当日，若当天就是周五）。"""
+    return d - timedelta(days=(d.weekday() - 4) % 7)
+
+
 def fmt_cn(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
@@ -342,6 +347,24 @@ def analyze(db_data: dict, reports: dict, tasks: list[dict], backups: dict,
     if miss_weekly:
         a["findings"].append({"level": "warn", "title": f"周五周报缺 {len(miss_weekly)} 期",
                               "detail": "、".join(sorted(miss_weekly, reverse=True))})
+
+    # --- 高股息选股周报（am-dividend-weekly，周五 16:50）
+    # 该任务失败时也打印 done 且退出码 0，旧版体检完全没有覆盖 → 2026-10-23/10-30/11-13
+    # 连续静默无产出都未被发现。按「最近一个周五应有 screen-dividend-<日期>.html」判定。
+    sd_dates = sorted(m.group(1) for f in os.listdir(DEFAULT_OUTDIR)
+                      if (m := re.fullmatch(r"screen-dividend-(\d{4}-\d{2}-\d{2})\.html", f)))
+    sd_latest = date.fromisoformat(sd_dates[-1]) if sd_dates else None
+    # 周五 16:50 前不算当周期望；周六/周日仍要求上一周五已出表
+    last_fri = last_friday_on_or_before(today)
+    if last_fri == today and now < now.replace(hour=16, minute=50):
+        last_fri -= timedelta(days=7)
+    a["extra"]["screen_dividend_latest"] = sd_latest.isoformat() if sd_latest else None
+    if sd_latest is None or sd_latest < last_fri:
+        a["findings"].append({
+            "level": "warn",
+            "title": f"高股息选股周报缺 {last_fri.isoformat()}（最新 {sd_latest or '无'}）",
+            "detail": "am-dividend-weekly 失败时仍打印 done 且 result=0，需查 logs/cron_dividend_weekly.log"
+                      "（东财 push2 连接级限流）"})
 
     # --- paper_history 缺行（A 股交易日轴，工作日近似）
     if db_data["nav"]:

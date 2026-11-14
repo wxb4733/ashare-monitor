@@ -2,7 +2,7 @@
 """scripts/health_report.py 纯函数单测（不触库、不联网）。"""
 from datetime import date
 
-from scripts.health_report import (last_weekday_on_or_before, nav_points,
+from scripts.health_report import (last_friday_on_or_before, last_weekday_on_or_before, nav_points,
                                    tier, weekdays_between)
 
 
@@ -19,6 +19,14 @@ def test_weekdays_between_skips_weekend():
 def test_last_weekday_on_or_before_weekend():
     assert last_weekday_on_or_before(date(2026, 10, 24)) == date(2026, 10, 23)  # 周六→周五
     assert last_weekday_on_or_before(date(2026, 10, 25)) == date(2026, 10, 23)  # 周日→周五
+
+
+def test_last_friday_on_or_before():
+    # 2026-11-13 是周五；11-14 周六、11-16 周一的最近周五都应是 11-13
+    assert last_friday_on_or_before(date(2026, 11, 13)) == date(2026, 11, 13)
+    assert last_friday_on_or_before(date(2026, 11, 14)) == date(2026, 11, 13)
+    assert last_friday_on_or_before(date(2026, 11, 16)) == date(2026, 11, 13)
+    assert last_friday_on_or_before(date(2026, 11, 20)) == date(2026, 11, 20)
 
 
 def test_nav_points_shape_and_values():
